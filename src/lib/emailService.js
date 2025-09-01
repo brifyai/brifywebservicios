@@ -1,61 +1,152 @@
 // Servicio de email para envío de correos de bienvenida
-// Usando EmailJS para envío de emails sin backend
+// Usando Gmail API directamente con tokens almacenados
 
 class EmailService {
   constructor() {
-    // Configuración de EmailJS (necesitarás registrarte en emailjs.com)
-    this.serviceId = 'service_brify' // Reemplazar con tu Service ID
-    this.templateId = 'template_welcome' // Reemplazar con tu Template ID
-    this.publicKey = 'YOUR_PUBLIC_KEY' // Reemplazar con tu Public Key
+    this.accessToken = null
+    this.refreshToken = null
+    this.isInitialized = false
   }
 
-  // Inicializar EmailJS
-  async init() {
+  // Obtener tokens almacenados desde Supabase
+  async getStoredTokens() {
     try {
-      // Cargar EmailJS dinámicamente
-      if (!window.emailjs) {
-        const script = document.createElement('script')
-        script.src = 'https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js'
-        document.head.appendChild(script)
-        
-        return new Promise((resolve, reject) => {
-          script.onload = () => {
-            window.emailjs.init(this.publicKey)
-            resolve()
-          }
-          script.onerror = reject
-        })
-      } else {
-        window.emailjs.init(this.publicKey)
+      const { createClient } = await import('@supabase/supabase-js')
+      const supabase = createClient(
+        process.env.REACT_APP_SUPABASE_URL,
+        process.env.REACT_APP_SUPABASE_ANON_KEY
+      )
+      
+      const { data, error } = await supabase
+        .from('user_credentials')
+        .select('google_access_token, google_refresh_token')
+        .eq('user_id', 'admin') // Asumiendo que el admin tiene ID 'admin'
+        .single()
+      
+      if (error) {
+        console.error('Error obteniendo tokens:', error)
+        return null
+      }
+      
+      return {
+        accessToken: data.google_access_token,
+        refreshToken: data.google_refresh_token
       }
     } catch (error) {
-      console.error('Error inicializando EmailJS:', error)
+      console.error('Error conectando a Supabase:', error)
+      return null
+    }
+  }
+
+  // Inicializar Gmail API
+  async init() {
+    try {
+      if (this.isInitialized) {
+        return true
+      }
+
+      // Cargar Google API
+      await this.loadGoogleAPI()
+      
+      // Inicializar Gmail API
+      await window.gapi.load('client', async () => {
+        await window.gapi.client.init({
+          apiKey: process.env.REACT_APP_GOOGLE_API_KEY,
+          discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest']
+        })
+      })
+
+      // Verificar si hay autenticación activa
+      if (window.gapi && window.gapi.auth2) {
+        const authInstance = window.gapi.auth2.getAuthInstance()
+        if (authInstance && authInstance.isSignedIn.get()) {
+          const user = authInstance.currentUser.get()
+          const authResponse = user.getAuthResponse()
+          this.accessToken = authResponse.access_token
+          this.isInitialized = true
+          return true
+        }
+      }
+
+      // Si no hay autenticación activa, intentar usar tokens almacenados
+      const storedTokens = await this.getStoredTokens()
+      if (storedTokens && storedTokens.accessToken) {
+        this.accessToken = storedTokens.accessToken
+        this.refreshToken = storedTokens.refreshToken
+        this.isInitialized = true
+        return true
+      }
+
+      console.warn('No se encontraron tokens válidos para Gmail API')
+      return false
+    } catch (error) {
+      console.error('Error inicializando Gmail API:', error)
       throw error
     }
+  }
+
+  // Cargar Google API dinámicamente
+  async loadGoogleAPI() {
+    return new Promise((resolve, reject) => {
+      if (window.gapi) {
+        resolve()
+        return
+      }
+
+      const script = document.createElement('script')
+      script.src = 'https://apis.google.com/js/api.js'
+      script.onload = () => resolve()
+      script.onerror = () => reject(new Error('Failed to load Google API'))
+      document.head.appendChild(script)
+    })
   }
 
   // Enviar correo de bienvenida
   async sendWelcomeEmail(clientEmail, clientName) {
     try {
-      await this.init()
-      
-      const templateParams = {
-        to_email: clientEmail,
-        to_name: clientName,
-        from_name: 'Brify Team',
-        message: this.getWelcomeMessage(clientName)
+      const initialized = await this.init()
+      if (!initialized) {
+        throw new Error('No se pudo inicializar Gmail API')
       }
 
-      const response = await window.emailjs.send(
-        this.serviceId,
-        this.templateId,
-        templateParams
-      )
+      // Configurar el token de acceso
+      if (this.accessToken) {
+        window.gapi.client.setToken({
+          access_token: this.accessToken
+        })
+      } else {
+        throw new Error('No se encontró un token de acceso válido')
+      }
+      
+      const subject = `¡Bienvenido a Brify, ${clientName}!`
+      const message = this.getWelcomeMessage(clientName)
+      
+      // Crear el mensaje en formato RFC 2822
+      const email = [
+        `To: ${clientEmail}`,
+        `Subject: ${subject}`,
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        message
+      ].join('\n')
+      
+      // Codificar en base64url
+      const encodedMessage = btoa(email)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '')
+      
+      const response = await window.gapi.client.gmail.users.messages.send({
+        userId: 'me',
+        resource: {
+          raw: encodedMessage
+        }
+      })
 
-      console.log('Correo de bienvenida enviado exitosamente:', response)
-      return { success: true, response }
+      console.log('Email enviado exitosamente:', response)
+      return { success: true, messageId: response.result.id }
     } catch (error) {
-      console.error('Error enviando correo de bienvenida:', error)
+      console.error('Error enviando email de bienvenida:', error)
       return { success: false, error: error.message }
     }
   }
