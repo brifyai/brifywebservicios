@@ -15,7 +15,7 @@ import SemanticSearch from './components/embeddings/SemanticSearch'
 import LoadingSpinner from './components/common/LoadingSpinner'
 import Navbar from './components/layout/Navbar'
 import GoogleAuthCallback from './components/auth/GoogleAuthCallback'
-import DriveWebhookTester from './components/admin/DriveWebhookTester'
+
 
 // Componente para rutas protegidas
 const ProtectedRoute = ({ children }) => {
@@ -162,16 +162,7 @@ function App() {
                   </ProtectedRoute>
                 }
               />
-              <Route
-                path="/admin/webhook-tester"
-                element={
-                  <ProtectedRoute>
-                    <AuthenticatedLayout>
-                      <DriveWebhookTester />
-                    </AuthenticatedLayout>
-                  </ProtectedRoute>
-                }
-              />
+
             
             {/* Ruta por defecto */}
             <Route path="/" element={<Navigate to="/dashboard" />} />

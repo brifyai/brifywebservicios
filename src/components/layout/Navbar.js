@@ -11,8 +11,7 @@ import {
   Bars3Icon, 
   XMarkIcon,
   ArrowRightOnRectangleIcon,
-  MagnifyingGlassIcon,
-  BellIcon
+  MagnifyingGlassIcon
 } from '@heroicons/react/24/outline'
 
 const Navbar = () => {
@@ -57,7 +56,7 @@ const Navbar = () => {
     { name: 'Carpetas', href: '/folders', icon: FolderIcon },
     { name: 'Archivos', href: '/files', icon: DocumentIcon },
     ...(hasActivePlan() ? [{ name: 'Búsqueda IA', href: '/search', icon: MagnifyingGlassIcon }] : []),
-    ...(hasActivePlan() ? [{ name: 'Webhook Tester', href: '/admin/webhook-tester', icon: BellIcon }] : []),
+    
     { name: 'Planes', href: '/plans', icon: CreditCardIcon },
     { name: 'Perfil', href: '/profile', icon: UserIcon },
   ]
