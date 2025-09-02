@@ -272,7 +272,7 @@ const Folders = () => {
             
             // Enviar correo de bienvenida
             try {
-              const result = await emailService.sendWelcomeEmail(newFolderName, nameFromEmail)
+              const result = await emailService.sendWelcomeEmail(newFolderName, nameFromEmail, user.id)
               if (result.success) {
                 console.log('Correo de bienvenida enviado exitosamente')
                 toast.success(`Carpeta creada, usuario registrado y correo de bienvenida enviado a ${newFolderName}`)
@@ -290,7 +290,7 @@ const Folders = () => {
           // Enviar correo de bienvenida también para usuarios existentes
           try {
             const nameFromEmail = newFolderName.split('@')[0]
-            const result = await emailService.sendWelcomeEmail(newFolderName, nameFromEmail)
+            const result = await emailService.sendWelcomeEmail(newFolderName, nameFromEmail, user.id)
             if (result.success) {
               console.log('Correo de bienvenida enviado a usuario existente')
               toast.success(`Carpeta creada y correo de bienvenida enviado a ${newFolderName}`)

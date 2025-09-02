@@ -11,11 +11,12 @@ import {
   Bars3Icon, 
   XMarkIcon,
   ArrowRightOnRectangleIcon,
-  MagnifyingGlassIcon
+  MagnifyingGlassIcon,
+  BellIcon
 } from '@heroicons/react/24/outline'
 
 const Navbar = () => {
-  const { user, userProfile, signOut } = useAuth()
+  const { user, userProfile, signOut, hasActivePlan } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
@@ -55,7 +56,8 @@ const Navbar = () => {
     { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
     { name: 'Carpetas', href: '/folders', icon: FolderIcon },
     { name: 'Archivos', href: '/files', icon: DocumentIcon },
-    { name: 'Búsqueda IA', href: '/search', icon: MagnifyingGlassIcon },
+    ...(hasActivePlan() ? [{ name: 'Búsqueda IA', href: '/search', icon: MagnifyingGlassIcon }] : []),
+    ...(hasActivePlan() ? [{ name: 'Webhook Tester', href: '/admin/webhook-tester', icon: BellIcon }] : []),
     { name: 'Planes', href: '/plans', icon: CreditCardIcon },
     { name: 'Perfil', href: '/profile', icon: UserIcon },
   ]

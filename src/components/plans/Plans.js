@@ -2,12 +2,15 @@ import React, { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { db } from '../../lib/supabase'
 import googleDriveService from '../../lib/googleDrive'
+import { DriveWatchService } from '../../lib/driveWatchService'
+import emailService from '../../lib/emailService'
 import {
   CheckIcon,
   CreditCardIcon,
   ClockIcon,
   CloudIcon,
-  StarIcon
+  StarIcon,
+  ExclamationTriangleIcon
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
 import toast from 'react-hot-toast'
@@ -17,10 +20,36 @@ const Plans = () => {
   const [plans, setPlans] = useState([])
   const [loading, setLoading] = useState(true)
   const [processingPayment, setProcessingPayment] = useState(null)
+  const [isGoogleDriveConnected, setIsGoogleDriveConnected] = useState(false)
 
   useEffect(() => {
     loadPlans()
   }, [])
+
+  // Efecto para verificar Google Drive cuando userProfile cambie
+  useEffect(() => {
+    if (userProfile) {
+      checkGoogleDriveConnection()
+    }
+  }, [userProfile])
+
+  const checkGoogleDriveConnection = () => {
+    // Usar la información ya disponible en userProfile desde AuthContext
+    // que incluye las credenciales de Google Drive
+    const isConnected = !!(userProfile?.google_refresh_token && userProfile.google_refresh_token.trim() !== '')
+    setIsGoogleDriveConnected(isConnected)
+    console.log('Plans: Google Drive connection status:', isConnected)
+  }
+
+  const handleConnectGoogleDrive = () => {
+    try {
+      const authUrl = googleDriveService.generateAuthUrl()
+      window.location.href = authUrl
+    } catch (error) {
+      console.error('Error getting auth URL:', error)
+      toast.error('Error al conectar con Google Drive')
+    }
+  }
 
   const loadPlans = async () => {
     try {
@@ -68,6 +97,7 @@ const Plans = () => {
       
       // Registrar carpeta en base de datos
       const adminFolderData = {
+        user_id: user.id,
         correo: user.email,
         id_drive_carpeta: driveFolder.id,
         plan_name: planName,
@@ -88,6 +118,25 @@ const Plans = () => {
       }
       
       console.log('Admin folder created successfully:', savedFolder)
+      
+      // Configurar watch channel para la carpeta administrador
+      try {
+        const { data: credentials } = await db.userCredentials.getByUserId(user.id)
+        if (credentials && credentials.google_access_token) {
+          await DriveWatchService.createWatchChannel(
+            user.id,
+            driveFolder.id,
+            credentials.google_access_token
+          )
+          console.log('Watch channel configurado exitosamente para carpeta administrador')
+        } else {
+          console.warn('No se pudo configurar watch channel: credenciales no disponibles')
+        }
+      } catch (watchError) {
+        console.error('Error configurando watch channel:', watchError)
+        // No lanzar error ya que la carpeta se creó exitosamente
+      }
+      
       return driveFolder.id
       
     } catch (error) {
@@ -102,10 +151,16 @@ const Plans = () => {
       return
     }
 
-    if (hasActivePlan()) {
-      toast.error('Ya tienes un plan activo')
+    if (!isGoogleDriveConnected) {
+      toast.error('Debes vincular tu cuenta de Google Drive antes de comprar un plan.')
       return
     }
+
+    // Permitir comprar planes incluso si ya tiene uno activo
+    // if (hasActivePlan()) {
+    //   toast.error('Ya tienes un plan activo')
+    //   return
+    // }
 
     setProcessingPayment(plan.id)
     
@@ -169,6 +224,25 @@ const Plans = () => {
             toast.error('Pago procesado pero error activando el plan')
           } else {
             toast.success('¡Pago procesado exitosamente! Tu plan se ha activado.')
+            
+            // Enviar correo de bienvenida post-compra con todas las funcionalidades
+            try {
+              const emailService = await import('../../lib/emailService')
+              const emailServiceInstance = new emailService.default()
+              const planName = plan.name_es || plan.name || 'Plan Premium'
+              const userName = userProfile?.name || user?.user_metadata?.full_name || 'Usuario'
+              
+              await emailServiceInstance.sendPostPurchaseWelcomeEmail(
+                user.email, 
+                userName, 
+                planName,
+                user.id
+              )
+              console.log('Correo post-compra enviado exitosamente')
+            } catch (emailError) {
+              console.error('Error enviando correo post-compra:', emailError)
+              // No mostrar error al usuario ya que el plan se activó correctamente
+            }
           }
         } catch (error) {
           console.error('Error activating plan after payment:', error)
@@ -190,10 +264,16 @@ const Plans = () => {
       return
     }
 
-    if (hasActivePlan()) {
-      toast.error('Ya tienes un plan activo')
+    if (!isGoogleDriveConnected) {
+      toast.error('Debes vincular tu cuenta de Google Drive antes de comprar un plan.')
       return
     }
+
+    // Permitir comprar pruebas incluso si ya tiene un plan activo
+    // if (hasActivePlan()) {
+    //   toast.error('Ya tienes un plan activo')
+    //   return
+    // }
 
     setProcessingPayment(plan.id)
     
@@ -274,6 +354,23 @@ const Plans = () => {
         await createAdminFolder(plan.name_es || plan.name)
         toast.dismiss()
         toast.success('¡Plan activado y carpeta creada exitosamente!')
+        
+        // Enviar correo de bienvenida post-compra con todas las funcionalidades
+        try {
+          const planName = plan.name_es || plan.name || 'Plan de Prueba'
+          const userName = userProfile?.name || user?.user_metadata?.full_name || 'Usuario'
+          
+          await emailService.sendPostPurchaseWelcomeEmail(
+            user.email, 
+            userName, 
+            planName,
+            user.id
+          )
+          console.log('Correo post-compra enviado exitosamente')
+        } catch (emailError) {
+          console.error('Error enviando correo post-compra:', emailError)
+          // No mostrar error al usuario ya que el plan se activó correctamente
+        }
       } catch (folderError) {
         console.error('Error creating admin folder:', folderError)
         toast.dismiss()
@@ -290,10 +387,12 @@ const Plans = () => {
   }
 
   const formatPrice = (price) => {
-    return new Intl.NumberFormat('es-ES', {
+    // Convertir USD a CLP (aproximadamente 1 USD = 900 CLP)
+    const priceInCLP = price * 900
+    return new Intl.NumberFormat('es-CL', {
       style: 'currency',
-      currency: 'USD'
-    }).format(price)
+      currency: 'CLP'
+    }).format(priceInCLP)
   }
 
   const formatStorage = (bytes) => {
@@ -394,6 +493,31 @@ const Plans = () => {
         </div>
       )}
 
+      {/* Alerta Google Drive no conectado */}
+      {!isGoogleDriveConnected && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <CloudIcon className="h-5 w-5 text-blue-400 mr-3" />
+              <div>
+                <h3 className="text-sm font-medium text-blue-800">
+                  Google Drive no conectado
+                </h3>
+                <p className="text-sm text-blue-700 mt-1">
+                  Debes conectar tu cuenta de Google Drive para poder comprar planes.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleConnectGoogleDrive}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors duration-200"
+            >
+              Conectar Drive
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Planes */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
         {plans.map((plan) => {
@@ -461,32 +585,13 @@ const Plans = () => {
                     </button>
                   ) : (
                     <button
-                      onClick={() => handlePurchasePlan(plan)}
-                      disabled={isProcessing || hasActivePlan()}
-                      className={`w-full font-semibold py-3 px-6 rounded-lg transition-all duration-200 ${
-                        plan.plan_code?.toLowerCase() === 'premium'
-                          ? 'bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-white'
-                          : 'bg-primary-600 hover:bg-primary-700 text-white'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                      disabled
+                      className="w-full font-semibold py-3 px-6 rounded-lg transition-all duration-200 bg-gray-400 text-gray-600 cursor-not-allowed opacity-60"
                     >
-                      {isProcessing ? (
-                        <div className="flex items-center justify-center">
-                          <div className="animate-spin -ml-1 mr-3 h-5 w-5 text-white">
-                            <svg className="w-full h-full" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                            </svg>
-                          </div>
-                          Procesando...
-                        </div>
-                      ) : hasActivePlan() ? (
-                        'Ya tienes un plan activo'
-                      ) : (
-                        <div className="flex items-center justify-center">
-                          <CreditCardIcon className="h-5 w-5 mr-2" />
-                          Comprar Plan
-                        </div>
-                      )}
+                      <div className="flex items-center justify-center">
+                        <CreditCardIcon className="h-5 w-5 mr-2" />
+                        Comprar Plan
+                      </div>
                     </button>
                   )}
                   
@@ -494,8 +599,12 @@ const Plans = () => {
                   {!isCurrent && (
                     <button
                       onClick={() => handleTestPurchase(plan)}
-                      disabled={isProcessing}
-                      className="w-full mt-3 bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-6 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={!isGoogleDriveConnected || isProcessing}
+                      className={`w-full mt-3 font-bold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg ${
+                        !isGoogleDriveConnected
+                          ? 'bg-gray-400 text-gray-600 cursor-not-allowed opacity-60'
+                          : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none'
+                      }`}
                     >
                       {isProcessing ? (
                         <div className="flex items-center justify-center">
@@ -510,7 +619,7 @@ const Plans = () => {
                       ) : (
                         <div className="flex items-center justify-center">
                           <CreditCardIcon className="h-4 w-4 mr-2" />
-                          Comprar Prueba
+                          {!isGoogleDriveConnected ? 'Conecta Google Drive' : 'Comenzar Prueba'}
                         </div>
                       )}
                     </button>

@@ -214,7 +214,7 @@ class EmbeddingsService {
     try {
       const { data: tokenUsage, error: fetchError } = await supabase
         .from('user_tokens_usage')
-        .select('total_tokens')
+        .select('tokens_used, total_tokens')
         .eq('user_id', userId)
         .maybeSingle();
 
@@ -223,12 +223,12 @@ class EmbeddingsService {
       }
 
       if (tokenUsage) {
-        // Actualizar registro existente
-        const newTotal = (tokenUsage.total_tokens || 0) + tokensUsed;
+        // Actualizar registro existente - solo incrementar tokens_used
+        const newTokensUsed = (tokenUsage.tokens_used || 0) + tokensUsed;
         const { error: updateError } = await supabase
           .from('user_tokens_usage')
           .update({ 
-            total_tokens: newTotal,
+            tokens_used: newTokensUsed,
             last_updated_at: new Date().toISOString()
           })
           .eq('user_id', userId);
@@ -237,12 +237,13 @@ class EmbeddingsService {
           throw updateError;
         }
       } else {
-        // Crear nuevo registro
+        // Crear nuevo registro - inicializar con tokens_used y total_tokens por defecto
         const { error: insertError } = await supabase
           .from('user_tokens_usage')
           .insert({
             user_id: userId,
-            total_tokens: tokensUsed,
+            tokens_used: tokensUsed,
+            total_tokens: 1000, // tokens por defecto del plan gratuito
             last_updated_at: new Date().toISOString()
           });
 
@@ -266,19 +267,19 @@ class EmbeddingsService {
     }
     
     try {
-      // Obtener el total de tokens con maybeSingle para evitar errores
+      // Obtener el total de tokens usados con maybeSingle para evitar errores
       const { data: totalData, error: totalError } = await supabase
         .from('user_tokens_usage')
-        .select('total_tokens')
+        .select('tokens_used')
         .eq('user_id', userId)
         .limit(1)
         .maybeSingle();
 
       if (totalError) {
-        console.warn('Error getting total tokens:', totalError);
+        console.warn('Error getting total tokens used:', totalError);
       }
 
-      const totalTokens = totalData?.total_tokens || 0;
+      const totalTokensUsed = totalData?.tokens_used || 0;
 
       // Obtener solo los últimos 10 registros para reducir carga
       const { data: recentData, error: recentError } = await supabase
@@ -310,7 +311,7 @@ class EmbeddingsService {
       }, {});
 
       const result = {
-        total_tokens: totalTokens,
+        total_tokens: totalTokensUsed,
         by_operation: stats,
         records: records
       };
@@ -355,7 +356,7 @@ class EmbeddingsService {
       // Obtener tokens usados con maybeSingle para evitar errores
       const { data: tokenUsage, error: tokenError } = await supabase
         .from('user_tokens_usage')
-        .select('total_tokens')
+        .select('total_tokens, tokens_used')
         .eq('user_id', userId)
         .limit(1)
         .maybeSingle();
@@ -364,7 +365,8 @@ class EmbeddingsService {
         console.warn('Error getting token usage:', tokenError);
       }
 
-      const tokensUsed = tokenUsage?.total_tokens || 0;
+      const tokensUsed = tokenUsage?.tokens_used || 0;
+      const totalTokensFromPlan = tokenUsage?.total_tokens || 0;
 
       // Obtener información del usuario con maybeSingle
       const { data: user, error: userError } = await supabase
@@ -377,22 +379,9 @@ class EmbeddingsService {
         console.warn('Error getting user info:', userError);
       }
 
-      // Obtener el límite de tokens real del plan
-      let tokenLimit = 1000; // valor por defecto para plan gratuito
-      
-      if (user?.current_plan_id) {
-        const { data: planData, error: planError } = await supabase
-          .from('plans')
-          .select('token_limit_usage')
-          .eq('id', user.current_plan_id)
-          .maybeSingle();
-
-        if (planError) {
-          console.warn('Error getting plan info:', planError);
-        } else if (planData?.token_limit_usage) {
-          tokenLimit = planData.token_limit_usage;
-        }
-      }
+      // Usar los tokens totales del plan desde la tabla user_tokens_usage
+      // Si no hay registro, usar valor por defecto
+      let tokenLimit = totalTokensFromPlan || 1000; // valor por defecto para plan gratuito
 
       const result = {
         tokens_used: tokensUsed,

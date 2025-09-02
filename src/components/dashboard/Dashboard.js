@@ -18,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
 import TokenUsage from '../embeddings/TokenUsage'
+import TemplateDownload from '../templates/TemplateDownload'
 import toast from 'react-hot-toast'
 
 const Dashboard = () => {
@@ -129,12 +130,14 @@ const Dashboard = () => {
       try {
         const { data: tokenData, error: tokenError } = await supabase
           .from('user_tokens_usage')
-          .select('total_tokens')
+          .select('tokens_used, total_tokens')
           .eq('user_id', user.id)
           .maybeSingle()
         if (!tokenError && tokenData) {
-          realStats.tokensUsed = tokenData.total_tokens || 0
-          console.log('Dashboard: Tokens loaded:', realStats.tokensUsed)
+          realStats.tokensUsed = tokenData.tokens_used || 0
+          realStats.tokenLimit = tokenData.total_tokens || 1000 // usar total_tokens como límite
+          console.log('Dashboard: Tokens used loaded:', realStats.tokensUsed)
+          console.log('Dashboard: Token limit from user_tokens_usage:', realStats.tokenLimit)
         }
       } catch (tokenError) {
         console.error('Error loading tokens:', tokenError)
@@ -579,6 +582,13 @@ const Dashboard = () => {
         </div>
       </div>
 
+      {/* Plantilla de Rutina - Solo para usuarios con plan activo */}
+      {hasActivePlan() && (
+        <div className="mt-8">
+          <TemplateDownload />
+        </div>
+      )}
+
       {/* Historial de Compras */}
       {payments.length > 0 && (
         <div className="bg-white rounded-lg shadow-md p-6">
@@ -601,6 +611,9 @@ const Dashboard = () => {
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Fecha
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Expiración
                   </th>
                 </tr>
               </thead>
@@ -627,6 +640,20 @@ const Dashboard = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {payment.paid_at ? formatDate(payment.paid_at) : 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {(() => {
+                        if (payment.plan_expiration) {
+                          return formatDate(payment.plan_expiration)
+                        }
+                        if (payment.paid_at && payment.plans?.duration_days) {
+                          const paidDate = new Date(payment.paid_at)
+                          const expirationDate = new Date(paidDate)
+                          expirationDate.setDate(paidDate.getDate() + payment.plans.duration_days)
+                          return formatDate(expirationDate.toISOString())
+                        }
+                        return 'N/A'
+                      })()} 
                     </td>
                   </tr>
                 ))}

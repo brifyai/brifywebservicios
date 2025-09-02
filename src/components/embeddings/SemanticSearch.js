@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import embeddingsService from '../../lib/embeddings';
 import LoadingSpinner from '../common/LoadingSpinner';
+import SubtleSpinner from '../common/SubtleSpinner';
 import AIChat from './AIChat';
 import {
   MagnifyingGlassIcon,
@@ -138,7 +139,7 @@ const SemanticSearch = () => {
             >
               {loading ? (
                 <>
-                  <LoadingSpinner size="sm" />
+                  <SubtleSpinner size="sm" />
                   <span className="ml-2">Buscando...</span>
                 </>
               ) : (
@@ -155,8 +156,8 @@ const SemanticSearch = () => {
         {hasSearched && (
           <div className="border-t border-gray-200">
             {loading ? (
-              <div className="p-8">
-                <LoadingSpinner text="Analizando contenido con IA..." />
+              <div className="p-6 flex justify-center">
+                <SubtleSpinner size="md" text="Analizando contenido..." />
               </div>
             ) : results.length > 0 ? (
               <div className="p-6">
