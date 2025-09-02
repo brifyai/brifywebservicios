@@ -361,8 +361,11 @@ export const AuthProvider = ({ children }) => {
     let profileLoadTimeout = null
     
     const { data: { subscription } } = auth.onAuthStateChange(async (event, session) => {
-      // Solo procesar si no es la inicialización
-      if (event === 'INITIAL_SESSION') {
+      console.log('AuthContext: Auth state change event:', event, 'session exists:', !!session)
+      
+      // Para INITIAL_SESSION, solo procesar si no tenemos userProfile
+      if (event === 'INITIAL_SESSION' && userProfile) {
+        console.log('AuthContext: INITIAL_SESSION with existing userProfile, skipping')
         return
       }
       
@@ -372,8 +375,9 @@ export const AuthProvider = ({ children }) => {
         setUser(session.user)
         setIsAuthenticated(true)
         
-        // Cargar perfil si no tenemos userProfile (inicialización o refresh)
-        if (!userProfile) {
+        // Cargar perfil si no tenemos userProfile o si es INITIAL_SESSION
+        if (!userProfile || event === 'INITIAL_SESSION') {
+          console.log('AuthContext: Loading userProfile for event:', event)
           // Debounce para evitar llamadas excesivas
           if (profileLoadTimeout) {
             clearTimeout(profileLoadTimeout)

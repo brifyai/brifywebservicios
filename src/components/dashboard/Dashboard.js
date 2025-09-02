@@ -47,11 +47,14 @@ const Dashboard = () => {
   useEffect(() => {
     let loadTimeout = null
     
-    if (user) {
+    if (user && userProfile) {
       // Debounce para evitar llamadas excesivas
       loadTimeout = setTimeout(() => {
         loadDashboardData()
       }, 300)
+    } else if (user && !userProfile) {
+      // Usuario existe pero userProfile aún no se ha cargado, mantener loading
+      console.log('Dashboard: User exists but userProfile not loaded yet')
     } else {
       // Si no hay usuario, asegurar que loading sea false
       setLoading(false)
@@ -62,7 +65,7 @@ const Dashboard = () => {
         clearTimeout(loadTimeout)
       }
     }
-  }, [user])
+  }, [user, userProfile])
 
   // Efecto separado para verificar Google Drive cuando userProfile cambie
   useEffect(() => {
@@ -78,7 +81,12 @@ const Dashboard = () => {
       return
     }
     
-    console.log('Dashboard: Starting to load data for user:', user.id)
+    if (!userProfile) {
+      console.log('Dashboard: UserProfile not available yet, skipping load')
+      return
+    }
+    
+    console.log('Dashboard: Starting to load data for user:', user.id, 'with plan:', userProfile.current_plan_id)
     
     try {
       setLoading(true)
@@ -105,43 +113,66 @@ const Dashboard = () => {
         console.error('Error loading folders:', folderError)
       }
       
-      // Obtener archivos directamente desde documentos_entrenador usando columna entrenador
+      // Obtener archivos contando carpetas_usuario donde administrador = user.email
       try {
-        const { data: documentsData, error: documentsError } = await supabase
-          .from('documentos_entrenador')
-          .select('metadata, embedding')
-          .eq('entrenador', user.email)
-        if (!documentsError && documentsData) {
-          realStats.totalFiles = documentsData.length
-          // Calcular almacenamiento total basado en el tamaño real del embedding
-          realStats.storageUsed = documentsData.reduce((total, doc) => {
-            const embedding = doc.embedding || []
-            const embeddingSize = embedding.length * 4 // 4 bytes por float
-            return total + embeddingSize
-          }, 0)
-          console.log('Dashboard: Files loaded:', realStats.totalFiles)
-          console.log('Dashboard: Storage calculated from embedding size:', realStats.storageUsed)
+        const { data: userFoldersData, error: userFoldersError } = await supabase
+          .from('carpetas_usuario')
+          .select('*')
+          .eq('administrador', user.email)
+        
+        if (!userFoldersError && userFoldersData) {
+          realStats.totalFiles = userFoldersData.length
+          console.log('Dashboard: Total files (carpetas_usuario) loaded:', realStats.totalFiles)
         }
       } catch (fileError) {
         console.error('Error loading files:', fileError)
       }
       
+      // Calcular almacenamiento desde documentos_entrenador
+      try {
+        const { data: chunksData, error: chunksError } = await supabase
+          .from('documentos_entrenador')
+          .select('embedding')
+          .eq('entrenador', user.email)
+
+        if (!chunksError && chunksData) {
+          const totalSize = chunksData.reduce((acc, chunk) => {
+            return acc + (chunk.embedding ? JSON.stringify(chunk.embedding).length : 0)
+          }, 0)
+          
+          realStats.storageUsed = totalSize
+          console.log('Dashboard: Storage calculated:', totalSize, 'bytes')
+        }
+      } catch (storageError) {
+        console.error('Error calculating storage:', storageError)
+      }
+      
       // Obtener límite de tokens del plan actual PRIMERO
       let planTokenLimit = 1000 // valor por defecto para plan gratuito
-      if (userProfile?.current_plan_id) {
+      console.log('Dashboard: UserProfile current_plan_id:', userProfile.current_plan_id)
+      
+      if (userProfile.current_plan_id) {
         try {
+          console.log('Dashboard: Fetching plan data for plan ID:', userProfile.current_plan_id)
           const { data: planData, error: planError } = await supabase
             .from('plans')
             .select('token_limit_usage')
             .eq('id', userProfile.current_plan_id)
             .maybeSingle()
+          
+          console.log('Dashboard: Plan query result:', { planData, planError })
+          
           if (!planError && planData) {
             planTokenLimit = planData.token_limit_usage || 1000
             console.log('Dashboard: Plan token limit loaded:', planTokenLimit)
+          } else {
+            console.warn('Dashboard: No plan data found or error occurred, using default limit')
           }
         } catch (planError) {
           console.error('Error loading plan token limit:', planError)
         }
+      } else {
+        console.log('Dashboard: No current_plan_id found, using default token limit:', planTokenLimit)
       }
       
       // Obtener tokens usados y establecer el límite correcto

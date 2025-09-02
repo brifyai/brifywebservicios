@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { db, supabase } from '../../lib/supabase'
 import googleDriveService from '../../lib/googleDrive'
@@ -20,16 +21,19 @@ import {
   DocumentTextIcon
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
+import RoutineUpload from '../routines/RoutineUpload'
 import toast from 'react-hot-toast'
 
 const Files = () => {
   const { user, userProfile, hasActivePlan } = useAuth()
+  const location = useLocation()
   const [files, setFiles] = useState([])
   const [folders, setFolders] = useState([])
   const [selectedFolder, setSelectedFolder] = useState('')
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState({})
+  const [showRoutineUpload, setShowRoutineUpload] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [fileTypeFilter, setFileTypeFilter] = useState('all')
   const [sortBy, setSortBy] = useState('date')
@@ -51,6 +55,15 @@ const Files = () => {
       loadFiles(selectedFolder)
     }
   }, [selectedFolder])
+
+  // Manejar carpeta preseleccionada desde navegación
+  useEffect(() => {
+    if (location.state?.selectedFolder) {
+      const folder = location.state.selectedFolder
+      setSelectedFolder(folder.id.toString())
+      toast.success(`Carpeta "${folder.folder_name}" seleccionada`)
+    }
+  }, [location.state])
 
   const loadFolders = async () => {
     try {
@@ -92,17 +105,32 @@ const Files = () => {
       
       let dbFiles = []
       
-      if (folderId) {
-        // Cargar archivos de una carpeta específica
-        const { data, error } = await db.trainerDocuments.getByFolder(folderId)
-        if (error) throw error
-        dbFiles = data || []
-      } else {
-        // Cargar todos los archivos del usuario
-        const { data, error } = await db.trainerDocuments.getByUser(user.id)
-        if (error) throw error
-        dbFiles = data || []
-      }
+      // Cargar archivos principales desde documentos_usuario_entrenador
+      // Esto evita mostrar los chunks individuales y solo muestra el archivo principal
+      const { data, error } = await supabase
+        .from('documentos_usuario_entrenador')
+        .select('*')
+        .order('created_at', { ascending: false })
+      
+      if (error) throw error
+      
+      // Transformar los datos para que sean compatibles con la interfaz existente
+      dbFiles = (data || []).map(file => ({
+        id: file.id,
+        created_at: file.created_at,
+        metadata: {
+          name: file.file_name,
+          file_name: file.file_name,
+          file_type: file.file_type,
+          file_id: file.file_id, // ID de Google Drive
+          source: 'documentos_usuario_entrenador',
+          correo: file.usuario
+        },
+        // Agregar campos adicionales para compatibilidad
+        entrenador: file.entrenador,
+        usuario: file.usuario,
+        google_file_id: file.file_id
+      }))
       
       // Si el usuario tiene Google Drive conectado, obtener información adicional
       if (userProfile?.google_refresh_token) {
@@ -114,9 +142,9 @@ const Files = () => {
           // Enriquecer archivos con información de Google Drive
           const enrichedFiles = await Promise.all(
             dbFiles.map(async (file) => {
-              if (file.metadata?.google_file_id) {
+              if (file.google_file_id) {
                 try {
-                  const driveInfo = await googleDriveService.getFileInfo(file.metadata.google_file_id)
+                  const driveInfo = await googleDriveService.getFileInfo(file.google_file_id)
                   return {
                     ...file,
                     driveInfo,
@@ -125,7 +153,7 @@ const Files = () => {
                     downloadUrl: driveInfo.webContentLink
                   }
                 } catch (error) {
-                  console.error(`Error getting info for file ${file.metadata?.google_file_id}:`, error)
+                  console.error(`Error getting info for file ${file.google_file_id}:`, error)
                   return { ...file, synced: false }
                 }
               }
@@ -150,9 +178,91 @@ const Files = () => {
     }
   }
 
+  // Tipos de archivo permitidos
+  const allowedFileTypes = {
+    // Documentos PDF
+    'application/pdf': '.pdf',
+    // Documentos Word
+    'application/msword': '.doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+    // Documentos Excel
+    'application/vnd.ms-excel': '.xls',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+    // Documentos PowerPoint (opcional)
+    'application/vnd.ms-powerpoint': '.ppt',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+    // Documentos de texto
+    'text/plain': '.txt'
+  }
+
+  // Extensiones bloqueadas
+  const blockedExtensions = [
+    '.exe', '.bat', '.cmd', '.com', '.scr', '.msi', '.dll',
+    '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',
+    '.js', '.vbs', '.ps1', '.sh'
+  ]
+
+  const validateFileType = (file) => {
+    const fileName = file.name.toLowerCase()
+    const fileType = file.type
+    
+    // Verificar extensiones bloqueadas
+    const hasBlockedExtension = blockedExtensions.some(ext => fileName.endsWith(ext))
+    if (hasBlockedExtension) {
+      return {
+        valid: false,
+        reason: `Archivo ${file.name}: Tipo de archivo no permitido por seguridad`
+      }
+    }
+    
+    // Verificar tipos MIME permitidos
+    if (fileType && allowedFileTypes[fileType]) {
+      return { valid: true }
+    }
+    
+    // Verificar por extensión si el MIME type no está disponible
+    const allowedExtensions = Object.values(allowedFileTypes)
+    const hasAllowedExtension = allowedExtensions.some(ext => fileName.endsWith(ext))
+    
+    if (hasAllowedExtension) {
+      return { valid: true }
+    }
+    
+    return {
+      valid: false,
+      reason: `Archivo ${file.name}: Solo se permiten documentos PDF, Word, Excel, PowerPoint y archivos de texto`
+    }
+  }
+
   const handleFileSelect = (event) => {
     const files = Array.from(event.target.files)
-    setSelectedFiles(files)
+    
+    // Validar cada archivo
+    const validationResults = files.map(validateFileType)
+    const invalidFiles = validationResults.filter(result => !result.valid)
+    
+    if (invalidFiles.length > 0) {
+      // Mostrar errores para archivos no válidos
+      invalidFiles.forEach(result => {
+        toast.error(result.reason)
+      })
+      
+      // Solo mantener archivos válidos
+      const validFiles = files.filter((file, index) => validationResults[index].valid)
+      
+      if (validFiles.length === 0) {
+        // Si no hay archivos válidos, limpiar la selección
+        event.target.value = ''
+        return
+      }
+      
+      setSelectedFiles(validFiles)
+      toast.success(`${validFiles.length} archivo(s) válido(s) seleccionado(s)`)
+    } else {
+      setSelectedFiles(files)
+      toast.success(`${files.length} archivo(s) seleccionado(s)`)
+    }
+    
     setShowUploadModal(true)
   }
 
@@ -217,9 +327,10 @@ const Files = () => {
             googleFileId = driveFile.id
           }
           
-          // Extraer contenido y generar embeddings reales
+          // Extraer contenido y procesar con chunking inteligente
           let content = ''
           let embedding = []
+          let tokensUsed = 0
           
           try {
             if (fileContentExtractor.isSupported(file)) {
@@ -227,22 +338,165 @@ const Files = () => {
               content = processed.content
               embedding = processed.embedding
               console.log(`✅ Contenido extraído: ${content.length} caracteres`)
+              
+              // Calcular tokens reales basados en el contenido
+              tokensUsed = Math.ceil(content.length / 4) // Aproximación estándar para tokens
+              
+              // Registrar uso de tokens usando el sistema correcto
+              const embeddingsServiceLib = await import('../../lib/embeddings')
+              await embeddingsServiceLib.default.trackTokenUsage(user.id, tokensUsed, 'file_embedding')
+              
             } else {
               console.warn(`⚠️ Tipo de archivo no soportado: ${file.type}`)
-              content = `Archivo ${file.name} - Tipo no soportado para extracción de contenido`
-              embedding = embeddingService.generateMockEmbedding()
+              // Abortar el proceso para archivos no soportados
+              throw new Error(`Formato de archivo no compatible: ${file.type}. Solo se permiten documentos de texto, PDF, Word y Excel.`)
             }
           } catch (extractError) {
             console.error('Error extrayendo contenido:', extractError)
-            content = `Error extrayendo contenido de ${file.name}: ${extractError.message}`
-            embedding = embeddingService.generateMockEmbedding()
+            // Abortar completamente el proceso si no se puede extraer contenido
+            throw new Error(`No se pudo procesar el archivo ${file.name}: ${extractError.message}`)
+          }
+          
+          // Verificar si el contenido excede el límite de caracteres (10,240)
+          const MAX_CONTENT_LENGTH = 10240
+          let contentToStore = content
+          
+          if (content.length > MAX_CONTENT_LENGTH) {
+            console.log(`⚠️ Contenido muy largo (${content.length} caracteres), creando chunks en documentos_entrenador...`)
+            
+            // Importar embeddings service para chunking
+            const embeddingsServiceLib = await import('../../lib/embeddings')
+            
+            // Dividir contenido en chunks
+            const chunks = embeddingsServiceLib.default.splitTextIntoChunks(content, 8000)
+            console.log(`✂️ Creando ${chunks.length} chunks en documentos_entrenador`)
+            
+            // Crear documento principal (truncado)
+            contentToStore = content.substring(0, MAX_CONTENT_LENGTH - 200) + 
+              `\n\n[DOCUMENTO DIVIDIDO EN CHUNKS: Este documento fue dividido en ${chunks.length} partes para optimizar la búsqueda. Contenido total: ${content.length} caracteres]`
+            
+            // Metadata del documento principal
+            const baseMetadata = {
+              name: file.name,
+              correo: folder.correo || folder.folder_name,
+              source: 'web_upload',
+              file_id: googleFileId,
+              file_type: file.type,
+              file_size: fileSize,
+              upload_date: new Date().toISOString(),
+              blobType: file.type,
+              is_chunked: true,
+              original_length: content.length,
+              chunks_count: chunks.length,
+              chunk_type: 'main'
+            }
+            
+            // Guardar documento principal primero
+            const mainFileData = {
+              entrenador: user.email,
+              folder_id: selectedFolder,
+              content: contentToStore,
+              metadata: baseMetadata,
+              embedding: embedding
+            }
+            
+            const { data: mainDoc, error: mainError } = await db.trainerDocuments.create(mainFileData)
+            if (mainError) {
+              console.error('Error guardando documento principal:', mainError)
+              throw mainError
+            }
+            
+            console.log('✅ Documento principal guardado, creando chunks...')
+            
+            // Crear chunks como registros separados
+            let successfulChunks = 0
+            for (let i = 0; i < chunks.length; i++) {
+              try {
+                // Generar embedding para el chunk
+                const chunkEmbeddingResult = await embeddingsServiceLib.default.generateEmbedding(chunks[i], user.id)
+                
+                const chunkData = {
+                  entrenador: user.email,
+                  folder_id: selectedFolder,
+                  content: chunks[i],
+                  metadata: {
+                    ...baseMetadata,
+                    chunk_type: 'chunk',
+                    chunk_index: i + 1,
+                    parent_file_id: googleFileId,
+                    chunk_of_total: `${i + 1}/${chunks.length}`,
+                    name: `${file.name} - Parte ${i + 1}`,
+                    source: 'chunk_from_web_upload'
+                  },
+                  embedding: chunkEmbeddingResult.embedding
+                }
+                
+                const { error: chunkError } = await db.trainerDocuments.create(chunkData)
+                if (chunkError) {
+                  console.error(`Error guardando chunk ${i + 1}:`, chunkError)
+                } else {
+                  successfulChunks++
+                  console.log(`✅ Chunk ${i + 1}/${chunks.length} guardado`)
+                }
+                
+                // Registrar tokens del chunk
+                await embeddingsServiceLib.default.trackTokenUsage(user.id, chunkEmbeddingResult.tokens_used, 'file_embedding')
+                
+              } catch (chunkError) {
+                console.error(`Error procesando chunk ${i + 1}:`, chunkError)
+              }
+            }
+            
+            console.log(`✅ ${successfulChunks}/${chunks.length} chunks guardados exitosamente`)
+            
+            // Actualizar metadata del documento principal
+            await supabase
+              .from('documentos_entrenador')
+              .update({
+                metadata: {
+                  ...baseMetadata,
+                  chunks_created: successfulChunks,
+                  chunks_failed: chunks.length - successfulChunks
+                }
+              })
+              .eq('id', mainDoc.id)
+            
+            // Continuar con el flujo normal para el documento principal
+            // No necesitamos crear otro registro ya que el principal ya se guardó
+            
+            // Registrar en documentos_usuario_entrenador
+            const userTrainerDocData = {
+              file_id: googleFileId,
+              file_type: file.type,
+              file_name: file.name,
+              usuario: folder.correo || folder.folder_name
+            }
+            
+            const { error: userTrainerError } = await db.userTrainerDocuments.create(userTrainerDocData)
+            if (userTrainerError) {
+              console.error('Error registrando en documentos_usuario_entrenador:', userTrainerError)
+            }
+            
+            // Actualizar estadísticas del usuario
+            const embeddingSize = embedding.length * 4
+            await db.users.update(user.id, {
+              used_storage_bytes: (userProfile.used_storage_bytes || 0) + embeddingSize
+            })
+            
+            console.log(`✅ Tokens registrados correctamente: ${tokensUsed} tokens para ${file.name}`)
+            
+            newUploadProgress[fileId] = 100
+            setUploadProgress({ ...newUploadProgress })
+            
+            // Salir del bucle ya que el archivo se procesó completamente
+            continue
           }
           
           // Guardar en la base de datos con estructura JSONB correcta
           const fileData = {
             entrenador: user.email, // Email del entrenador
             folder_id: selectedFolder,
-            content: content, // Contenido extraído del archivo
+            content: contentToStore, // Contenido limitado o completo según el tamaño
             metadata: {
               name: file.name,
               correo: folder.correo || folder.folder_name, // Email de la carpeta (usuario)
@@ -251,7 +505,10 @@ const Files = () => {
               file_type: file.type,
               file_size: fileSize,
               upload_date: new Date().toISOString(),
-              blobType: file.type
+              blobType: file.type,
+              is_chunked: content.length > MAX_CONTENT_LENGTH,
+              original_length: content.length,
+              chunks_count: content.length > MAX_CONTENT_LENGTH ? Math.ceil(content.length / 8000) : 1
             },
             embedding: embedding
           }
@@ -264,9 +521,7 @@ const Files = () => {
             file_id: googleFileId, // ID del archivo en Google Drive
             file_type: file.type,
             file_name: file.name,
-            usuario: folder.correo || folder.folder_name, // Email de la carpeta (usuario)
-            entrenador: user.email, // Email del entrenador que sube el archivo
-            created_at: new Date().toISOString()
+            usuario: folder.correo || folder.folder_name // Email de la carpeta (usuario)
           }
           
           const { error: userTrainerError } = await db.userTrainerDocuments.create(userTrainerDocData)
@@ -277,48 +532,46 @@ const Files = () => {
           
           // Actualizar estadísticas del usuario
           const embeddingSize = embedding.length * 4 // 4 bytes por float
-          const tokensUsed = Math.ceil(file.size / 1000) // Simulación de tokens
           
           // Actualizar almacenamiento usado
           await db.users.update(user.id, {
             used_storage_bytes: (userProfile.used_storage_bytes || 0) + embeddingSize
           })
           
-          // Actualizar tokens usados en tabla separada
-          const { data: tokenUsage } = await supabase
-            .from('user_tokens_usage')
-            .select('total_tokens')
-            .eq('user_id', user.id)
-            .single()
-          
-          if (tokenUsage) {
-            await supabase
-              .from('user_tokens_usage')
-              .update({
-                total_tokens: (tokenUsage.total_tokens || 0) + tokensUsed,
-                last_updated_at: new Date().toISOString()
-              })
-              .eq('user_id', user.id)
-          } else {
-            await supabase
-              .from('user_tokens_usage')
-              .insert({
-                user_id: user.id,
-                total_tokens: tokensUsed,
-                last_updated_at: new Date().toISOString()
-              })
-          }
+          // Los tokens ya se registraron correctamente usando embeddingsService.trackTokenUsage
+          console.log(`✅ Tokens registrados correctamente: ${tokensUsed} tokens para ${file.name}`)
           
           newUploadProgress[fileId] = 100
           setUploadProgress({ ...newUploadProgress })
           
         } catch (error) {
           console.error(`Error uploading file ${file.name}:`, error)
-          toast.error(`Error subiendo ${file.name}`)
+          
+          // Mostrar mensaje específico según el tipo de error
+          if (error.message.includes('No se pudo procesar el archivo') || 
+              error.message.includes('Formato de archivo no compatible')) {
+            toast.error(`${file.name}: ${error.message}`)
+          } else {
+            toast.error(`Error subiendo ${file.name}: ${error.message}`)
+          }
+          
+          // Marcar el progreso como fallido
+          newUploadProgress[fileId] = -1 // -1 indica error
+          setUploadProgress({ ...newUploadProgress })
         }
       }
       
-      toast.success(`${selectedFiles.length} archivo(s) subido(s) exitosamente`)
+      // Contar archivos exitosos y fallidos
+      const successfulFiles = Object.values(newUploadProgress).filter(progress => progress === 100).length
+      const failedFiles = Object.values(newUploadProgress).filter(progress => progress === -1).length
+      
+      if (successfulFiles > 0 && failedFiles === 0) {
+        toast.success(`${successfulFiles} archivo(s) subido(s) exitosamente`)
+      } else if (successfulFiles > 0 && failedFiles > 0) {
+        toast.success(`${successfulFiles} archivo(s) subido(s) exitosamente. ${failedFiles} archivo(s) fallaron.`)
+      } else if (failedFiles > 0) {
+        toast.error(`Todos los archivos fallaron al subirse`)
+      }
       
       // Recargar archivos
       await loadFiles(selectedFolder)
@@ -343,39 +596,41 @@ const Files = () => {
     
     try {
       // Eliminar de Google Drive si existe
-      if ((file.metadata?.google_file_id || file.metadata?.file_id) && userProfile?.google_refresh_token) {
+      if (file.google_file_id && userProfile?.google_refresh_token) {
         try {
           await googleDriveService.setTokens({
             refresh_token: userProfile.google_refresh_token
           })
-          const fileIdToDelete = file.metadata?.google_file_id || file.metadata?.file_id
-          await googleDriveService.deleteFile(fileIdToDelete)
-          console.log('Archivo eliminado de Google Drive:', fileIdToDelete)
+          await googleDriveService.deleteFile(file.google_file_id)
+          console.log('Archivo eliminado de Google Drive:', file.google_file_id)
         } catch (error) {
           console.error('Error deleting from Google Drive:', error)
         }
       }
       
-      // Eliminar de la base de datos
-      const { error } = await db.trainerDocuments.delete(file.id)
-      if (error) throw error
+      // Eliminar de documentos_usuario_entrenador
+      const { error: userTrainerDeleteError } = await supabase
+        .from('documentos_usuario_entrenador')
+        .delete()
+        .eq('id', file.id)
       
-      // También eliminar de documentos_usuario_entrenador si existe el file_id
-      if (file.metadata?.file_id) {
-        const { error: userTrainerDeleteError } = await db.userTrainerDocuments.deleteByFileId(file.metadata.file_id)
-        if (userTrainerDeleteError) {
-          console.error('Error eliminando de documentos_usuario_entrenador:', userTrainerDeleteError)
+      if (userTrainerDeleteError) throw userTrainerDeleteError
+      
+      // También eliminar todos los chunks relacionados de documentos_entrenador
+      if (file.google_file_id) {
+        const { error: chunksDeleteError } = await supabase
+          .from('documentos_entrenador')
+          .delete()
+          .eq('metadata->>file_id', file.google_file_id)
+        
+        if (chunksDeleteError) {
+          console.error('Error eliminando chunks de documentos_entrenador:', chunksDeleteError)
           // No lanzamos error para no interrumpir el flujo principal
         }
       }
       
-      // Actualizar estadísticas del usuario
-      const embeddingSize = file.embedding ? file.embedding.length * 4 : 0
-      const currentStorage = Math.max(0, (userProfile.used_storage_bytes || 0) - embeddingSize)
-      
-      await db.users.update(user.id, {
-        used_storage_bytes: currentStorage
-      })
+      // Las estadísticas de almacenamiento se actualizarán automáticamente
+      // ya que se calculan desde documentos_entrenador en el dashboard
       
       // Recargar archivos
       await loadFiles(selectedFolder)
@@ -485,18 +740,29 @@ const Files = () => {
           </p>
         </div>
         
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="mt-4 sm:mt-0 bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors flex items-center"
-        >
-          <CloudArrowUpIcon className="h-5 w-5 mr-2" />
-          Subir Archivos
-        </button>
+        <div className="flex space-x-3 mt-4 sm:mt-0">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors flex items-center"
+          >
+            <CloudArrowUpIcon className="h-5 w-5 mr-2" />
+            Subir Archivos
+          </button>
+          
+          <button
+            onClick={() => setShowRoutineUpload(true)}
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center"
+          >
+            <DocumentTextIcon className="h-5 w-5 mr-2" />
+            Subir Rutina
+          </button>
+        </div>
         
         <input
           ref={fileInputRef}
           type="file"
           multiple
+          accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain"
           onChange={handleFileSelect}
           className="hidden"
         />
@@ -615,9 +881,6 @@ const Files = () => {
                     Archivo
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Tamaño
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Fecha
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -648,9 +911,6 @@ const Files = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {formatFileSize(file.metadata?.file_size || 0)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {formatDate(file.created_at)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -665,9 +925,9 @@ const Files = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div className="flex items-center justify-end space-x-2">
-                          {file.metadata?.file_id && (
+                          {file.google_file_id && (
                             <a
-                              href={`https://drive.google.com/file/d/${file.metadata.file_id}/view`}
+                              href={`https://drive.google.com/file/d/${file.google_file_id}/view`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-blue-600 hover:text-blue-700 p-1"
@@ -705,6 +965,17 @@ const Files = () => {
         </div>
       )}
 
+      {/* Routine Upload Modal */}
+      {showRoutineUpload && (
+        <RoutineUpload
+          onUploadComplete={() => {
+            setShowRoutineUpload(false)
+            loadFiles(selectedFolder) // Recargar archivos
+          }}
+          onClose={() => setShowRoutineUpload(false)}
+        />
+      )}
+
       {/* Upload Modal */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -726,12 +997,23 @@ const Files = () => {
                   }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 >
-                  <option value="">Seleccionar carpeta</option>
-                  {folders.map((folder) => (
-                    <option key={folder.id} value={folder.id}>
-                      {folder.type === 'admin' ? folder.folder_name : folder.correo || 'Carpeta sin nombre'}
-                    </option>
-                  ))}
+                  {!selectedFolder && <option value="">Seleccionar carpeta</option>}
+                  {folders
+                    .filter(folder => {
+                      // Filtrar carpetas que tienen nombre válido
+                      const name = folder.type === 'admin' ? folder.folder_name : folder.correo
+                      return name && name.trim() !== ''
+                    })
+                    .map((folder) => {
+                      const displayName = folder.type === 'admin' 
+                        ? folder.folder_name 
+                        : `${folder.correo} (Usuario)`
+                      return (
+                        <option key={folder.id} value={folder.id}>
+                          {displayName}
+                        </option>
+                      )
+                    })}
                 </select>
               </div>
               

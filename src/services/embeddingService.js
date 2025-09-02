@@ -117,7 +117,7 @@ class EmbeddingService {
       const content = await fileContentExtractor.extractContent(file)
       
       if (!content || content.trim().length === 0) {
-        throw new Error('No se pudo extraer contenido del archivo')
+        throw new Error('No se pudo extraer contenido del archivo, estructura no compatible')
       }
 
       // Generar embedding del contenido

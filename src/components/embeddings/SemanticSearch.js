@@ -9,7 +9,8 @@ import {
   DocumentIcon,
   SparklesIcon,
   ExclamationTriangleIcon,
-  ChatBubbleLeftRightIcon
+  ChatBubbleLeftRightIcon,
+  ArrowDownTrayIcon
 } from '@heroicons/react/24/outline';
 import { toast } from 'react-hot-toast';
 
@@ -167,33 +168,61 @@ const SemanticSearch = () => {
                 
                 <div className="space-y-4">
                   {results.map((result, index) => (
-                    <div key={index} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                    <div key={result.id || index} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow bg-white">
                       <div className="flex items-start space-x-3">
                         <DocumentIcon className="h-5 w-5 text-blue-600 mt-1 flex-shrink-0" />
                         
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between mb-2">
                             <h4 className="text-sm font-medium text-gray-900 truncate">
-                              {result.file_name || `Archivo ${result.file_id}`}
+                              {result.metadata?.name || result.metadata?.file_name || `Documento ${result.id}`}
                             </h4>
-                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                              Relevancia: {(result.similarity * 100).toFixed(1)}%
-                            </span>
+                            <div className="flex items-center space-x-2">
+                              {result.metadata?.file_id && (
+                                <button
+                                  onClick={() => {
+                                    if (result.metadata.file_id) {
+                                      window.open(`https://drive.google.com/file/d/${result.metadata.file_id}/view`, '_blank');
+                                    }
+                                  }}
+                                  className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                                  title="Ver documento original"
+                                >
+                                  <ArrowDownTrayIcon className="h-4 w-4" />
+                                </button>
+                              )}
+                              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                                Relevancia: {(result.similarity * 100).toFixed(1)}%
+                              </span>
+                            </div>
                           </div>
                           
                           <div className="text-sm text-gray-700 mb-2">
                             <div 
+                              className="leading-relaxed"
                               dangerouslySetInnerHTML={{
-                                __html: highlightText(truncateText(result.content), query)
+                                __html: highlightText(truncateText(result.content || 'Contenido no disponible'), query)
                               }}
                             />
                           </div>
                           
-                          <div className="flex items-center text-xs text-gray-500 space-x-4">
-                            <span>Chunk {result.chunk_index + 1}</span>
-                            {result.created_at && (
-                              <span>
-                                {new Date(result.created_at).toLocaleDateString('es-ES')}
+                          <div className="flex items-center justify-between text-xs text-gray-500">
+                            <div className="flex items-center space-x-4">
+                              <span className="bg-gray-50 px-2 py-1 rounded">ID: {result.id}</span>
+                              {result.created_at && (
+                                <span className="flex items-center">
+                                  📅 {new Date(result.created_at).toLocaleDateString('es-ES')}
+                                </span>
+                              )}
+                              {result.metadata?.correo && (
+                                <span className="flex items-center">
+                                  👤 {result.metadata.correo}
+                                </span>
+                              )}
+                            </div>
+                            {result.metadata?.file_type && (
+                              <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs">
+                                {result.metadata.file_type.split('/').pop().toUpperCase()}
                               </span>
                             )}
                           </div>

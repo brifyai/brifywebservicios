@@ -51,38 +51,18 @@ class EmbeddingsService {
     }
   }
 
-  // Procesar archivo para embeddings
+  // Procesar archivo para embeddings (DEPRECATED - ahora se maneja en Files.js)
+  // Esta función se mantiene por compatibilidad pero ya no se usa
   async processFileForEmbeddings(fileId, content, userId) {
+    console.warn('⚠️ processFileForEmbeddings está deprecated. Los chunks ahora se crean directamente en documentos_entrenador desde Files.js');
+    
     try {
       // Dividir contenido en chunks si es muy largo
       const chunks = this.splitTextIntoChunks(content, 8000);
-      const embeddings = [];
-      let totalTokens = 0;
-
-      for (const chunk of chunks) {
-        const result = await this.generateEmbedding(chunk, userId);
-        embeddings.push({
-          file_id: fileId,
-          chunk_index: embeddings.length,
-          content: chunk,
-          embedding: result.embedding,
-          tokens_used: result.tokens_used
-        });
-        totalTokens += result.tokens_used;
-      }
-
-      // Guardar embeddings en la base de datos
-      const { error } = await supabase
-        .from('file_embeddings')
-        .insert(embeddings);
-
-      if (error) {
-        throw error;
-      }
-
+      
       return {
         chunks_processed: chunks.length,
-        total_tokens: totalTokens
+        total_tokens: 0 // Los tokens se manejan individualmente en Files.js
       };
     } catch (error) {
       console.error('Error processing file for embeddings:', error);
@@ -133,25 +113,50 @@ class EmbeddingsService {
     return chunks.filter(chunk => chunk.length > 0);
   }
 
-  // Buscar contenido similar usando embeddings
+  // Buscar contenido similar usando embeddings (solo en documentos_entrenador)
   async searchSimilarContent(query, userId, limit = 10) {
     try {
       // Generar embedding para la consulta
       const queryEmbedding = await this.generateEmbedding(query, userId);
 
-      // Buscar embeddings similares usando función de PostgreSQL match_documentos_entrenador
-      const { data, error } = await supabase
+      // Buscar en documentos_entrenador (incluye documentos principales y chunks)
+      const { data: documents, error: searchError } = await supabase
         .rpc('match_documentos_entrenador', {
           filter: {},
           match_count: limit,
           query_embedding: queryEmbedding.embedding
         });
 
-      if (error) {
-        throw error;
+      if (searchError) {
+        console.error('Error searching documents:', searchError);
+        throw searchError;
       }
 
-      return data;
+      // Procesar y formatear resultados
+      const results = documents ? documents.map(doc => {
+        const metadata = doc.metadata || {};
+        const isChunk = metadata.chunk_type === 'chunk';
+        
+        return {
+          content: doc.content,
+          file_name: metadata.name || 'Documento sin nombre',
+          similarity: doc.similarity,
+          source: isChunk ? 'chunk' : 'main_document',
+          file_id: metadata.file_id,
+          chunk_index: metadata.chunk_index || null,
+          chunk_info: isChunk ? metadata.chunk_of_total : null,
+          parent_file_id: metadata.parent_file_id || null,
+          upload_date: metadata.upload_date,
+          file_type: metadata.file_type
+        };
+      }) : [];
+
+      // Ordenar por similitud (ya viene ordenado de la función SQL, pero por seguridad)
+      results.sort((a, b) => b.similarity - a.similarity);
+      
+      console.log(`🔍 Búsqueda completada: ${results.length} resultados encontrados`);
+      return results;
+
     } catch (error) {
       console.error('Error searching similar content:', error);
       throw error;
@@ -368,8 +373,11 @@ class EmbeddingsService {
     
     // Verificar cache
     if (cached && (Date.now() - cached.timestamp) < this.cacheTimeout) {
+      console.log('EmbeddingsService: Returning cached token limits:', cached.data);
       return cached.data;
     }
+    
+    console.log('EmbeddingsService: Cache miss or expired, fetching fresh token limits for userId:', userId);
     
     try {
       // Obtener tokens usados con maybeSingle para evitar errores
@@ -388,6 +396,7 @@ class EmbeddingsService {
       const totalTokensFromPlan = tokenUsage?.total_tokens || 0;
 
       // Obtener información del usuario y su plan
+      console.log('EmbeddingsService: Fetching user and plan data for userId:', userId);
       const { data: user, error: userError } = await supabase
         .from('users')
         .select(`
@@ -400,12 +409,15 @@ class EmbeddingsService {
         .eq('id', userId)
         .maybeSingle();
 
+      console.log('EmbeddingsService: User query result:', { user, userError });
+
       if (userError) {
         console.warn('Error getting user info:', userError);
       }
 
       // Usar el límite de tokens del plan como fuente de verdad
       let tokenLimit = user?.plans?.token_limit_usage || 1000; // valor por defecto para plan gratuito
+      console.log('EmbeddingsService: Token limit determined:', tokenLimit, 'from plan:', user?.plans?.token_limit_usage);
 
       const result = {
         tokens_used: tokensUsed,

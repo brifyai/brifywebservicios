@@ -36,7 +36,98 @@ class GroqService {
   }
 
   /**
-   * Genera una respuesta de chat usando GROQ GEMMA 2-9b-it
+   * Trunca texto para mantenerlo dentro del límite de tokens
+   * @param {string} text - Texto a truncar
+   * @param {number} maxTokens - Máximo número de tokens permitidos
+   * @returns {string} - Texto truncado
+   */
+  truncateText(text, maxTokens) {
+    const estimatedTokens = this.estimateTokens(text)
+    if (estimatedTokens <= maxTokens) {
+      return text
+    }
+    
+    // Calcular caracteres aproximados para el límite de tokens
+    const maxChars = maxTokens * 4
+    const truncated = text.substring(0, maxChars)
+    
+    // Intentar cortar en una palabra completa
+    const lastSpaceIndex = truncated.lastIndexOf(' ')
+    if (lastSpaceIndex > maxChars * 0.8) {
+      return truncated.substring(0, lastSpaceIndex) + '...'
+    }
+    
+    return truncated + '...'
+  }
+
+  /**
+   * Optimiza el contexto de documentos para evitar exceder límites
+   * @param {Array} context - Contexto original
+   * @param {number} maxTokens - Máximo tokens para contexto
+   * @returns {string} - Contexto optimizado
+   */
+  optimizeContext(context, maxTokens = 2000) {
+    if (!context || context.length === 0) {
+      return ''
+    }
+
+    let contextText = '\n\nCONTEXTO DE DOCUMENTOS:\n'
+    let currentTokens = this.estimateTokens(contextText)
+    
+    for (let i = 0; i < context.length; i++) {
+      const doc = context[i]
+      const docText = `\n[Documento ${i + 1}]: ${doc.content}\n`
+      const docTokens = this.estimateTokens(docText)
+      
+      if (currentTokens + docTokens > maxTokens) {
+        // Si es el primer documento y es muy largo, truncarlo
+        if (i === 0) {
+          const remainingTokens = maxTokens - currentTokens - 50 // Buffer
+          const truncatedContent = this.truncateText(doc.content, remainingTokens)
+          contextText += `\n[Documento ${i + 1}]: ${truncatedContent}\n`
+        }
+        break
+      }
+      
+      contextText += docText
+      currentTokens += docTokens
+    }
+    
+    return contextText
+  }
+
+  /**
+   * Optimiza el historial de chat para evitar exceder límites
+   * @param {Array} chatHistory - Historial original
+   * @param {number} maxTokens - Máximo tokens para historial
+   * @returns {Array} - Historial optimizado
+   */
+  optimizeChatHistory(chatHistory, maxTokens = 1500) {
+    if (!chatHistory || chatHistory.length === 0) {
+      return []
+    }
+
+    // Empezar desde los mensajes más recientes
+    const optimizedHistory = []
+    let currentTokens = 0
+    
+    for (let i = chatHistory.length - 1; i >= 0; i--) {
+      const message = chatHistory[i]
+      const messageTokens = this.estimateTokens(JSON.stringify(message))
+      
+      if (currentTokens + messageTokens > maxTokens) {
+        break
+      }
+      
+      optimizedHistory.unshift(message)
+      currentTokens += messageTokens
+    }
+    
+    return optimizedHistory
+  }
+
+  /**
+   * Genera una respuesta de chat usando GROQ GEMMA 2-9b-it con optimización de contexto
    * @param {string} userMessage - Mensaje del usuario
    * @param {Array} context - Contexto de documentos encontrados
    * @param {Array} chatHistory - Historial de conversación
@@ -45,51 +136,77 @@ class GroqService {
    */
   async generateChatResponse(userMessage, context = [], chatHistory = [], userId = null) {
     try {
-      // Construir el contexto de documentos
-      let contextText = ''
-      if (context && context.length > 0) {
-        contextText = '\n\nCONTEXTO DE DOCUMENTOS:\n'
-        context.forEach((doc, index) => {
-          contextText += `\n[Documento ${index + 1}]: ${doc.content}\n`
-        })
-      }
-
-      // Construir mensajes para el chat
-      const messages = [
-        {
-          role: 'system',
-          content: `Eres un asistente IA especializado en analizar y responder preguntas sobre documentos. 
+      // Límites de tokens para evitar exceder el contexto
+      const MAX_TOTAL_INPUT_TOKENS = 6000 // Límite conservador para gemma2-9b-it
+      const MAX_CONTEXT_TOKENS = 2000
+      const MAX_HISTORY_TOKENS = 1500
+      const MAX_SYSTEM_TOKENS = 500
+      
+      // Optimizar contexto de documentos
+      const contextText = this.optimizeContext(context, MAX_CONTEXT_TOKENS)
+      
+      // Optimizar historial de chat
+      const optimizedHistory = this.optimizeChatHistory(chatHistory, MAX_HISTORY_TOKENS)
+      
+      // Mensaje del sistema optimizado
+      const systemMessage = {
+        role: 'system',
+        content: this.truncateText(
+          `Eres un asistente IA especializado en analizar y responder preguntas sobre documentos. 
 
 Instrucciones:
 - Responde en español de manera clara y concisa
 - Usa la información del contexto proporcionado cuando sea relevante
 - Si no tienes información suficiente en el contexto, indícalo claramente
 - Sé útil y preciso en tus respuestas
-- Mantén un tono profesional pero amigable${contextText}`
-        }
-      ]
-
-      // Agregar historial de chat
-      if (chatHistory && chatHistory.length > 0) {
-        chatHistory.forEach(msg => {
-          messages.push({
-            role: msg.role,
-            content: msg.content
-          })
-        })
+- Mantén un tono profesional pero amigable${contextText}`,
+          MAX_SYSTEM_TOKENS
+        )
       }
 
-      // Agregar mensaje actual del usuario
+      // Construir mensajes para el chat
+      const messages = [systemMessage]
+
+      // Agregar historial optimizado
+      optimizedHistory.forEach(msg => {
+        messages.push({
+          role: msg.role,
+          content: msg.content
+        })
+      })
+
+      // Agregar mensaje actual del usuario (truncar si es muy largo)
       messages.push({
         role: 'user',
-        content: userMessage
+        content: this.truncateText(userMessage, 500)
       })
+
+      // Verificar tokens totales antes de enviar
+      const totalInputTokens = this.estimateTokens(JSON.stringify(messages))
+      console.log(`📊 Tokens de entrada estimados: ${totalInputTokens}/${MAX_TOTAL_INPUT_TOKENS}`)
+      
+      if (totalInputTokens > MAX_TOTAL_INPUT_TOKENS) {
+        console.warn('⚠️ Tokens de entrada exceden el límite, reduciendo contexto...')
+        // Reducir aún más el contexto si es necesario
+        const reducedContext = this.optimizeContext(context, MAX_CONTEXT_TOKENS * 0.5)
+        messages[0].content = this.truncateText(
+          `Eres un asistente IA especializado en analizar y responder preguntas sobre documentos. 
+
+Instrucciones:
+- Responde en español de manera clara y concisa
+- Usa la información del contexto proporcionado cuando sea relevante
+- Si no tienes información suficiente en el contexto, indícalo claramente
+- Sé útil y preciso en tus respuestas
+- Mantén un tono profesional pero amigable${reducedContext}`,
+          MAX_SYSTEM_TOKENS * 0.7
+        )
+      }
 
       const completion = await this.groq.chat.completions.create({
         messages: messages,
         model: this.model,
         temperature: 0.7,
-        max_tokens: 1024,
+        max_tokens: 800, // Reducido para dejar más espacio al input
         top_p: 1,
         stream: false
       })
@@ -101,6 +218,8 @@ Instrucciones:
       const outputTokens = this.estimateTokens(response)
       const totalTokens = inputTokens + outputTokens
 
+      console.log(`✅ Respuesta generada - Input: ${inputTokens}, Output: ${outputTokens}, Total: ${totalTokens} tokens`)
+
       // Registrar uso de tokens si se proporciona userId
       if (userId) {
         await this.trackTokenUsage(userId, totalTokens, 'groq_chat')
@@ -108,10 +227,18 @@ Instrucciones:
 
       return {
         response,
-        tokensUsed: totalTokens
+        tokensUsed: totalTokens,
+        contextUsed: context.length,
+        historyUsed: optimizedHistory.length
       }
     } catch (error) {
       console.error('Error generating chat response:', error)
+      
+      // Proporcionar información más específica sobre el error
+      if (error.message && error.message.includes('context_length_exceeded')) {
+        throw new Error('El contexto de la conversación es demasiado largo. Por favor, inicia una nueva conversación o reduce el tamaño de tu mensaje.')
+      }
+      
       throw new Error(`Error en GROQ API: ${error.message}`)
     }
   }

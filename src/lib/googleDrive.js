@@ -245,7 +245,13 @@ class GoogleDriveService {
         body: formData
       })
 
-      return await response.json()
+      const result = await response.json()
+      
+      if (!response.ok || result.error) {
+        throw new Error(result.error?.message || `Error uploading file: ${response.status}`)
+      }
+      
+      return result.id
     } catch (error) {
       console.error('Error uploading file:', error)
       throw error
@@ -273,7 +279,7 @@ class GoogleDriveService {
   }
 
   // Compartir carpeta con email
-  async shareFolder(folderId, email, role = 'writer') {
+  async shareFolder(folderId, email, role = 'reader') {
     if (!this.accessToken) {
       throw new Error('Google Drive no está inicializado')
     }

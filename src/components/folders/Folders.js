@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { db, supabase } from '../../lib/supabase'
 import googleDriveService from '../../lib/googleDrive'
 import emailService from '../../lib/emailService'
 import {
   FolderIcon,
-  FolderOpenIcon,
+  DocumentIcon,
   PlusIcon,
   TrashIcon,
   MagnifyingGlassIcon,
@@ -17,6 +18,7 @@ import toast from 'react-hot-toast'
 
 const Folders = () => {
   const { user, userProfile, hasActivePlan } = useAuth()
+  const navigate = useNavigate()
   const [folders, setFolders] = useState([])
   const [currentFolder, setCurrentFolder] = useState(null)
   const [breadcrumb, setBreadcrumb] = useState([{ name: 'Inicio', id: null }])
@@ -164,6 +166,12 @@ const Folders = () => {
     
     if (!isValidEmail(newFolderName)) {
       toast.error('Debes ingresar un email válido')
+      return
+    }
+
+    // Evitar crear subcarpetas - solo permitir creación en el nivel principal
+    if (currentFolder && currentFolder.type === 'user') {
+      toast.error('No se pueden crear subcarpetas dentro de carpetas de usuario')
       return
     }
 
@@ -394,14 +402,16 @@ const Folders = () => {
   }
 
   const handleFolderClick = (folder) => {
-    // Solo permitir navegación a carpetas de usuario (subcarpetas)
+    // Redirigir a la pestaña de archivos con la carpeta seleccionada
     if (folder.type === 'user') {
-      setCurrentFolder(folder)
-      setBreadcrumb([...breadcrumb, { name: folder.folder_name, id: folder.google_folder_id }])
-      
-      // Al navegar a una subcarpeta de usuario, mostrar una vista vacía o archivos
-      // ya que las carpetas de usuario no tienen subcarpetas
-      setFolders([])
+      // Navegar a la pestaña de archivos con la carpeta preseleccionada
+      navigate('/files', { 
+        state: { 
+          selectedFolder: folder,
+          folderId: folder.google_folder_id,
+          folderName: folder.folder_name
+        } 
+      })
     }
   }
 
@@ -477,13 +487,16 @@ const Folders = () => {
           </p>
         </div>
         
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="mt-4 sm:mt-0 bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors flex items-center"
-        >
-          <PlusIcon className="h-5 w-5 mr-2" />
-          Nueva Carpeta
-        </button>
+        {/* Solo mostrar botón de Nueva Carpeta en el nivel principal */}
+        {(!currentFolder || currentFolder.type !== 'user') && (
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="mt-4 sm:mt-0 bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors flex items-center"
+          >
+            <PlusIcon className="h-5 w-5 mr-2" />
+            Nueva Carpeta
+          </button>
+        )}
       </div>
 
       {/* Breadcrumb */}
@@ -599,8 +612,8 @@ const Folders = () => {
                 onClick={() => handleFolderClick(folder)}
                 className="w-full bg-gray-50 hover:bg-gray-100 text-gray-700 py-2 px-4 rounded-lg transition-colors flex items-center justify-center"
               >
-                <FolderOpenIcon className="h-4 w-4 mr-2" />
-                Abrir Carpeta
+                <DocumentIcon className="h-4 w-4 mr-2" />
+                Ver archivos
               </button>
             </div>
           ))}

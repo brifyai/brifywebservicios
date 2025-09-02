@@ -14,7 +14,7 @@ users: id, telegram_id, email, name, is_active, current_plan_id -> public.plans.
 plans: id, name, storage_limit_bytes, price_usd, duration_days, name_es, plan_code, service_type  
 user_credentials: id, telegram_chat_id, google_refresh_token, updated_at  
 payments: id, user_id, plan_id, amount_usd, payment_status, payment_provider, payment_ref, paid_at
-carpetas_usuarios: id, telegram_id, correo, id_carpeta_drive, created_at, administrador
+carpetas_usuario: id, telegram_id, correo, id_carpeta_drive, created_at, administrador
 carpeta_adminsitrador: id, correo, id_drive_carpeta, plan_name, telegram_id  
 admin_users: id, telegram_id_admin, telegram_id_user, correo_user, created_at
 documentos_entrenador: id, content, metadata -> contemplar los siguientes datos el file_id hace referencia del id de google drive al subirlo ({"loc": {"lines": {"to": 1036, "from": 1027}}, "name": "78202665-manual-de-entrenamiento-180731225650 (1).pdf", "correo": "mateo@gmail.com", "source": "blob", "file_id": "BQACAgEAAxkBAAICBWij3wtn2V1ToIvAZ8BAyNtYG7reAALNBgACPqAgRYdTib-Wc899NgQ", "blobType": "application/json"}=), embedding, entrenador
