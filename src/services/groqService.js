@@ -1,5 +1,5 @@
 import Groq from 'groq-sdk'
-import { supabase } from '../lib/supabase'
+import embeddingsService from '../lib/embeddings'
 
 class GroqService {
   constructor() {
@@ -21,25 +21,15 @@ class GroqService {
   }
 
   /**
-   * Registra el uso de tokens en la base de datos
+   * Registra el uso de tokens usando el servicio de embeddings
    * @param {string} userId - ID del usuario
    * @param {number} tokensUsed - Tokens utilizados
    * @param {string} operation - Tipo de operación
    */
   async trackTokenUsage(userId, tokensUsed, operation = 'groq_chat') {
     try {
-      const { error } = await supabase
-        .from('user_tokens_usage')
-        .insert({
-          user_id: userId,
-          tokens_used: tokensUsed,
-          operation: operation,
-          created_at: new Date().toISOString()
-        })
-
-      if (error) {
-        console.error('Error tracking token usage:', error)
-      }
+      // Usar el método del embeddingsService para evitar duplicación
+      await embeddingsService.trackTokenUsage(userId, tokensUsed, operation);
     } catch (error) {
       console.error('Error tracking token usage:', error)
     }

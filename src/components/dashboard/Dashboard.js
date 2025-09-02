@@ -126,24 +126,8 @@ const Dashboard = () => {
         console.error('Error loading files:', fileError)
       }
       
-      // Obtener tokens usados desde user_tokens_usage
-      try {
-        const { data: tokenData, error: tokenError } = await supabase
-          .from('user_tokens_usage')
-          .select('tokens_used, total_tokens')
-          .eq('user_id', user.id)
-          .maybeSingle()
-        if (!tokenError && tokenData) {
-          realStats.tokensUsed = tokenData.tokens_used || 0
-          realStats.tokenLimit = tokenData.total_tokens || 1000 // usar total_tokens como límite
-          console.log('Dashboard: Tokens used loaded:', realStats.tokensUsed)
-          console.log('Dashboard: Token limit from user_tokens_usage:', realStats.tokenLimit)
-        }
-      } catch (tokenError) {
-        console.error('Error loading tokens:', tokenError)
-      }
-      
-      // Obtener límite de tokens del plan actual
+      // Obtener límite de tokens del plan actual PRIMERO
+      let planTokenLimit = 1000 // valor por defecto para plan gratuito
       if (userProfile?.current_plan_id) {
         try {
           const { data: planData, error: planError } = await supabase
@@ -152,12 +136,31 @@ const Dashboard = () => {
             .eq('id', userProfile.current_plan_id)
             .maybeSingle()
           if (!planError && planData) {
-            realStats.tokenLimit = planData.token_limit_usage || 0
-            console.log('Dashboard: Token limit loaded:', realStats.tokenLimit)
+            planTokenLimit = planData.token_limit_usage || 1000
+            console.log('Dashboard: Plan token limit loaded:', planTokenLimit)
           }
         } catch (planError) {
           console.error('Error loading plan token limit:', planError)
         }
+      }
+      
+      // Obtener tokens usados y establecer el límite correcto
+      try {
+        const { data: tokenData, error: tokenError } = await supabase
+          .from('user_tokens_usage')
+          .select('tokens_used')
+          .eq('user_id', user.id)
+          .maybeSingle()
+        if (!tokenError && tokenData) {
+          realStats.tokensUsed = tokenData.tokens_used || 0
+          console.log('Dashboard: Tokens used loaded:', realStats.tokensUsed)
+        }
+        // Usar SIEMPRE el límite del plan, no el de user_tokens_usage
+        realStats.tokenLimit = planTokenLimit
+        console.log('Dashboard: Using plan token limit:', realStats.tokenLimit)
+      } catch (tokenError) {
+        console.error('Error loading tokens:', tokenError)
+        realStats.tokenLimit = planTokenLimit
       }
       
       setStats(realStats)

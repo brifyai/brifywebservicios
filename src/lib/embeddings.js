@@ -164,9 +164,9 @@ class EmbeddingsService {
       // Primero verificamos si ya existe un registro para este usuario
       const { data: existingRecord, error: fetchError } = await supabase
         .from('user_tokens_usage')
-        .select('tokens_used')
+        .select('tokens_used, total_tokens')
         .eq('user_id', userId)
-        .single();
+        .maybeSingle();
 
       if (fetchError && fetchError.code !== 'PGRST116') {
         throw fetchError;
@@ -187,14 +187,33 @@ class EmbeddingsService {
           throw error;
         }
       } else {
-        // Si no existe, insertamos un nuevo registro
+        // Si no existe, insertamos un nuevo registro con límite del plan
+        // Obtener límite del plan del usuario
+        const { data: userData } = await supabase
+          .from('users')
+          .select('current_plan_id')
+          .eq('id', userId)
+          .maybeSingle();
+        
+        let totalTokens = 1000; // valor por defecto
+        if (userData?.current_plan_id) {
+          const { data: planData } = await supabase
+            .from('plans')
+            .select('token_limit_usage')
+            .eq('id', userData.current_plan_id)
+            .maybeSingle();
+          totalTokens = planData?.token_limit_usage || 1000;
+        }
+
         const { error } = await supabase
           .from('user_tokens_usage')
           .insert({
             user_id: userId,
             tokens_used: tokensUsed,
+            total_tokens: totalTokens,
             operation: operation,
-            created_at: new Date().toISOString()
+            created_at: new Date().toISOString(),
+            last_updated_at: new Date().toISOString()
           });
 
         if (error) {
@@ -202,8 +221,8 @@ class EmbeddingsService {
         }
       }
 
-      // Actualizar contador total del usuario
-      await this.updateUserTokenCount(userId, tokensUsed);
+      // ELIMINADO: No llamar a updateUserTokenCount para evitar duplicación
+      console.log(`Token usage tracked: ${tokensUsed} tokens for operation: ${operation}`);
     } catch (error) {
       console.error('Error tracking token usage:', error);
     }
@@ -368,10 +387,16 @@ class EmbeddingsService {
       const tokensUsed = tokenUsage?.tokens_used || 0;
       const totalTokensFromPlan = tokenUsage?.total_tokens || 0;
 
-      // Obtener información del usuario con maybeSingle
+      // Obtener información del usuario y su plan
       const { data: user, error: userError } = await supabase
         .from('users')
-        .select('current_plan_id, is_active')
+        .select(`
+          current_plan_id,
+          is_active,
+          plans!inner(
+            token_limit_usage
+          )
+        `)
         .eq('id', userId)
         .maybeSingle();
 
@@ -379,9 +404,8 @@ class EmbeddingsService {
         console.warn('Error getting user info:', userError);
       }
 
-      // Usar los tokens totales del plan desde la tabla user_tokens_usage
-      // Si no hay registro, usar valor por defecto
-      let tokenLimit = totalTokensFromPlan || 1000; // valor por defecto para plan gratuito
+      // Usar el límite de tokens del plan como fuente de verdad
+      let tokenLimit = user?.plans?.token_limit_usage || 1000; // valor por defecto para plan gratuito
 
       const result = {
         tokens_used: tokensUsed,
