@@ -110,8 +110,16 @@ const ResetPassword = () => {
       })
 
       if (error) {
-        toast.error('Error al actualizar la contraseña')
         console.error('Error:', error)
+        
+        // Manejar errores específicos de Supabase
+        if (error.message && error.message.includes('New password should be different from the old password')) {
+          toast.error('La nueva contraseña debe ser diferente a la anterior')
+        } else if (error.message && error.message.includes('Password should be at least')) {
+          toast.error('La contraseña debe cumplir con los requisitos mínimos')
+        } else {
+          toast.error('Error al actualizar la contraseña')
+        }
         return
       }
 

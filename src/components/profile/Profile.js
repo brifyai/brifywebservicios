@@ -147,9 +147,24 @@ const Profile = () => {
     setSaving(true)
     
     try {
-      // Aquí se implementaría el cambio de contraseña con Supabase
-      // Por ahora simulamos el proceso
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      // Cambiar contraseña con Supabase
+      const { error } = await supabase.auth.updateUser({
+        password: passwordData.newPassword
+      })
+      
+      if (error) {
+        console.error('Error:', error)
+        
+        // Manejar errores específicos de Supabase
+        if (error.message && error.message.includes('New password should be different from the old password')) {
+          toast.error('La nueva contraseña debe ser diferente a la anterior')
+        } else if (error.message && error.message.includes('Password should be at least')) {
+          toast.error('La contraseña debe cumplir con los requisitos mínimos')
+        } else {
+          toast.error('Error al actualizar la contraseña')
+        }
+        return
+      }
       
       toast.success('Contraseña actualizada exitosamente')
       setPasswordData({
