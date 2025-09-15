@@ -54,6 +54,47 @@ export const auth = {
   }
 }
 
+// Función auxiliar para reintentos con backoff exponencial simple
+const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await fn()
+      return result
+    } catch (error) {
+      console.warn(`Intento ${attempt}/${maxRetries} falló:`, error.message)
+      
+      // Si es el último intento, lanzar el error
+      if (attempt === maxRetries) {
+        throw error
+      }
+      
+      // Esperar antes del siguiente intento (backoff exponencial)
+      const delay = baseDelay * Math.pow(2, attempt - 1)
+      await new Promise(resolve => setTimeout(resolve, delay))
+    }
+  }
+}
+
+// Función auxiliar para manejar errores de red
+const handleNetworkError = (error, operation) => {
+  console.error(`❌ Error en ${operation}:`, error)
+  
+  if (error.message?.includes('ERR_INSUFFICIENT_RESOURCES') || 
+      error.message?.includes('Failed to fetch') ||
+      error.code === 'NETWORK_ERROR') {
+    return {
+      data: null,
+      error: {
+        code: 'NETWORK_ERROR',
+        message: `Error de conexión en ${operation}. Reintentando...`,
+        originalError: error
+      }
+    }
+  }
+  
+  return { data: null, error }
+}
+
 // Funciones de base de datos
 export const db = {
   // Usuarios
@@ -172,11 +213,19 @@ export const db = {
     },
     
     getByAdministrador: async (adminEmail) => {
-      const { data, error } = await supabase
-        .from('carpetas_usuario')
-        .select('*')
-        .eq('administrador', adminEmail)
-      return { data, error }
+      try {
+        return await retryWithBackoff(async () => {
+          const { data, error } = await supabase
+            .from('carpetas_usuario')
+            .select('*')
+            .eq('administrador', adminEmail)
+          
+          if (error) throw error
+          return { data, error: null }
+        })
+      } catch (error) {
+        return handleNetworkError(error, 'getByAdministrador')
+      }
     },
     
     getByUser: async (userId) => {
@@ -221,11 +270,19 @@ export const db = {
     },
     
     getByEmail: async (email) => {
-      const { data, error } = await supabase
-        .from('carpeta_administrador')
-        .select('*')
-        .eq('correo', email)
-      return { data, error }
+      try {
+        return await retryWithBackoff(async () => {
+          const { data, error } = await supabase
+            .from('carpeta_administrador')
+            .select('*')
+            .eq('correo', email)
+          
+          if (error) throw error
+          return { data, error: null }
+        })
+      } catch (error) {
+        return handleNetworkError(error, 'adminFolders.getByEmail')
+      }
     },
     
     getByTelegramId: async (telegramId) => {
@@ -237,19 +294,81 @@ export const db = {
     },
     
     getByUser: async (userId) => {
-      // Para obtener carpetas admin por usuario, necesitamos usar el email del usuario
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('email')
-        .eq('id', userId)
-        .single()
-      
-      if (userError) return { data: null, error: userError }
-      
+      try {
+        return await retryWithBackoff(async () => {
+          // Para obtener carpetas admin por usuario, necesitamos usar el email del usuario
+          const { data: userData, error: userError } = await supabase
+            .from('users')
+            .select('email')
+            .eq('id', userId)
+            .single()
+          
+          if (userError) throw userError
+          
+          const { data, error } = await supabase
+            .from('carpeta_administrador')
+            .select('*')
+            .eq('correo', userData.email)
+          
+          if (error) throw error
+          return { data, error: null }
+        })
+      } catch (error) {
+        return handleNetworkError(error, 'adminFolders.getByUser')
+      }
+    }
+  },
+
+  // Subcarpetas de administrador (extensiones)
+  subCarpetasAdministrador: {
+    create: async (subcarpetaData) => {
       const { data, error } = await supabase
-        .from('carpeta_administrador')
+        .from('sub_carpetas_administrador')
+        .insert([subcarpetaData])
+        .select()
+      return { data, error }
+    },
+    
+    getByEmail: async (email) => {
+      const { data, error } = await supabase
+        .from('sub_carpetas_administrador')
         .select('*')
-        .eq('correo', userData.email)
+        .eq('administrador_email', email)
+      return { data, error }
+    },
+    
+    getByMasterFolderId: async (masterFolderId) => {
+      const { data, error } = await supabase
+        .from('sub_carpetas_administrador')
+        .select('*')
+        .eq('file_id_master', masterFolderId)
+      return { data, error }
+    },
+    
+    getByTipoExtension: async (email, tipoExtension) => {
+      const { data, error } = await supabase
+        .from('sub_carpetas_administrador')
+        .select('*')
+        .eq('administrador_email', email)
+        .eq('tipo_extension', tipoExtension)
+        .single()
+      return { data, error }
+    },
+    
+    update: async (id, updates) => {
+      const { data, error } = await supabase
+        .from('sub_carpetas_administrador')
+        .update(updates)
+        .eq('id', id)
+        .select()
+      return { data, error }
+    },
+    
+    delete: async (id) => {
+      const { data, error } = await supabase
+        .from('sub_carpetas_administrador')
+        .delete()
+        .eq('id', id)
       return { data, error }
     }
   },

@@ -18,7 +18,7 @@ carpetas_usuario: id, telegram_id, correo, id_carpeta_drive, created_at, adminis
 carpeta_adminsitrador: id, correo, id_drive_carpeta, plan_name, telegram_id  
 admin_users: id, telegram_id_admin, telegram_id_user, correo_user, created_at
 documentos_entrenador: id, content, metadata -> contemplar los siguientes datos el file_id hace referencia del id de google drive al subirlo ({"loc": {"lines": {"to": 1036, "from": 1027}}, "name": "78202665-manual-de-entrenamiento-180731225650 (1).pdf", "correo": "mateo@gmail.com", "source": "blob", "file_id": "BQACAgEAAxkBAAICBWij3wtn2V1ToIvAZ8BAyNtYG7reAALNBgACPqAgRYdTib-Wc899NgQ", "blobType": "application/json"}=), embedding, entrenador
-documentos_usuario_entrenador: id, telegram_id, file_id, file_type, file_name, created_at, usuario
+documentos_usuario_entrenador: id, telegram_id, file_id, file_type, file_name, created_at, usuario, entrenador
 user_tokens_usage: id, user_id, total_tokens, last_updated_at
 
 CONFIGURACIÓN DE VARIABLES DE ENTORNO:

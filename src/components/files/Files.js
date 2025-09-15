@@ -5,6 +5,7 @@ import { db, supabase } from '../../lib/supabase'
 import googleDriveService from '../../lib/googleDrive'
 import fileContentExtractor from '../../services/fileContentExtractor'
 import embeddingService from '../../services/embeddingService'
+import { useUserExtensions } from '../../hooks/useUserExtensions'
 import {
   DocumentIcon,
   PhotoIcon,
@@ -22,10 +23,12 @@ import {
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
 import RoutineUpload from '../routines/RoutineUpload'
+import DragDropUpload from '../common/DragDropUpload'
 import toast from 'react-hot-toast'
 
 const Files = () => {
   const { user, userProfile, hasActivePlan } = useAuth()
+  const { hasExtension } = useUserExtensions()
   const location = useLocation()
   const [files, setFiles] = useState([])
   const [folders, setFolders] = useState([])
@@ -39,6 +42,7 @@ const Files = () => {
   const [sortBy, setSortBy] = useState('date')
   const [sortOrder, setSortOrder] = useState('desc')
   const [showUploadModal, setShowUploadModal] = useState(false)
+  const [showDragDropUpload, setShowDragDropUpload] = useState(true)
   const [selectedFiles, setSelectedFiles] = useState([])
   // Usar la instancia por defecto de googleDriveService
   const fileInputRef = useRef(null)
@@ -235,7 +239,8 @@ const Files = () => {
   }
 
   const handleFileSelect = (event) => {
-    const files = Array.from(event.target.files)
+    // Manejar tanto eventos de input como arrays de archivos directos
+    const files = Array.isArray(event) ? event : Array.from(event.target.files)
     
     // Validar cada archivo
     const validationResults = files.map(validateFileType)
@@ -316,6 +321,7 @@ const Files = () => {
           
           // Subir a Google Drive si está conectado
           if (userProfile?.google_refresh_token && folder.google_folder_id) {
+            console.log('🔄 Subiendo archivo a Google Drive...')
             const driveFile = await googleDriveService.uploadFile(
               file,
               folder.google_folder_id,
@@ -325,12 +331,21 @@ const Files = () => {
               }
             )
             googleFileId = driveFile.id
+            console.log('✅ Archivo subido a Google Drive con ID:', googleFileId)
+          } else {
+            // Generar un ID único para el archivo cuando no se sube a Google Drive
+            googleFileId = `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+            console.log('📁 Generado ID local para archivo:', googleFileId)
           }
+          
+          console.log('🔍 googleFileId antes del procesamiento:', googleFileId)
           
           // Extraer contenido y procesar con chunking inteligente
           let content = ''
           let embedding = []
           let tokensUsed = 0
+          
+          console.log('🔍 googleFileId antes del try-catch de extracción:', googleFileId)
           
           try {
             if (fileContentExtractor.isSupported(file)) {
@@ -338,6 +353,10 @@ const Files = () => {
               content = processed.content
               embedding = processed.embedding
               console.log(`✅ Contenido extraído: ${content.length} caracteres`)
+              
+              // Actualizar progreso después de extraer contenido
+              newUploadProgress[fileId] = 20
+              setUploadProgress({ ...newUploadProgress })
               
               // Calcular tokens reales basados en el contenido
               tokensUsed = Math.ceil(content.length / 4) // Aproximación estándar para tokens
@@ -356,6 +375,8 @@ const Files = () => {
             // Abortar completamente el proceso si no se puede extraer contenido
             throw new Error(`No se pudo procesar el archivo ${file.name}: ${extractError.message}`)
           }
+          
+          console.log('🔍 googleFileId después del try-catch de extracción:', googleFileId)
           
           // Verificar si el contenido excede el límite de caracteres (10,240)
           const MAX_CONTENT_LENGTH = 10240
@@ -380,7 +401,7 @@ const Files = () => {
               name: file.name,
               correo: folder.correo || folder.folder_name,
               source: 'web_upload',
-              file_id: googleFileId,
+              file_id: googleFileId, // ID del archivo en Google Drive o local
               file_type: file.type,
               file_size: fileSize,
               upload_date: new Date().toISOString(),
@@ -407,6 +428,10 @@ const Files = () => {
             }
             
             console.log('✅ Documento principal guardado, creando chunks...')
+            
+            // Actualizar progreso después de guardar documento principal
+            newUploadProgress[fileId] = 30
+            setUploadProgress({ ...newUploadProgress })
             
             // Crear chunks como registros separados
             let successfulChunks = 0
@@ -437,6 +462,15 @@ const Files = () => {
                 } else {
                   successfulChunks++
                   console.log(`✅ Chunk ${i + 1}/${chunks.length} guardado`)
+                  
+                  // Actualizar progreso basado en chunks procesados
+                  // Progreso base del archivo (30%) + progreso de chunks (70%)
+                  const baseProgress = 30
+                  const chunkProgress = Math.round((successfulChunks / chunks.length) * 70)
+                  const totalProgress = Math.min(baseProgress + chunkProgress, 99) // Máximo 99% hasta completar
+                  
+                  newUploadProgress[fileId] = totalProgress
+                  setUploadProgress({ ...newUploadProgress })
                 }
                 
                 // Registrar tokens del chunk
@@ -464,17 +498,23 @@ const Files = () => {
             // Continuar con el flujo normal para el documento principal
             // No necesitamos crear otro registro ya que el principal ya se guardó
             
-            // Registrar en documentos_usuario_entrenador
+            // Registrar en documentos_usuario_entrenador (flujo de chunks)
+            console.log('🔍 googleFileId en flujo de chunks antes de registro:', googleFileId)
             const userTrainerDocData = {
               file_id: googleFileId,
               file_type: file.type,
               file_name: file.name,
-              usuario: folder.correo || folder.folder_name
+              usuario: folder.correo || folder.folder_name,
+              entrenador: user.email // Agregar el email del entrenador
             }
             
-            const { error: userTrainerError } = await db.userTrainerDocuments.create(userTrainerDocData)
+            console.log('📝 Intentando registrar en documentos_usuario_entrenador:', userTrainerDocData)
+            const { data: userTrainerData, error: userTrainerError } = await db.userTrainerDocuments.create(userTrainerDocData)
             if (userTrainerError) {
-              console.error('Error registrando en documentos_usuario_entrenador:', userTrainerError)
+              console.error('❌ Error registrando en documentos_usuario_entrenador:', userTrainerError)
+              console.error('❌ Datos que se intentaron insertar:', userTrainerDocData)
+            } else {
+              console.log('✅ Registro exitoso en documentos_usuario_entrenador:', userTrainerData)
             }
             
             // Actualizar estadísticas del usuario
@@ -492,7 +532,8 @@ const Files = () => {
             continue
           }
           
-          // Guardar en la base de datos con estructura JSONB correcta
+          // Guardar en la base de datos con estructura JSONB correcta (flujo normal)
+          console.log('🔍 googleFileId en flujo normal antes de crear fileData:', googleFileId)
           const fileData = {
             entrenador: user.email, // Email del entrenador
             folder_id: selectedFolder,
@@ -501,7 +542,7 @@ const Files = () => {
               name: file.name,
               correo: folder.correo || folder.folder_name, // Email de la carpeta (usuario)
               source: 'web_upload',
-              file_id: googleFileId,
+              file_id: googleFileId, // ID del archivo en Google Drive o local
               file_type: file.type,
               file_size: fileSize,
               upload_date: new Date().toISOString(),
@@ -517,17 +558,24 @@ const Files = () => {
           if (error) throw error
           
           // Registrar también en documentos_usuario_entrenador
+          console.log('🔍 googleFileId antes de crear userTrainerDocData:', googleFileId)
           const userTrainerDocData = {
             file_id: googleFileId, // ID del archivo en Google Drive
             file_type: file.type,
             file_name: file.name,
-            usuario: folder.correo || folder.folder_name // Email de la carpeta (usuario)
+            usuario: folder.correo || folder.folder_name, // Email de la carpeta (usuario)
+            entrenador: user.email // Email del entrenador que sube el archivo
           }
           
-          const { error: userTrainerError } = await db.userTrainerDocuments.create(userTrainerDocData)
+          console.log('📝 Intentando registrar en documentos_usuario_entrenador:', userTrainerDocData)
+          console.log('🔍 Verificando file_id en userTrainerDocData:', userTrainerDocData.file_id)
+          const { data: userTrainerData, error: userTrainerError } = await db.userTrainerDocuments.create(userTrainerDocData)
           if (userTrainerError) {
-            console.error('Error registrando en documentos_usuario_entrenador:', userTrainerError)
+            console.error('❌ Error registrando en documentos_usuario_entrenador:', userTrainerError)
+            console.error('❌ Datos que se intentaron insertar:', userTrainerDocData)
             // No lanzamos error para no interrumpir el flujo principal
+          } else {
+            console.log('✅ Registro exitoso en documentos_usuario_entrenador:', userTrainerData)
           }
           
           // Actualizar estadísticas del usuario
@@ -579,7 +627,13 @@ const Files = () => {
       // Limpiar estado
       setSelectedFiles([])
       setShowUploadModal(false)
+      setShowDragDropUpload(false)
       setUploadProgress({})
+      
+      // Mostrar el DragDropUpload nuevamente después de 2 segundos
+      setTimeout(() => {
+        setShowDragDropUpload(true)
+      }, 2000)
       
     } catch (error) {
       console.error('Error uploading files:', error)
@@ -749,13 +803,15 @@ const Files = () => {
             Subir Archivos
           </button>
           
-          <button
-            onClick={() => setShowRoutineUpload(true)}
-            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center"
-          >
-            <DocumentTextIcon className="h-5 w-5 mr-2" />
-            Subir Rutina
-          </button>
+          {hasExtension('Entrenador') && (
+            <button
+              onClick={() => setShowRoutineUpload(true)}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center"
+            >
+              <DocumentTextIcon className="h-5 w-5 mr-2" />
+              Subir Rutina
+            </button>
+          )}
         </div>
         
         <input
@@ -846,6 +902,36 @@ const Files = () => {
           className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
         />
       </div>
+
+      {/* Drag & Drop Upload */}
+      {showDragDropUpload ? (
+        <DragDropUpload
+          onFilesSelected={handleFileSelect}
+          onUpload={handleUpload}
+          selectedFolder={selectedFolder}
+          folders={folders}
+          onFolderChange={setSelectedFolder}
+          uploading={uploading}
+          uploadProgress={uploadProgress}
+          acceptedTypes=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt"
+        />
+      ) : (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-6 text-center">
+          <div className="flex items-center justify-center mb-3">
+            <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+          </div>
+          <h3 className="text-lg font-medium text-green-800 mb-2">
+            ¡Archivos subidos exitosamente!
+          </h3>
+          <p className="text-green-600">
+            El área de subida se mostrará nuevamente en unos segundos...
+          </p>
+        </div>
+      )}
 
       {/* Files List */}
       {loading ? (

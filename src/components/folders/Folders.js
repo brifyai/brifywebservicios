@@ -26,14 +26,110 @@ const Folders = () => {
   const [creating, setCreating] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
+  const [selectedParentFolder, setSelectedParentFolder] = useState(null)
+  const [availableSubFolders, setAvailableSubFolders] = useState([])
 
   const [searchTerm, setSearchTerm] = useState('')
 
   useEffect(() => {
-    if (hasActivePlan()) {
+    if (hasActivePlan) {
       loadAdminFolderByDefault()
+      loadAvailableSubFolders()
     }
   }, [hasActivePlan])
+
+  // Cargar subcarpetas disponibles para selección de carpeta padre
+  const loadAvailableSubFolders = async () => {
+    try {
+      console.log('🔄 Iniciando carga de subcarpetas...')
+      
+      // Realizar ambas consultas en paralelo para mejorar rendimiento
+      const [subFoldersResult, userExtensionsResult] = await Promise.all([
+        // Consulta de subcarpetas
+        supabase
+          .from('sub_carpetas_administrador')
+          .select('*')
+          .eq('administrador_email', user.email),
+        // Consulta de extensiones del usuario
+        supabase
+          .from('plan_extensiones')
+          .select(`
+            *,
+            extensiones (
+              id,
+              name,
+              name_es,
+              description,
+              description_es,
+              price_usd,
+              disponible
+            )
+          `)
+          .eq('user_id', user.id)
+      ])
+      
+      let subFolders = subFoldersResult.data
+      let error = subFoldersResult.error
+      
+      // Si no encuentra subcarpetas, intentar con el email del administrador de carpeta_administrador
+      if ((!subFolders || subFolders.length === 0) && !error) {
+        console.log('🔍 No se encontraron subcarpetas, buscando con administrador...')
+        const { data: adminData } = await db.adminFolders.getByUser(user.id)
+        if (adminData && adminData.length > 0) {
+          const adminEmail = adminData[0].administrador
+          const result = await supabase
+            .from('sub_carpetas_administrador')
+            .select('*')
+            .eq('administrador_email', adminEmail)
+          subFolders = result.data
+          error = result.error
+        }
+      }
+      
+      if (error) {
+        console.error('❌ Error loading subfolders:', error)
+        return
+      }
+      
+      const userExtensions = userExtensionsResult.data
+      if (userExtensionsResult.error) {
+        console.error('❌ Error loading user extensions:', userExtensionsResult.error)
+        return
+      }
+      
+      console.log('📊 Extensiones del usuario:', userExtensions)
+      console.log('📁 Subcarpetas encontradas:', subFolders)
+      
+      // Crear mapeo de extensiones activas para mejor rendimiento
+      const activeExtensionTypes = new Set(['brify']) // Brify siempre disponible
+      
+      userExtensions?.forEach(ext => {
+        const extensionName = ext.extensiones?.name_es || ext.extensiones?.name
+        if (extensionName === 'Entrenador') activeExtensionTypes.add('entrenador')
+        if (extensionName === 'Abogados') activeExtensionTypes.add('abogados')
+        if (extensionName === 'Veterinarios') activeExtensionTypes.add('veterinarios')
+      })
+      
+      console.log('🎯 Tipos de extensión activos:', Array.from(activeExtensionTypes))
+      
+      // Filtrar subcarpetas según extensiones activas del usuario
+      const availableSubFolders = (subFolders || []).filter(subfolder => {
+        const isAvailable = activeExtensionTypes.has(subfolder.tipo_extension)
+        console.log(`📋 Subcarpeta ${subfolder.nombre_subcarpeta} (${subfolder.tipo_extension}): ${isAvailable ? 'DISPONIBLE' : 'NO DISPONIBLE'}`)
+        return isAvailable
+      })
+      
+      console.log('✅ Subcarpetas disponibles finales:', availableSubFolders)
+      setAvailableSubFolders(availableSubFolders)
+      
+      // Seleccionar Brify por defecto si está disponible
+      const defaultFolder = availableSubFolders.find(f => f.tipo_extension === 'brify') || availableSubFolders[0]
+      console.log('🎯 Carpeta por defecto seleccionada:', defaultFolder)
+      setSelectedParentFolder(defaultFolder)
+    } catch (error) {
+      console.error('❌ Error loading available subfolders:', error)
+    }
+  }
 
   // Cargar automáticamente la carpeta administrador por defecto
   const loadAdminFolderByDefault = async () => {
@@ -49,13 +145,13 @@ const Folders = () => {
         // Establecer la carpeta administrador como carpeta actual
         setCurrentFolder({
           ...adminFolder,
-          folder_name: 'Entrenador - Brify',
+          folder_name: 'Master - Brify',
           google_folder_id: adminFolder.id_drive_carpeta,
           type: 'admin'
         })
         setBreadcrumb([
           { name: 'Inicio', id: null },
-          { name: 'Entrenador - Brify', id: adminFolder.id }
+          { name: 'Master - Brify', id: adminFolder.id }
         ])
         
         // Cargar las carpetas de usuario dentro de la carpeta administrador
@@ -98,7 +194,7 @@ const Folders = () => {
         // Combinar carpetas admin y de usuario
         const adminFolders = (adminData || []).map(folder => ({
           ...folder,
-          folder_name: 'Entrenador - Brify',
+          folder_name: 'Master - Brify',
           google_folder_id: folder.id_drive_carpeta,
           type: 'admin'
         }))
@@ -203,10 +299,17 @@ const Folders = () => {
             return
           }
           
-          // Crear carpeta en Google Drive dentro de la carpeta administrador
+          // Determinar la carpeta padre según la selección
+          let parentFolderId = adminFolderData.id_drive_carpeta // Por defecto, carpeta Master - Brify
+          
+          if (selectedParentFolder && selectedParentFolder.file_id_subcarpeta) {
+            parentFolderId = selectedParentFolder.file_id_subcarpeta // Usar subcarpeta seleccionada
+          }
+          
+          // Crear carpeta en Google Drive dentro de la carpeta padre seleccionada
           const driveFolder = await googleDriveService.createFolder(
             newFolderName,
-            adminFolderData.id_drive_carpeta // Usar la carpeta administrador como parent
+            parentFolderId
           )
           
           googleFolderId = driveFolder.id
@@ -222,13 +325,49 @@ const Folders = () => {
         }
       }
       
+      // Determinar la extensión basada en la carpeta padre seleccionada
+      let extension = 'Brify' // Por defecto
+      console.log('🎯 Carpeta padre seleccionada para determinar extensión:', selectedParentFolder)
+      
+      if (selectedParentFolder) {
+        if (selectedParentFolder.tipo_extension) {
+          // Mapear tipo_extension a nombre de extensión correcto
+          const extensionMapping = {
+            'brify': 'Brify',
+            'entrenador': 'Entrenador',
+            'abogados': 'Abogados',
+            'veterinarios': 'Veterinarios'
+          }
+          extension = extensionMapping[selectedParentFolder.tipo_extension] || selectedParentFolder.tipo_extension
+          console.log(`📋 Extensión determinada por tipo_extension: ${selectedParentFolder.tipo_extension} -> ${extension}`)
+        } else if (selectedParentFolder.nombre_subcarpeta) {
+          // Extraer extensión del nombre de la subcarpeta como fallback
+          const nombreLower = selectedParentFolder.nombre_subcarpeta.toLowerCase()
+          if (nombreLower.includes('entrenador')) {
+            extension = 'Entrenador'
+          } else if (nombreLower.includes('abogado')) {
+            extension = 'Abogados'
+          } else if (nombreLower.includes('veterinario')) {
+            extension = 'Veterinarios'
+          } else if (nombreLower.includes('brify')) {
+            extension = 'Brify'
+          }
+          console.log(`📋 Extensión determinada por nombre_subcarpeta: ${selectedParentFolder.nombre_subcarpeta} -> ${extension}`)
+        }
+      }
+      
+      console.log(`✅ Extensión final asignada: ${extension}`)
+      
       // Guardar en la tabla carpetas_usuario
       const folderData = {
         telegram_id: userProfile?.telegram_id || null,
         correo: newFolderName, // El nombre de la carpeta será el correo
         id_carpeta_drive: googleFolderId,
-        administrador: user.email // Email del administrador que crea la carpeta
+        administrador: user.email, // Email del administrador que crea la carpeta
+        extension: extension // Campo para identificar la extensión
       }
+      
+      console.log('💾 Datos de carpeta a guardar:', folderData)
       
       const { error } = await db.userFolders.create(folderData)
       
@@ -280,7 +419,7 @@ const Folders = () => {
             
             // Enviar correo de bienvenida
             try {
-              const result = await emailService.sendWelcomeEmail(newFolderName, nameFromEmail, user.id)
+              const result = await emailService.sendWelcomeEmail(newFolderName, nameFromEmail, user.id, extension)
               if (result.success) {
                 console.log('Correo de bienvenida enviado exitosamente')
                 toast.success(`Carpeta creada, usuario registrado y correo de bienvenida enviado a ${newFolderName}`)
@@ -298,7 +437,7 @@ const Folders = () => {
           // Enviar correo de bienvenida también para usuarios existentes
           try {
             const nameFromEmail = newFolderName.split('@')[0]
-            const result = await emailService.sendWelcomeEmail(newFolderName, nameFromEmail, user.id)
+            const result = await emailService.sendWelcomeEmail(newFolderName, nameFromEmail, user.id, extension)
             if (result.success) {
               console.log('Correo de bienvenida enviado a usuario existente')
               toast.success(`Carpeta creada y correo de bienvenida enviado a ${newFolderName}`)
@@ -415,6 +554,8 @@ const Folders = () => {
     }
   }
 
+
+
   const handleBreadcrumbClick = (index) => {
     // Prevenir navegación fuera de la carpeta administrador (índice 0 es "Inicio", índice 1 es "Entrenador - Brify")
     if (index < 1) {
@@ -490,7 +631,10 @@ const Folders = () => {
         {/* Solo mostrar botón de Nueva Carpeta en el nivel principal */}
         {(!currentFolder || currentFolder.type !== 'user') && (
           <button
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => {
+                  loadAvailableSubFolders()
+                  setShowCreateModal(true)
+                }}
             className="mt-4 sm:mt-0 bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors flex items-center"
           >
             <PlusIcon className="h-5 w-5 mr-2" />
@@ -525,8 +669,28 @@ const Folders = () => {
         </ol>
       </nav>
 
+      {/* Subcarpetas disponibles */}
+      {availableSubFolders.length > 0 && (
+        <div className="bg-gray-50 rounded-lg p-4 mb-6">
+          <h3 className="text-sm font-medium text-gray-900 mb-3">Subcarpetas disponibles</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+            {availableSubFolders.map((subfolder) => (
+              <div
+                key={subfolder.id}
+                className="flex items-center p-2 bg-white rounded border border-gray-200 hover:border-primary-300 transition-colors"
+              >
+                <FolderIcon className="h-4 w-4 text-primary-600 mr-2" />
+                <span className="text-sm text-gray-700 truncate">
+                  {subfolder.nombre_subcarpeta}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Search */}
-      <div className="relative">
+      <div className="relative mb-6">
         <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
         <input
           type="text"
@@ -536,6 +700,8 @@ const Folders = () => {
           className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
         />
       </div>
+
+
 
       {/* Folders Grid */}
       {loading ? (
@@ -554,7 +720,10 @@ const Folders = () => {
           </p>
           {!searchTerm && (
             <button
-              onClick={() => setShowCreateModal(true)}
+              onClick={() => {
+                loadAvailableSubFolders()
+                setShowCreateModal(true)
+              }}
               className="bg-primary-600 text-white px-6 py-2 rounded-lg hover:bg-primary-700 transition-colors"
             >
               Crear Primera Carpeta
@@ -563,10 +732,12 @@ const Folders = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredFolders.map((folder) => (
+          {filteredFolders.map((folder) => {
+            
+            return (
             <div
               key={folder.id}
-              className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow p-6"
+              className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-all p-6 cursor-pointer"
             >
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center">
@@ -606,6 +777,18 @@ const Folders = () => {
                   <CalendarIcon className="h-4 w-4 mr-2" />
                   <span>Creada: {formatDate(folder.created_at)}</span>
                 </div>
+                {folder.extension && (
+                  <div className="flex items-center">
+                    <div className={`w-3 h-3 rounded-full mr-2 ${
+                      folder.extension === 'Abogados' ? 'bg-blue-500' :
+                      folder.extension === 'Entrenador' ? 'bg-green-500' :
+                      'bg-purple-500'
+                    }`} />
+                    <span className="text-xs font-medium">
+                      Extensión: {folder.extension}
+                    </span>
+                  </div>
+                )}
               </div>
               
               <button
@@ -615,8 +798,10 @@ const Folders = () => {
                 <DocumentIcon className="h-4 w-4 mr-2" />
                 Ver archivos
               </button>
+
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -629,6 +814,41 @@ const Folders = () => {
             </h3>
             
             <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Carpeta padre
+                </label>
+                <select
+                  value={selectedParentFolder?.id || ''}
+                  onChange={(e) => {
+                    console.log('🔄 Cambiando carpeta padre a:', e.target.value)
+                    if (e.target.value === '') {
+                      console.log('📁 Carpeta seleccionada: null (ninguna)')
+                      setSelectedParentFolder(null)
+                    } else {
+                      const selectedId = parseInt(e.target.value)
+                      const selected = availableSubFolders.find(folder => folder.id === selectedId)
+                      console.log('📁 Carpeta seleccionada:', selected)
+                      setSelectedParentFolder(selected)
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                >
+                  <option value="">Selecciona una carpeta padre</option>
+                  {availableSubFolders.map((folder) => {
+                    console.log('🎯 Renderizando opción:', folder)
+                    return (
+                      <option key={folder.id} value={folder.id}>
+                        {folder.nombre_subcarpeta}
+                      </option>
+                    )
+                  })}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Selecciona donde crear la nueva carpeta
+                </p>
+              </div>
+              
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Email del cliente

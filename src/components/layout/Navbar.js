@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useUserExtensions } from '../../hooks/useUserExtensions'
 import { supabase } from '../../lib/supabase'
 import { 
   HomeIcon, 
@@ -11,11 +12,13 @@ import {
   Bars3Icon, 
   XMarkIcon,
   ArrowRightOnRectangleIcon,
-  MagnifyingGlassIcon
+  MagnifyingGlassIcon,
+  ScaleIcon
 } from '@heroicons/react/24/outline'
 
 const Navbar = () => {
   const { user, userProfile, signOut, hasActivePlan } = useAuth()
+  const { hasExtension } = useUserExtensions()
   const location = useLocation()
   const navigate = useNavigate()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
@@ -56,6 +59,7 @@ const Navbar = () => {
     { name: 'Carpetas', href: '/folders', icon: FolderIcon },
     { name: 'Archivos', href: '/files', icon: DocumentIcon },
     ...(hasActivePlan() ? [{ name: 'Búsqueda IA', href: '/search', icon: MagnifyingGlassIcon }] : []),
+    ...(hasExtension('Abogados') ? [{ name: 'Abogado', href: '/abogado', icon: ScaleIcon }] : []),
     
     { name: 'Planes', href: '/plans', icon: CreditCardIcon },
     { name: 'Perfil', href: '/profile', icon: UserIcon },

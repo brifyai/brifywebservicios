@@ -12,6 +12,7 @@ import Folders from './components/folders/Folders'
 import Files from './components/files/Files'
 import Profile from './components/profile/Profile'
 import SemanticSearch from './components/embeddings/SemanticSearch'
+import Abogado from './components/legal/Abogado'
 import LoadingSpinner from './components/common/LoadingSpinner'
 import Navbar from './components/layout/Navbar'
 import GoogleAuthCallback from './components/auth/GoogleAuthCallback'
@@ -158,6 +159,16 @@ function App() {
                   <ProtectedRoute>
                     <AuthenticatedLayout>
                       <SemanticSearch />
+                    </AuthenticatedLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/abogado"
+                element={
+                  <ProtectedRoute>
+                    <AuthenticatedLayout>
+                      <Abogado />
                     </AuthenticatedLayout>
                   </ProtectedRoute>
                 }

@@ -1,30 +1,41 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
-import { db } from '../../lib/supabase'
+import { db, supabase } from '../../lib/supabase'
+import { toast } from 'react-hot-toast'
 import googleDriveService from '../../lib/googleDrive'
-import { DriveWatchService } from '../../lib/driveWatchService'
+import DriveWatchService from '../../lib/driveWatchService'
 import emailService from '../../lib/emailService'
+import { useUserExtensions } from '../../hooks/useUserExtensions'
 import {
   CheckIcon,
   CreditCardIcon,
   ClockIcon,
   CloudIcon,
   StarIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  PlusIcon,
+  MinusIcon
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
-import toast from 'react-hot-toast'
 
 const Plans = () => {
   const { user, userProfile, hasActivePlan, updateUserProfile } = useAuth()
+  const { userExtensions: activeUserExtensions, loading: extensionsLoading } = useUserExtensions()
   const [plans, setPlans] = useState([])
+  const [extensions, setExtensions] = useState([])
+  const [selectedExtensions, setSelectedExtensions] = useState({})
+  const [userExtensions, setUserExtensions] = useState([])
   const [loading, setLoading] = useState(true)
   const [processingPayment, setProcessingPayment] = useState(null)
   const [isGoogleDriveConnected, setIsGoogleDriveConnected] = useState(false)
 
   useEffect(() => {
     loadPlans()
-  }, [])
+    loadExtensions()
+    if (user) {
+      loadUserExtensions()
+    }
+  }, [user])
 
   // Efecto para verificar Google Drive cuando userProfile cambie
   useEffect(() => {
@@ -71,8 +82,183 @@ const Plans = () => {
     }
   }
 
+  const loadExtensions = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('extensiones')
+        .select('*')
+        .order('created_at', { ascending: true })
+      
+      if (error) {
+        console.error('Error loading extensions:', error)
+        toast.error('Error cargando las extensiones')
+        return
+      }
+      
+      setExtensions(data || [])
+    } catch (error) {
+      console.error('Error loading extensions:', error)
+      setExtensions([])
+      toast.error('Error cargando las extensiones')
+    }
+  }
+
+  const loadUserExtensions = async () => {
+    if (!user) return
+    
+    try {
+      const { data, error } = await supabase
+        .from('plan_extensiones')
+        .select(`
+          extension_id,
+          plan_id,
+          extensiones (
+            id,
+            name,
+            name_es,
+            price_usd
+          )
+        `)
+        .eq('user_id', user.id)
+      
+      if (error) {
+        console.error('Error loading user extensions:', error)
+        return
+      }
+      
+      setUserExtensions(data || [])
+    } catch (error) {
+      console.error('Error loading user extensions:', error)
+    }
+  }
+
+  const handleExtensionToggle = (planId, extensionId) => {
+    setSelectedExtensions(prev => {
+      const planExtensions = prev[planId] || []
+      const isSelected = planExtensions.includes(extensionId)
+      
+      if (isSelected) {
+        return {
+          ...prev,
+          [planId]: planExtensions.filter(id => id !== extensionId)
+        }
+      } else {
+        return {
+          ...prev,
+          [planId]: [...planExtensions, extensionId]
+        }
+      }
+    })
+  }
+
+  const calculateTotalPrice = (plan) => {
+    if (plan.prueba_gratis) {
+      return 0
+    }
+    
+    const basePrice = parseFloat(plan.price_usd) || 0
+    const planExtensions = selectedExtensions[plan.id] || []
+    
+    const extensionsPrice = planExtensions.reduce((total, extensionId) => {
+      const extension = extensions.find(ext => ext.id === extensionId)
+      return total + (extension ? parseFloat(extension.price_usd) : 0)
+    }, 0)
+    
+    return basePrice + extensionsPrice
+  }
+
+  const calculatePriceWithExtensions = (plan) => {
+    const basePrice = parseFloat(plan.price_usd) || 0
+    const planExtensions = selectedExtensions[plan.id] || []
+    
+    const extensionsPrice = planExtensions.reduce((total, extensionId) => {
+      const extension = extensions.find(ext => ext.id === extensionId)
+      return total + (extension ? parseFloat(extension.price_usd) : 0)
+    }, 0)
+    
+    return basePrice + extensionsPrice
+  }
+
+  const formatPrice = (price) => {
+    if (price === 0) {
+      return '$0'
+    }
+    return `$${price.toFixed(2)}`
+  }
+
+  // Función para crear subcarpetas según extensiones
+  const createSubFolders = async (masterFolderId, adminEmail, selectedExtensionIds = []) => {
+    try {
+      const subFoldersToCreate = []
+      
+      // Siempre crear la carpeta "Brify" (plan básico)
+      subFoldersToCreate.push({
+        nombre: 'Brify',
+        tipo: 'brify'
+      })
+      
+      // Agregar subcarpetas según extensiones seleccionadas
+      if (selectedExtensionIds && selectedExtensionIds.length > 0) {
+        // Obtener información de las extensiones seleccionadas
+        for (const extensionId of selectedExtensionIds) {
+          const extension = extensions.find(ext => ext.id === extensionId)
+          if (extension) {
+            if (extension.name === 'Abogados' || extension.name_es === 'Abogados') {
+              subFoldersToCreate.push({
+                nombre: 'Abogados',
+                tipo: 'abogados'
+              })
+            }
+            if (extension.name === 'Entrenador' || extension.name_es === 'Entrenador') {
+              subFoldersToCreate.push({
+                nombre: 'Entrenador',
+                tipo: 'entrenador'
+              })
+            }
+          }
+        }
+      }
+      
+      // Crear cada subcarpeta en Google Drive y registrarla en la base de datos
+      for (const subFolder of subFoldersToCreate) {
+        try {
+          // Crear subcarpeta en Google Drive
+          const driveSubFolder = await googleDriveService.createFolder(
+            subFolder.nombre,
+            masterFolderId // Usar la carpeta Master - Brify como padre
+          )
+          
+          if (driveSubFolder.id) {
+            // Registrar subcarpeta en la base de datos
+            const subFolderData = {
+              administrador_email: adminEmail,
+              file_id_master: masterFolderId,
+              file_id_subcarpeta: driveSubFolder.id,
+              nombre_subcarpeta: subFolder.nombre,
+              tipo_extension: subFolder.tipo
+            }
+            
+            const { error: subFolderError } = await db.subCarpetasAdministrador.create(subFolderData)
+            
+            if (subFolderError) {
+              console.error(`Error registrando subcarpeta ${subFolder.nombre}:`, subFolderError)
+            } else {
+              console.log(`Subcarpeta ${subFolder.nombre} creada exitosamente`)
+            }
+          }
+        } catch (subFolderError) {
+          console.error(`Error creando subcarpeta ${subFolder.nombre}:`, subFolderError)
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error creating subfolders:', error)
+      throw error
+    }
+  }
+
   // Función para crear carpeta administrador en Google Drive
-  const createAdminFolder = async (planName) => {
+  const createAdminFolder = async (planName, planId = null) => {
     try {
       // Verificar si ya existe una carpeta administrador para este usuario
       const { data: existingFolder, error: checkError } = await db.adminFolders.getByEmail(user.email)
@@ -88,7 +274,7 @@ const Plans = () => {
       }
       
       // Crear carpeta en Google Drive
-      const folderName = `Entrenador - Brify`
+      const folderName = `Master - Brify`
       const driveFolder = await googleDriveService.createFolder(folderName)
       
       if (!driveFolder.id) {
@@ -118,6 +304,17 @@ const Plans = () => {
       }
       
       console.log('Admin folder created successfully:', savedFolder)
+      
+      // Crear subcarpetas según extensiones del usuario
+      try {
+        // Obtener extensiones seleccionadas para este plan (si las hay)
+        const planExtensions = selectedExtensions[planId] || []
+        await createSubFolders(driveFolder.id, user.email, planExtensions)
+        console.log('Subcarpetas creadas exitosamente')
+      } catch (subFoldersError) {
+        console.error('Error creando subcarpetas:', subFoldersError)
+        // No lanzar error ya que la carpeta principal se creó exitosamente
+      }
       
       // Configurar watch channel para la carpeta administrador
       try {
@@ -223,7 +420,37 @@ const Plans = () => {
             console.error('Error activating plan:', updateResult.error)
             toast.error('Pago procesado pero error activando el plan')
           } else {
+            // Guardar extensiones seleccionadas en plan_extensiones
+            try {
+              const selectedExtensionIds = selectedExtensions[plan.id] || []
+              
+              if (selectedExtensionIds.length > 0) {
+                const extensionsToInsert = selectedExtensionIds.map(extensionId => ({
+                  user_id: user.id,
+                  plan_id: plan.id,
+                  extension_id: extensionId,
+                  created_at: new Date().toISOString()
+                }))
+                
+                const { error: extensionsError } = await supabase
+                  .from('plan_extensiones')
+                  .insert(extensionsToInsert)
+                
+                if (extensionsError) {
+                  console.error('Error guardando extensiones:', extensionsError)
+                } else {
+                  console.log(`Guardadas ${selectedExtensionIds.length} extensiones para el plan`)
+                }
+              }
+            } catch (extensionError) {
+              console.error('Error guardando extensiones:', extensionError)
+              // No mostrar error al usuario ya que el plan se activó correctamente
+            }
+            
             toast.success('¡Pago procesado exitosamente! Tu plan se ha activado.')
+            
+            // Recargar datos del usuario para actualizar la UI
+            window.location.reload()
             
             // Enviar correo de bienvenida post-compra con todas las funcionalidades
             try {
@@ -318,6 +545,33 @@ const Plans = () => {
         return
       }
       
+      // Guardar extensiones seleccionadas en plan_extensiones
+      try {
+        const selectedExtensionIds = selectedExtensions[plan.id] || []
+        
+        if (selectedExtensionIds.length > 0) {
+          const extensionsToInsert = selectedExtensionIds.map(extensionId => ({
+            user_id: user.id,
+            plan_id: plan.id,
+            extension_id: extensionId,
+            created_at: new Date().toISOString()
+          }))
+          
+          const { error: extensionsError } = await supabase
+            .from('plan_extensiones')
+            .insert(extensionsToInsert)
+          
+          if (extensionsError) {
+            console.error('Error guardando extensiones:', extensionsError)
+          } else {
+            console.log(`Guardadas ${selectedExtensionIds.length} extensiones para el plan de prueba`)
+          }
+        }
+      } catch (extensionError) {
+        console.error('Error guardando extensiones:', extensionError)
+        // No mostrar error al usuario ya que el plan se activó correctamente
+      }
+      
       // Crear o actualizar registro en user_tokens_usage con el límite del plan
       try {
         const { error: tokenError } = await db.userTokensUsage.upsert({
@@ -351,9 +605,14 @@ const Plans = () => {
       try {
         // Crear carpeta administrador en Google Drive
         toast.loading('Creando carpeta en Google Drive...')
-        await createAdminFolder(plan.name_es || plan.name)
+        await createAdminFolder(plan.name_es || plan.name, plan.id)
         toast.dismiss()
         toast.success('¡Plan activado y carpeta creada exitosamente!')
+        
+        // Recargar datos del usuario para actualizar la UI
+        setTimeout(() => {
+          window.location.reload()
+        }, 1000)
         
         // Enviar correo de bienvenida post-compra con todas las funcionalidades
         try {
@@ -384,15 +643,6 @@ const Plans = () => {
       toast.error('Error procesando el pago de prueba')
       setProcessingPayment(null)
     }
-  }
-
-  const formatPrice = (price) => {
-    // Convertir USD a CLP (aproximadamente 1 USD = 900 CLP)
-    const priceInCLP = price * 900
-    return new Intl.NumberFormat('es-CL', {
-      style: 'currency',
-      currency: 'CLP'
-    }).format(priceInCLP)
   }
 
   const formatStorage = (bytes) => {
@@ -435,8 +685,8 @@ const Plans = () => {
     return features[planCode?.toLowerCase()] || []
   }
 
-  const isCurrentPlan = (planCode) => {
-    return userProfile?.current_plan_id?.toLowerCase() === planCode?.toLowerCase()
+  const isCurrentPlan = (planId) => {
+    return userProfile?.current_plan_id === planId
   }
 
   const getCurrentPlanName = () => {
@@ -545,9 +795,36 @@ const Plans = () => {
                     {plan.name_es || plan.name}
                   </h3>
                   <div className="flex items-center justify-center mb-4">
-                    <span className="text-4xl font-bold text-gray-900">
-                      {formatPrice(plan.price_usd)}
-                    </span>
+                    {plan.prueba_gratis ? (
+                      <div className="flex flex-col items-center">
+                        {calculatePriceWithExtensions(plan) > parseFloat(plan.price_usd) ? (
+                          <span className="text-2xl font-bold text-gray-400 line-through">
+                            {formatPrice(calculatePriceWithExtensions(plan))}
+                          </span>
+                        ) : (
+                          <span className="text-2xl font-bold text-gray-400 line-through">
+                            {formatPrice(parseFloat(plan.price_usd))}
+                          </span>
+                        )}
+                        <span className="text-4xl font-bold text-green-600">
+                          $0
+                        </span>
+                        <span className="text-xs text-green-600 font-medium">
+                          PRUEBA GRATIS
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center">
+                        <span className="text-4xl font-bold text-gray-900">
+                          {formatPrice(calculateTotalPrice(plan))}
+                        </span>
+                        {calculateTotalPrice(plan) !== parseFloat(plan.price_usd) && (
+                          <span className="text-sm text-gray-500">
+                            Base: {formatPrice(parseFloat(plan.price_usd))}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <span className="text-gray-600 ml-2">/{plan.duration_days} días</span>
                   </div>
                   <p className="text-gray-600">
@@ -556,7 +833,7 @@ const Plans = () => {
                 </div>
 
                 {/* Características */}
-                <div className="space-y-4 mb-8">
+                <div className="space-y-4 mb-6">
                   <div className="flex items-center text-sm">
                     <CloudIcon className="h-4 w-4 text-primary-600 mr-3" />
                     <span>Almacenamiento: {formatStorage(plan.storage_limit_bytes)}</span>
@@ -573,6 +850,82 @@ const Plans = () => {
                     </div>
                   ))}
                 </div>
+
+                {/* Extensiones */}
+                {extensions.length > 0 && (
+                  <div className="mb-6">
+                    <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                      <PlusIcon className="h-4 w-4 mr-2" />
+                      Extensiones Disponibles
+                    </h4>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {extensions.map((extension) => {
+                        const isSelected = (selectedExtensions[plan.id] || []).includes(extension.id)
+                        const isAvailable = extension.disponible
+                        const isPurchased = userExtensions.some(ue => ue.extension_id === extension.id)
+                        
+                        return (
+                          <div
+                            key={extension.id}
+                            className={`flex items-center justify-between p-2 rounded-lg border transition-colors ${
+                              isPurchased
+                                ? 'bg-green-50 border-green-200'
+                                : !isAvailable
+                                ? 'bg-gray-50 border-gray-200 opacity-60'
+                                : isSelected
+                                ? 'bg-blue-50 border-blue-200'
+                                : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                            }`}
+                          >
+                            <div className="flex items-center flex-1">
+                              <input
+                                type="checkbox"
+                                checked={isPurchased || isSelected}
+                                disabled={!isAvailable || isPurchased}
+                                onChange={() => handleExtensionToggle(plan.id, extension.id)}
+                                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
+                              />
+                              <div className="ml-3 flex-1">
+                                <div className="flex items-center justify-between">
+                                  <span className={`text-xs font-medium ${
+                                    isPurchased ? 'text-green-700' :
+                                    !isAvailable ? 'text-gray-400 line-through' : 'text-gray-900'
+                                  }`}>
+                                    {extension.name_es}
+                                  </span>
+                                  <span className={`text-xs font-bold ${
+                                    isPurchased ? 'text-green-600' :
+                                    !isAvailable ? 'text-gray-400 line-through' : 'text-blue-600'
+                                  }`}>
+                                    {isPurchased ? 'COMPRADA' : `+${formatPrice(parseFloat(extension.price_usd))}`}
+                                  </span>
+                                </div>
+                                {extension.description_es && (
+                                  <p className={`text-xs mt-1 ${
+                                    isPurchased ? 'text-green-600' :
+                                    !isAvailable ? 'text-gray-400' : 'text-gray-600'
+                                  }`}>
+                                    {extension.description_es}
+                                  </p>
+                                )}
+                                {isPurchased && (
+                                  <p className="text-xs text-green-600 mt-1 font-medium">
+                                    ✓ Extensión activa
+                                  </p>
+                                )}
+                                {!isAvailable && !isPurchased && (
+                                  <p className="text-xs text-red-500 mt-1">
+                                    No disponible
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* Botón de acción */}
                 <div className="text-center">

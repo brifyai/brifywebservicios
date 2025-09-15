@@ -32,6 +32,7 @@ const Dashboard = () => {
     storageUsed: 0,
     tokensUsed: 0
   })
+  const [userExtensions, setUserExtensions] = useState([])
   const [plans, setPlans] = useState([])
 
   // Timeout de seguridad para evitar loading infinito
@@ -128,20 +129,17 @@ const Dashboard = () => {
         console.error('Error loading files:', fileError)
       }
       
-      // Calcular almacenamiento desde documentos_entrenador
+      // Calcular almacenamiento desde documentos_entrenador (sin cargar embeddings)
       try {
         const { data: chunksData, error: chunksError } = await supabase
           .from('documentos_entrenador')
-          .select('embedding')
+          .select('id')
           .eq('entrenador', user.email)
 
         if (!chunksError && chunksData) {
-          const totalSize = chunksData.reduce((acc, chunk) => {
-            return acc + (chunk.embedding ? JSON.stringify(chunk.embedding).length : 0)
-          }, 0)
-          
-          realStats.storageUsed = totalSize
-          console.log('Dashboard: Storage calculated:', totalSize, 'bytes')
+          // Estimación simple basada en número de documentos
+          realStats.storageUsed = chunksData.length * 1024 // 1KB por documento estimado
+          console.log('Dashboard: Storage estimated:', realStats.storageUsed, 'bytes for', chunksData.length, 'documents')
         }
       } catch (storageError) {
         console.error('Error calculating storage:', storageError)
@@ -210,6 +208,32 @@ const Dashboard = () => {
         }
       } catch (planError) {
         console.error('Network error loading plans:', planError)
+      }
+      
+      // Cargar extensiones del usuario
+      console.log('Dashboard: Loading user extensions')
+      try {
+        const { data: extensionsData, error: extensionsError } = await supabase
+          .from('plan_extensiones')
+          .select(`
+            *,
+            extensiones (
+              id,
+              name,
+              name_es,
+              description,
+              description_es,
+              price_usd
+            )
+          `)
+          .eq('user_id', user.id)
+        
+        if (!extensionsError && extensionsData) {
+    
+          setUserExtensions(extensionsData)
+        }
+      } catch (extensionError) {
+        console.error('Network error loading user extensions:', extensionError)
       }
       
       // Cargar historial de pagos con manejo de errores mejorado
@@ -568,6 +592,28 @@ const Dashboard = () => {
                   <span>Límite: {formatBytes(plans.find(p => p.id === userProfile?.current_plan_id)?.storage_limit_bytes || 0)}</span>
                 </div>
                 <p className="text-xs text-gray-500 text-center mt-1">{getStoragePercentage().toFixed(1)}% usado</p>
+              </div>
+            )}
+            
+            {/* Extensiones Activas */}
+            {userExtensions.length > 0 && (
+              <div>
+                <p className="text-sm font-medium text-gray-600 mb-2">Extensiones Activas</p>
+                <div className="space-y-2">
+                  {userExtensions.map((userExt) => (
+                    <div key={userExt.id} className="flex items-center justify-between p-2 bg-green-50 rounded-lg border border-green-200">
+                      <div className="flex items-center">
+                        <CheckCircleIcon className="h-4 w-4 text-green-500 mr-2" />
+                        <span className="text-sm font-medium text-green-800">
+                          {userExt.extensiones?.name_es || userExt.extensiones?.name}
+                        </span>
+                      </div>
+                      <span className="text-xs text-green-600 font-medium">
+                        ${userExt.extensiones?.price_usd}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

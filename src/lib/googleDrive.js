@@ -251,7 +251,8 @@ class GoogleDriveService {
         throw new Error(result.error?.message || `Error uploading file: ${response.status}`)
       }
       
-      return result.id
+      console.log('✅ Google Drive upload result:', result)
+      return result // Retornar el objeto completo que incluye id, name, size, mimeType
     } catch (error) {
       console.error('Error uploading file:', error)
       throw error

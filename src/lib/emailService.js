@@ -110,7 +110,7 @@ class EmailService {
   }
 
   // Enviar correo de bienvenida para carpetas compartidas
-  async sendWelcomeEmail(clientEmail, clientName, userId = null) {
+  async sendWelcomeEmail(clientEmail, clientName, userId = null, extension = 'Brify') {
     try {
       const initialized = await this.init(userId)
       if (!initialized) {
@@ -126,21 +126,28 @@ class EmailService {
         throw new Error('No se encontró un token de acceso válido')
       }
       
-      const subject = `¡Bienvenido a Brify, ${clientName}!`
-      const htmlContent = this.getWelcomeEmailHTML(clientName)
+      const subject = `¡Bienvenido a ${extension}, ${clientName}!`
+      const htmlContent = this.getWelcomeEmailHTMLByExtension(clientName, extension)
+      
+      // Codificar el asunto en UTF-8 usando RFC 2047
+      const subjectUtf8Bytes = new TextEncoder().encode(subject)
+      const subjectBase64 = btoa(String.fromCharCode(...subjectUtf8Bytes))
+      const encodedSubject = `=?UTF-8?B?${subjectBase64}?=`
       
       // Crear el mensaje en formato RFC 2822 con HTML
       const email = [
         `To: ${clientEmail}`,
-        `Subject: ${subject}`,
+        `Subject: ${encodedSubject}`,
         'MIME-Version: 1.0',
         'Content-Type: text/html; charset=utf-8',
         '',
         htmlContent
       ].join('\n')
       
-      // Codificar en base64url
-      const encodedMessage = btoa(unescape(encodeURIComponent(email)))
+      // Codificar en base64url con mejor manejo de UTF-8
+      const utf8Bytes = new TextEncoder().encode(email)
+      const base64String = btoa(String.fromCharCode(...utf8Bytes))
+      const encodedMessage = base64String
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
         .replace(/=+$/, '')
@@ -182,7 +189,9 @@ class EmailService {
       const htmlContent = this.getPostPurchaseWelcomeEmailHTML(clientName, planName)
       
       // Codificar el asunto en UTF-8 usando RFC 2047
-      const encodedSubject = `=?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`
+      const subjectUtf8Bytes = new TextEncoder().encode(subject)
+      const subjectBase64 = btoa(String.fromCharCode(...subjectUtf8Bytes))
+      const encodedSubject = `=?UTF-8?B?${subjectBase64}?=`
       
       // Crear el mensaje en formato RFC 2822 con HTML y remitente oficial
       const email = [
@@ -195,8 +204,10 @@ class EmailService {
         htmlContent
       ].join('\n')
       
-      // Codificar en base64url
-      const encodedMessage = btoa(unescape(encodeURIComponent(email)))
+      // Codificar en base64url con mejor manejo de UTF-8
+      const utf8Bytes = new TextEncoder().encode(email)
+      const base64String = btoa(String.fromCharCode(...utf8Bytes))
+      const encodedMessage = base64String
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
         .replace(/=+$/, '')
@@ -277,21 +288,63 @@ El equipo de Brify 💙
 
   // Template HTML para el correo de bienvenida (carpetas compartidas)
   getWelcomeEmailHTML(clientName) {
+    return this.getWelcomeEmailHTMLByExtension(clientName, 'Brify')
+  }
+
+  getWelcomeEmailHTMLByExtension(clientName, extension = 'Brify') {
+    const extensionConfig = {
+      'Brify': {
+        title: 'Brify',
+        subtitle: 'Tu plataforma de búsqueda inteligente con IA',
+        color: '#667eea',
+        features: [
+          { emoji: '🔍', text: 'Búsqueda inteligente en tus archivos' },
+          { emoji: '🤖', text: 'Asistente de IA personalizado' },
+          { emoji: '📁', text: 'Organización automática de contenido' },
+          { emoji: '💡', text: 'Respuestas instantáneas a tus preguntas' }
+        ]
+      },
+      'Entrenador': {
+        title: 'Entrenador',
+        subtitle: 'Tu plataforma de entrenamiento personalizado',
+        color: '#28a745',
+        features: [
+          { emoji: '💪', text: 'Rutinas de entrenamiento personalizadas' },
+          { emoji: '📊', text: 'Seguimiento de progreso' },
+          { emoji: '🥗', text: 'Planes nutricionales adaptados' },
+          { emoji: '📱', text: 'Acceso móvil a tu entrenamiento' }
+        ]
+      },
+      'Abogados': {
+        title: 'Abogados',
+        subtitle: 'Tu asistente legal inteligente',
+        color: '#dc3545',
+        features: [
+          { emoji: '⚖️', text: 'Revisión de documentos legales' },
+          { emoji: '📋', text: 'Análisis de contratos y acuerdos' },
+          { emoji: '🔍', text: 'Búsqueda en jurisprudencia' },
+          { emoji: '📚', text: 'Consulta de leyes y normativas' }
+        ]
+      }
+    }
+
+    const config = extensionConfig[extension] || extensionConfig['Brify']
+
     return `
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>¡Bienvenido a Brify!</title>
+    <title>¡Bienvenido a ${config.title}!</title>
     <style>
         body { font-family: Arial, sans-serif; line-height: 1.6; color: #000000; }
         .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .header { background: linear-gradient(135deg, ${config.color} 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
         .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; color: #000000; }
         .telegram-section { background: #0088cc; color: white; padding: 20px; border-radius: 10px; margin: 20px 0; text-align: center; }
         .steps { background: white; padding: 20px; border-radius: 10px; margin: 20px 0; color: #000000; }
-        .step { margin: 10px 0; padding: 10px; border-left: 4px solid #667eea; color: #000000; }
+        .step { margin: 10px 0; padding: 10px; border-left: 4px solid ${config.color}; color: #000000; }
         .footer { text-align: center; margin-top: 30px; color: #666; }
         .emoji { font-size: 1.2em; }
     </style>
@@ -299,8 +352,8 @@ El equipo de Brify 💙
 <body>
     <div class="container">
         <div class="header">
-            <h1><span class="emoji">🎉</span> ¡Bienvenido a Brify, ${clientName}! <span class="emoji">🎉</span></h1>
-            <p>Tu plataforma de entrenamiento personalizado</p>
+            <h1> ¡Bienvenido a ${config.title}, ${clientName}! <span class="emoji">🎉</span></h1>
+            <p>${config.subtitle}</p>
         </div>
         
         <div class="content">
@@ -309,15 +362,12 @@ El equipo de Brify 💙
             <div class="telegram-section">
                 <h2><span class="emoji">🤖</span> ¡Conecta con nuestro Bot de Telegram!</h2>
                 <p><strong>@brifybeta_bot</strong></p>
-                <p>Aquí podrás preguntar y ver todo el contenido que tiene tu entrenador disponible para ti</p>
+                <p>Aquí podrás acceder a todas las funcionalidades de ${config.title}</p>
             </div>
             
             <div class="steps">
-                <h3><span class="emoji">✨</span> ¿Qué puedes hacer con nuestro bot?</h3>
-                <div class="step"><span class="emoji">💬</span> Hacer preguntas sobre tu entrenamiento</div>
-                <div class="step"><span class="emoji">📚</span> Acceder a contenido personalizado</div>
-                <div class="step"><span class="emoji">💡</span> Recibir consejos de tu entrenador</div>
-                <div class="step"><span class="emoji">🎯</span> Y mucho más...</div>
+                <h3><span class="emoji">✨</span> ¿Qué puedes hacer con ${config.title}?</h3>
+                ${config.features.map(feature => `<div class="step">${feature.emoji} ${feature.text}</div>`).join('')}
             </div>
             
             <div class="steps">
@@ -332,7 +382,7 @@ El equipo de Brify 💙
         </div>
         
         <div class="footer">
-            <p>Saludos,<br><strong>El equipo de Brify</strong> <span class="emoji">💙</span></p>
+            <p>Saludos,<br><strong>El equipo de ${config.title}</strong> <span class="emoji">💙</span></p>
         </div>
     </div>
 </body>
