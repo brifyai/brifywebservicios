@@ -21,16 +21,29 @@ const ResetPassword = () => {
   const [searchParams] = useSearchParams()
 
   useEffect(() => {
-    // Verificar si tenemos los parámetros necesarios del enlace de recuperación
-    const accessToken = searchParams.get('access_token')
-    const refreshToken = searchParams.get('refresh_token')
-    const type = searchParams.get('type')
+    // Función para obtener parámetros del fragmento de la URL (hash)
+    const getHashParams = () => {
+      const hash = window.location.hash.substring(1) // Remover el #
+      const params = new URLSearchParams(hash)
+      return {
+        access_token: params.get('access_token'),
+        refresh_token: params.get('refresh_token'),
+        type: params.get('type'),
+        expires_in: params.get('expires_in')
+      }
+    }
 
-    if (type === 'recovery' && accessToken && refreshToken) {
+    // Verificar si tenemos los parámetros necesarios del enlace de recuperación
+    const hashParams = getHashParams()
+    const { access_token, refresh_token, type } = hashParams
+
+    console.log('Hash params:', hashParams) // Para debugging
+
+    if (type === 'recovery' && access_token && refresh_token) {
       // Establecer la sesión con los tokens del enlace
       supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken
+        access_token: access_token,
+        refresh_token: refresh_token
       }).then(({ error }) => {
         if (error) {
           console.error('Error setting session:', error)
@@ -38,13 +51,14 @@ const ResetPassword = () => {
           toast.error('Enlace de recuperación inválido o expirado')
         } else {
           setIsValidToken(true)
+          toast.success('Enlace válido. Puedes cambiar tu contraseña.')
         }
       })
     } else {
       setIsValidToken(false)
       toast.error('Enlace de recuperación inválido')
     }
-  }, [searchParams])
+  }, [])
 
   const handleChange = (e) => {
     const { name, value } = e.target
