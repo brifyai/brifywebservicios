@@ -6,6 +6,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 // Componentes
 import Login from './components/auth/Login'
 import Register from './components/auth/Register'
+import ForgotPassword from './components/auth/ForgotPassword'
+import ResetPassword from './components/auth/ResetPassword'
 import Dashboard from './components/dashboard/Dashboard'
 import Plans from './components/plans/Plans'
 import Folders from './components/folders/Folders'
@@ -96,6 +98,20 @@ function App() {
                 <PublicRoute>
                   <Register />
                 </PublicRoute>
+              } 
+            />
+            <Route 
+              path="/forgot-password" 
+              element={
+                <PublicRoute>
+                  <ForgotPassword />
+                </PublicRoute>
+              } 
+            />
+            <Route 
+              path="/reset-password" 
+              element={
+                <ResetPassword />
               } 
             />
             

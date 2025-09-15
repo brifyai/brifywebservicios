@@ -185,9 +185,9 @@ const Login = () => {
           <div className="text-center">
             <p className="text-sm text-gray-600">
               ¿Olvidaste tu contraseña?{' '}
-              <a href="#" className="font-medium text-primary-600 hover:text-primary-500">
+              <Link to="/forgot-password" className="font-medium text-primary-600 hover:text-primary-500">
                 Recuperar contraseña
-              </a>
+              </Link>
             </p>
           </div>
         </form>
