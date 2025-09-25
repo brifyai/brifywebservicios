@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { executeQuery } from '../lib/queryQueue'
+
+// Cache compartido para evitar múltiples consultas simultáneas
+const extensionsCache = new Map()
+const loadingPromises = new Map()
 
 export const useUserExtensions = () => {
   const { user } = useAuth()
@@ -15,48 +20,80 @@ export const useUserExtensions = () => {
       return
     }
 
+    const cacheKey = `extensions_${user.id}`
+    
+    // Verificar si ya tenemos datos en caché
+    if (extensionsCache.has(cacheKey)) {
+      const cachedData = extensionsCache.get(cacheKey)
+      setUserExtensions(cachedData)
+      setLoading(false)
+      setError(null)
+      return
+    }
+
+    // Verificar si ya hay una consulta en progreso para este usuario
+    if (loadingPromises.has(cacheKey)) {
+      try {
+        const result = await loadingPromises.get(cacheKey)
+        setUserExtensions(result)
+        setLoading(false)
+        setError(null)
+        return
+      } catch (err) {
+        setError(err)
+        setLoading(false)
+        return
+      }
+    }
+
     try {
       setLoading(true)
       setError(null)
 
-      // Función auxiliar para reintentos con cola
-      const retryQuery = async (queryFn, maxRetries = 3) => {
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            const result = await queryFn()
-            if (result.error) throw result.error
-            return result
-          } catch (error) {
-            console.warn(`Intento ${attempt}/${maxRetries} falló en useUserExtensions:`, error.message)
-            if (attempt === maxRetries) throw error
-            await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
-          }
-        }
-      }
+      // Crear promesa de carga y almacenarla
+      const loadingPromise = (async () => {
+        // Usar el sistema de cola global para la consulta
+        const { data: extensionsData } = await executeQuery(async () => {
+          return await supabase
+            .from('plan_extensiones')
+            .select(`
+              *,
+              extensiones (
+                id,
+                name,
+                name_es,
+                description,
+                description_es,
+                price_usd,
+                disponible
+              )
+            `)
+            .eq('user_id', user.id)
+        })
 
-      // Usar la misma consulta que funciona en el Dashboard con reintentos
-      const { data: extensionsData } = await retryQuery(async () => {
-        return await supabase
-          .from('plan_extensiones')
-          .select(`
-            *,
-            extensiones (
-              id,
-              name,
-              name_es,
-              description,
-              description_es,
-              price_usd,
-              disponible
-            )
-          `)
-          .eq('user_id', user.id)
-      })
+        const result = extensionsData || []
+        
+        // Guardar en caché por 5 minutos
+        extensionsCache.set(cacheKey, result)
+        setTimeout(() => {
+          extensionsCache.delete(cacheKey)
+        }, 5 * 60 * 1000)
 
-      setUserExtensions(extensionsData || [])
+        return result
+      })()
+
+      loadingPromises.set(cacheKey, loadingPromise)
+
+      const result = await loadingPromise
+      setUserExtensions(result)
+      
+      // Limpiar la promesa de carga
+      loadingPromises.delete(cacheKey)
+      
     } catch (err) {
       console.error('Error loading user extensions:', err)
       setError(err)
+      loadingPromises.delete(cacheKey)
     } finally {
       setLoading(false)
     }
@@ -100,6 +137,16 @@ export const useUserExtensions = () => {
     )
   }
 
+  // Función para limpiar el caché y recargar
+  const clearCacheAndRefetch = useCallback(async () => {
+    if (user?.id) {
+      const cacheKey = `extensions_${user.id}`
+      extensionsCache.delete(cacheKey)
+      loadingPromises.delete(cacheKey)
+      await loadUserExtensions()
+    }
+  }, [user, loadUserExtensions])
+
   return {
     userExtensions,
     loading,
@@ -108,7 +155,8 @@ export const useUserExtensions = () => {
     hasExtensionById,
     getExtensionByName,
     getActiveExtensions,
-    refetch: loadUserExtensions
+    refetch: loadUserExtensions,
+    clearCacheAndRefetch
   }
 }
 

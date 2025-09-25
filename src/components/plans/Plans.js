@@ -6,21 +6,22 @@ import googleDriveService from '../../lib/googleDrive'
 import DriveWatchService from '../../lib/driveWatchService'
 import emailService from '../../lib/emailService'
 import { useUserExtensions } from '../../hooks/useUserExtensions'
+import { executeQuery } from '../../lib/queryQueue'
 import {
   CheckIcon,
   CreditCardIcon,
   ClockIcon,
   CloudIcon,
   StarIcon,
-  ExclamationTriangleIcon,
   PlusIcon,
-  MinusIcon
+  ArrowUpIcon
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
+import UpgradePlan from './UpgradePlan'
 
 const Plans = () => {
   const { user, userProfile, hasActivePlan, updateUserProfile } = useAuth()
-  const { userExtensions: activeUserExtensions, loading: extensionsLoading } = useUserExtensions()
+  const { clearCacheAndRefetch } = useUserExtensions()
   const [plans, setPlans] = useState([])
   const [extensions, setExtensions] = useState([])
   const [selectedExtensions, setSelectedExtensions] = useState({})
@@ -28,6 +29,8 @@ const Plans = () => {
   const [loading, setLoading] = useState(true)
   const [processingPayment, setProcessingPayment] = useState(null)
   const [isGoogleDriveConnected, setIsGoogleDriveConnected] = useState(false)
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false)
+  const [currentPlanForUpgrade, setCurrentPlanForUpgrade] = useState(null)
 
   useEffect(() => {
     loadPlans()
@@ -35,14 +38,14 @@ const Plans = () => {
     if (user) {
       loadUserExtensions()
     }
-  }, [user])
+  }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Efecto para verificar Google Drive cuando userProfile cambie
   useEffect(() => {
     if (userProfile) {
       checkGoogleDriveConnection()
     }
-  }, [userProfile])
+  }, [userProfile]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const checkGoogleDriveConnection = () => {
     // Usar la información ya disponible en userProfile desde AuthContext
@@ -65,7 +68,7 @@ const Plans = () => {
   const loadPlans = async () => {
     try {
       setLoading(true)
-      const { data, error } = await db.plans.getAll()
+      const { data, error } = await executeQuery(() => db.plans.getAll())
       
       if (error) {
         console.error('Error loading plans:', error)
@@ -84,10 +87,12 @@ const Plans = () => {
 
   const loadExtensions = async () => {
     try {
-      const { data, error } = await supabase
-        .from('extensiones')
-        .select('*')
-        .order('created_at', { ascending: true })
+      const { data, error } = await executeQuery(() => 
+        supabase
+          .from('extensiones')
+          .select('*')
+          .order('created_at', { ascending: true })
+      )
       
       if (error) {
         console.error('Error loading extensions:', error)
@@ -107,19 +112,21 @@ const Plans = () => {
     if (!user) return
     
     try {
-      const { data, error } = await supabase
-        .from('plan_extensiones')
-        .select(`
-          extension_id,
-          plan_id,
-          extensiones (
-            id,
-            name,
-            name_es,
-            price_usd
-          )
-        `)
-        .eq('user_id', user.id)
+      const { data, error } = await executeQuery(() =>
+        supabase
+          .from('plan_extensiones')
+          .select(`
+            extension_id,
+            plan_id,
+            extensiones (
+              id,
+              name,
+              name_es,
+              price_usd
+            )
+          `)
+          .eq('user_id', user.id)
+      )
       
       if (error) {
         console.error('Error loading user extensions:', error)
@@ -181,9 +188,10 @@ const Plans = () => {
 
   const formatPrice = (price) => {
     if (price === 0) {
-      return '$0'
+      return '$0 CLP'
     }
-    return `$${price.toFixed(2)}`
+    // Formatear precio en CLP con separadores de miles
+    return `$${parseInt(price).toLocaleString()} CLP`
   }
 
   // Función para crear subcarpetas según extensiones
@@ -342,6 +350,7 @@ const Plans = () => {
     }
   }
 
+  /* 
   const handlePurchasePlan = async (plan) => {
     if (!user) {
       toast.error('Debes iniciar sesión para comprar un plan')
@@ -484,6 +493,7 @@ const Plans = () => {
       setProcessingPayment(null)
     }
   }
+  */
 
   const handleTestPurchase = async (plan) => {
     if (!user) {
@@ -709,6 +719,37 @@ const Plans = () => {
     return null
   }
 
+  const handleOpenUpgrade = (plan) => {
+    setCurrentPlanForUpgrade(plan)
+    setShowUpgradeModal(true)
+  }
+
+  const handleCloseUpgrade = () => {
+    setShowUpgradeModal(false)
+    setCurrentPlanForUpgrade(null)
+  }
+
+  const handleUpgradeComplete = async () => {
+    // Limpiar caché y recargar extensiones del usuario para actualizar la UI
+    await clearCacheAndRefetch()
+    // Recargar también las extensiones locales
+    loadUserExtensions()
+    // Cerrar modal
+    setShowUpgradeModal(false)
+    setCurrentPlanForUpgrade(null)
+  }
+
+  const getAvailableExtensionsCount = () => {
+    if (!extensions.length || !userExtensions.length) return 0
+    
+    const userExtensionIds = userExtensions.map(ue => ue.extension_id)
+    const availableExtensions = extensions.filter(ext => 
+      ext.disponible && !userExtensionIds.includes(ext.id)
+    )
+    
+    return availableExtensions.length
+  }
+
   if (loading) {
     return <LoadingSpinner text="Cargando planes..." />
   }
@@ -930,12 +971,25 @@ const Plans = () => {
                 {/* Botón de acción */}
                 <div className="text-center">
                   {isCurrent ? (
-                    <button
-                      disabled
-                      className="w-full bg-green-100 text-green-800 font-semibold py-3 px-6 rounded-lg cursor-not-allowed"
-                    >
-                      Plan Actual
-                    </button>
+                    <div className="space-y-3">
+                      <button
+                        disabled
+                        className="w-full bg-green-100 text-green-800 font-semibold py-3 px-6 rounded-lg cursor-not-allowed"
+                      >
+                        Plan Actual
+                      </button>
+                      {getAvailableExtensionsCount() > 0 && (
+                        <button
+                          onClick={() => handleOpenUpgrade(plan)}
+                          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105"
+                        >
+                          <div className="flex items-center justify-center">
+                            <ArrowUpIcon className="h-4 w-4 mr-2" />
+                            Upgrade Plan ({getAvailableExtensionsCount()} extensiones disponibles)
+                          </div>
+                        </button>
+                      )}
+                    </div>
                   ) : (
                     <button
                       disabled
@@ -1008,6 +1062,15 @@ const Plans = () => {
           </div>
         </div>
       </div>
+
+      {/* Modal de Upgrade */}
+      <UpgradePlan
+        isOpen={showUpgradeModal}
+        onClose={handleCloseUpgrade}
+        currentPlan={currentPlanForUpgrade}
+        userExtensions={userExtensions}
+        onUpgradeComplete={handleUpgradeComplete}
+      />
     </div>
   )
 }

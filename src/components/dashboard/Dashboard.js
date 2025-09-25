@@ -609,7 +609,7 @@ const Dashboard = () => {
                         </span>
                       </div>
                       <span className="text-xs text-green-600 font-medium">
-                        ${userExt.extensiones?.price_usd}
+                        ${parseInt(userExt.extensiones?.price_usd || 0).toLocaleString()} CLP
                       </span>
                     </div>
                   ))}
