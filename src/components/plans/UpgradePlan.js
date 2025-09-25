@@ -34,7 +34,7 @@ const UpgradePlan = ({ isOpen, onClose, currentPlan, userExtensions, onUpgradeCo
         .from('extensiones')
         .select('*')
         .eq('disponible', true)
-        .order('price_usd', { ascending: true })
+        .order('price', { ascending: true })
 
       if (error) {
         console.error('Error loading extensions:', error)
@@ -71,7 +71,7 @@ const UpgradePlan = ({ isOpen, onClose, currentPlan, userExtensions, onUpgradeCo
   const calculateUpgradePrice = () => {
     return selectedExtensions.reduce((total, extensionId) => {
       const extension = extensions.find(ext => ext.id === extensionId)
-      return total + (extension ? parseFloat(extension.price_usd) : 0)
+      return total + (extension ? parseInt(extension.price) : 0)
     }, 0)
   }
 
@@ -230,7 +230,7 @@ const UpgradePlan = ({ isOpen, onClose, currentPlan, userExtensions, onUpgradeCo
                                   {extension.name_es || extension.name}
                                 </h4>
                                 <span className="text-sm font-bold text-blue-600">
-                                  {formatPrice(parseFloat(extension.price_usd))}
+                                  {formatPrice(parseInt(extension.price))}
                                 </span>
                               </div>
                               {extension.description_es && (

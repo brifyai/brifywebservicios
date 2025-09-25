@@ -61,7 +61,7 @@ const Folders = () => {
               name_es,
               description,
               description_es,
-              price_usd,
+              price,
               disponible
             )
           `)

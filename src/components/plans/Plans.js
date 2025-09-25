@@ -122,7 +122,7 @@ const Plans = () => {
               id,
               name,
               name_es,
-              price_usd
+              price
             )
           `)
           .eq('user_id', user.id)
@@ -163,24 +163,24 @@ const Plans = () => {
       return 0
     }
     
-    const basePrice = parseFloat(plan.price_usd) || 0
+    const basePrice = parseInt(plan.price) || 0
     const planExtensions = selectedExtensions[plan.id] || []
     
     const extensionsPrice = planExtensions.reduce((total, extensionId) => {
       const extension = extensions.find(ext => ext.id === extensionId)
-      return total + (extension ? parseFloat(extension.price_usd) : 0)
+      return total + (extension ? parseInt(extension.price) : 0)
     }, 0)
     
     return basePrice + extensionsPrice
   }
 
   const calculatePriceWithExtensions = (plan) => {
-    const basePrice = parseFloat(plan.price_usd) || 0
+    const basePrice = parseInt(plan.price) || 0
     const planExtensions = selectedExtensions[plan.id] || []
     
     const extensionsPrice = planExtensions.reduce((total, extensionId) => {
       const extension = extensions.find(ext => ext.id === extensionId)
-      return total + (extension ? parseFloat(extension.price_usd) : 0)
+      return total + (extension ? parseInt(extension.price) : 0)
     }, 0)
     
     return basePrice + extensionsPrice
@@ -381,7 +381,7 @@ const Plans = () => {
       const paymentData = {
         user_id: user.id,
         plan_id: plan.id,
-        amount_usd: plan.price_usd,
+        amount_usd: calculateTotalPrice(plan),
         payment_status: 'pending',
         payment_provider: 'mercadopago',
         payment_ref: `mp_${Date.now()}`,
@@ -521,7 +521,7 @@ const Plans = () => {
       const paymentData = {
         user_id: user.id,
         plan_id: plan.id,
-        amount_usd: plan.price_usd,
+        amount_usd: calculateTotalPrice(plan),
         payment_status: 'paid', // Marcar como completado para prueba
         payment_provider: 'mercadopago_test',
         payment_ref: `test_mp_${Date.now()}`,
@@ -838,13 +838,13 @@ const Plans = () => {
                   <div className="flex items-center justify-center mb-4">
                     {plan.prueba_gratis ? (
                       <div className="flex flex-col items-center">
-                        {calculatePriceWithExtensions(plan) > parseFloat(plan.price_usd) ? (
+                        {calculatePriceWithExtensions(plan) > parseInt(plan.price) ? (
                           <span className="text-2xl font-bold text-gray-400 line-through">
                             {formatPrice(calculatePriceWithExtensions(plan))}
                           </span>
                         ) : (
                           <span className="text-2xl font-bold text-gray-400 line-through">
-                            {formatPrice(parseFloat(plan.price_usd))}
+                            {formatPrice(parseInt(plan.price))}
                           </span>
                         )}
                         <span className="text-4xl font-bold text-green-600">
@@ -859,9 +859,9 @@ const Plans = () => {
                         <span className="text-4xl font-bold text-gray-900">
                           {formatPrice(calculateTotalPrice(plan))}
                         </span>
-                        {calculateTotalPrice(plan) !== parseFloat(plan.price_usd) && (
+                        {calculateTotalPrice(plan) !== parseInt(plan.price) && (
                           <span className="text-sm text-gray-500">
-                            Base: {formatPrice(parseFloat(plan.price_usd))}
+                            Base: {formatPrice(parseInt(plan.price))}
                           </span>
                         )}
                       </div>
@@ -938,7 +938,7 @@ const Plans = () => {
                                     isPurchased ? 'text-green-600' :
                                     !isAvailable ? 'text-gray-400 line-through' : 'text-blue-600'
                                   }`}>
-                                    {isPurchased ? 'COMPRADA' : `+${formatPrice(parseFloat(extension.price_usd))}`}
+                                    {isPurchased ? 'COMPRADA' : `+${formatPrice(parseInt(extension.price))}`}
                                   </span>
                                 </div>
                                 {extension.description_es && (

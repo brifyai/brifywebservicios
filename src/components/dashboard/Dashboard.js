@@ -223,7 +223,7 @@ const Dashboard = () => {
               name_es,
               description,
               description_es,
-              price_usd
+              price
             )
           `)
           .eq('user_id', user.id)
@@ -609,7 +609,7 @@ const Dashboard = () => {
                         </span>
                       </div>
                       <span className="text-xs text-green-600 font-medium">
-                        ${parseInt(userExt.extensiones?.price_usd || 0).toLocaleString()} CLP
+                        ${parseInt(userExt.extensiones?.price || 0).toLocaleString()} CLP
                       </span>
                     </div>
                   ))}

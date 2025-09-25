@@ -172,7 +172,7 @@ export const db = {
       const { data, error } = await supabase
         .from('plans')
         .select('*')
-        .order('price_usd', { ascending: true })
+        .order('price', { ascending: true })
       return { data, error }
     },
     
