@@ -492,7 +492,7 @@ ${fileContent.substring(0, 2000)}`
   }
 
   return (
-    <div className="flex flex-col h-96">
+    <div className="flex flex-col h-full">
       {/* Chat Header */}
       <div className="bg-blue-50 p-4 border-b border-blue-200">
         <div className="flex items-center justify-between">

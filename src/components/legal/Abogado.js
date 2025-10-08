@@ -68,8 +68,10 @@ const Abogado = () => {
       </div>
 
       {/* Content */}
-      <div className="bg-white rounded-lg shadow-md">
-        {ActiveComponent && <ActiveComponent />}
+      <div className="bg-white rounded-lg shadow-md p-6 min-h-[calc(100vh-220px)] flex flex-col">
+        <div className="flex-1 overflow-auto">
+          {ActiveComponent && <ActiveComponent />}
+        </div>
       </div>
     </div>
   )

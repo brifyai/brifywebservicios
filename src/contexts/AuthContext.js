@@ -19,6 +19,7 @@ export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const registrationProcessed = useRef(new Set())
   const profileLoadProcessed = useRef(new Set())
+  const userProfileRef = useRef(null)
 
   // Cargar perfil del usuario desde la base de datos
   const loadUserProfile = async (userId, forceReload = false) => {
@@ -180,6 +181,7 @@ export const AuthProvider = ({ children }) => {
           email: email,
           name: userData.name || '',
           telegram_id: userData.telegram_id || null,
+          wssp: userData.wssp || null,
           is_active: true,
           current_plan_id: null,
           plan_expiration: null,
@@ -197,6 +199,22 @@ export const AuthProvider = ({ children }) => {
           console.error('Error creating user profile:', profileError)
           toast.error('Error al crear el perfil de usuario')
           return { error: profileError }
+        }
+
+        // Crear/actualizar credenciales del usuario con WhatsApp
+        try {
+          const { error: credentialsError } = await db.userCredentials.upsert({
+            user_id: authData.user.id,
+            email: email,
+            telegram_chat_id: userData.telegram_id || null,
+            wssp: userData.wssp || null,
+            updated_at: new Date().toISOString()
+          })
+          if (credentialsError) {
+            console.warn('Error saving user_credentials (wssp):', credentialsError)
+          }
+        } catch (credErr) {
+          console.warn('Exception saving user_credentials (wssp):', credErr)
         }
 
         // Crear registro inicial en user_tokens_usage usando upsert
@@ -356,33 +374,35 @@ export const AuthProvider = ({ children }) => {
     initializeAuth()
   }, [])
 
-  // Efecto para manejar cambios de autenticación
+  // Mantener una referencia al userProfile para evitar cierres obsoletos
+  useEffect(() => {
+    userProfileRef.current = userProfile
+  }, [userProfile])
+
+  // Efecto para manejar cambios de autenticación (suscribirse una sola vez)
   useEffect(() => {
     let profileLoadTimeout = null
-    
     const { data: { subscription } } = auth.onAuthStateChange(async (event, session) => {
       console.log('AuthContext: Auth state change event:', event, 'session exists:', !!session)
-      
-      // Para INITIAL_SESSION, solo procesar si no tenemos userProfile
-      if (event === 'INITIAL_SESSION' && userProfile) {
+
+      // Para INITIAL_SESSION, solo procesar si ya tenemos userProfile cargado
+      if (event === 'INITIAL_SESSION' && userProfileRef.current) {
         console.log('AuthContext: INITIAL_SESSION with existing userProfile, skipping')
         return
       }
-      
-      setLoading(true)
-      
+
       if (session?.user) {
         setUser(session.user)
         setIsAuthenticated(true)
-        
+
         // Cargar perfil si no tenemos userProfile o si es INITIAL_SESSION
-        if (!userProfile || event === 'INITIAL_SESSION') {
+        if (!userProfileRef.current || event === 'INITIAL_SESSION') {
           console.log('AuthContext: Loading userProfile for event:', event)
           // Debounce para evitar llamadas excesivas
           if (profileLoadTimeout) {
             clearTimeout(profileLoadTimeout)
           }
-          
+
           profileLoadTimeout = setTimeout(async () => {
             try {
               await loadUserProfile(session.user.id)
@@ -398,38 +418,36 @@ export const AuthProvider = ({ children }) => {
         // Limpiar el registro cuando el usuario se desloguea
         profileLoadProcessed.current.clear()
       }
-      
-      setLoading(false)
     })
 
-    // Manejar cambios de visibilidad de la página con throttling
+    return () => {
+      subscription?.unsubscribe()
+      if (profileLoadTimeout) clearTimeout(profileLoadTimeout)
+    }
+  }, [])
+
+  // Listener de visibilidad separado, con dependencias correctas
+  useEffect(() => {
     let visibilityTimeout = null
     const handleVisibilityChange = () => {
       if (!document.hidden && user && !loading && !userProfile?.offline && userProfile) {
-        // Solo recargar si ya tenemos un perfil (no crear uno nuevo)
-        // Throttle para evitar llamadas excesivas
         if (visibilityTimeout) {
           clearTimeout(visibilityTimeout)
         }
-        
         visibilityTimeout = setTimeout(() => {
-          // Recargar datos cuando la página vuelve a ser visible
           loadUserProfile(user.id, true).catch(error => {
             console.error('Error reloading profile on visibility change:', error)
           })
-        }, 2000) // Esperar 2 segundos antes de recargar
+        }, 2000)
       }
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
-
     return () => {
-      subscription?.unsubscribe()
       document.removeEventListener('visibilitychange', handleVisibilityChange)
-      if (profileLoadTimeout) clearTimeout(profileLoadTimeout)
       if (visibilityTimeout) clearTimeout(visibilityTimeout)
     }
-  }, [user, loading])
+  }, [user, loading, userProfile])
 
   const value = {
     user,

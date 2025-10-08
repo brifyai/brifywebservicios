@@ -30,6 +30,7 @@ const Folders = () => {
   const [availableSubFolders, setAvailableSubFolders] = useState([])
 
   const [searchTerm, setSearchTerm] = useState('')
+  const [ranEnsureOnce, setRanEnsureOnce] = useState(false)
 
   useEffect(() => {
     if (hasActivePlan) {
@@ -130,6 +131,110 @@ const Folders = () => {
       console.error('❌ Error loading available subfolders:', error)
     }
   }
+
+  // Refuerzo idempotente: asegura subcarpetas para extensiones activas si faltan
+  const ensureAdminSubFoldersForUser = async () => {
+    try {
+      if (!user) return
+
+      // Obtener carpeta Master del administrador
+      const { data: adminData, error: adminError } = await db.adminFolders.getByUser(user.id)
+      if (adminError) {
+        console.error('❌ Error obteniendo carpeta administrador:', adminError)
+        return
+      }
+      if (!adminData || adminData.length === 0) {
+        console.warn('⚠️ No existe carpeta administrador; se omite reconciliación de subcarpetas')
+        return
+      }
+      const masterFolderId = adminData[0].id_drive_carpeta
+
+      // Configurar tokens de Google Drive
+      const { data: credentials } = await db.userCredentials.getByUserId(user.id)
+      if (!credentials || (!credentials.google_access_token && !credentials.google_refresh_token)) {
+        console.warn('⚠️ Credenciales de Google Drive no disponibles; no se pueden crear subcarpetas')
+        return
+      }
+      const tokensOk = await googleDriveService.setTokens({
+        access_token: credentials.google_access_token,
+        refresh_token: credentials.google_refresh_token
+      })
+      if (!tokensOk) {
+        console.warn('⚠️ No se pudieron configurar tokens de Google Drive')
+        return
+      }
+
+      // Subcarpetas ya registradas
+      const { data: existingSubFolders, error: subError } = await db.subCarpetasAdministrador.getByMasterFolderId(masterFolderId)
+      if (subError) {
+        console.error('❌ Error obteniendo subcarpetas existentes:', subError)
+        return
+      }
+      const existingTipos = new Set((existingSubFolders || []).map(sf => sf.tipo_extension))
+
+      // Extensiones activas del usuario
+      const { data: userExts, error: userExtsError } = await supabase
+        .from('plan_extensiones')
+        .select(`*, extensiones (id, name, name_es, type)`) 
+        .eq('user_id', user.id)
+      if (userExtsError) {
+        console.error('❌ Error obteniendo extensiones del usuario:', userExtsError)
+        return
+      }
+
+      const activeTypes = new Set(['brify'])
+      for (const ue of (userExts || [])) {
+        const ext = ue.extensiones || {}
+        const name = (ext.name_es || ext.name || '').toLowerCase()
+        const type = (ext.type || '').toLowerCase()
+        if (name === 'abogados' || type === 'abogados' || type === 'lawyers') activeTypes.add('abogados')
+        if (name === 'entrenador' || type === 'entrenador' || type === 'trainer') activeTypes.add('entrenador')
+        if (name === 'veterinarios' || type === 'veterinarios' || type === 'veterinarians') activeTypes.add('veterinarios')
+      }
+
+      const desired = []
+      if (activeTypes.has('brify') && !existingTipos.has('brify')) desired.push({ nombre: 'Brify', tipo: 'brify' })
+      if (activeTypes.has('abogados') && !existingTipos.has('abogados')) desired.push({ nombre: 'Abogados', tipo: 'abogados' })
+      if (activeTypes.has('entrenador') && !existingTipos.has('entrenador')) desired.push({ nombre: 'Entrenador', tipo: 'entrenador' })
+      if (activeTypes.has('veterinarios') && !existingTipos.has('veterinarios')) desired.push({ nombre: 'Veterinarios', tipo: 'veterinarios' })
+
+      for (const subFolder of desired) {
+        try {
+          const driveSubFolder = await googleDriveService.createFolder(subFolder.nombre, masterFolderId)
+          if (driveSubFolder.id) {
+            const subFolderData = {
+              administrador_email: user.email,
+              file_id_master: masterFolderId,
+              file_id_subcarpeta: driveSubFolder.id,
+              nombre_subcarpeta: subFolder.nombre,
+              tipo_extension: subFolder.tipo
+            }
+            const { error: createError } = await db.subCarpetasAdministrador.create(subFolderData)
+            if (createError) {
+              console.error(`❌ Error registrando subcarpeta ${subFolder.nombre}:`, createError)
+            } else {
+              console.log(`✅ Subcarpeta ${subFolder.nombre} creada vía reconciliación en Folders`)
+            }
+          }
+        } catch (e) {
+          console.error(`❌ Error creando subcarpeta faltante ${subFolder.nombre}:`, e)
+        }
+      }
+
+      // Evitar ejecuciones múltiples y refrescar lista de subcarpetas disponibles
+      setRanEnsureOnce(true)
+      await loadAvailableSubFolders()
+    } catch (e) {
+      console.error('❌ Error asegurando subcarpetas de extensiones (Folders):', e)
+    }
+  }
+
+  // Ejecutar reconciliación una sola vez cuando haya plan activo
+  useEffect(() => {
+    if (!ranEnsureOnce && hasActivePlan) {
+      ensureAdminSubFoldersForUser()
+    }
+  }, [ranEnsureOnce, hasActivePlan, user])
 
   // Cargar automáticamente la carpeta administrador por defecto
   const loadAdminFolderByDefault = async () => {
