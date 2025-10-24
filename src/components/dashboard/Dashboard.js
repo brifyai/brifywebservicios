@@ -314,9 +314,20 @@ const Dashboard = () => {
 
   const getStoragePercentage = () => {
     if (!userProfile?.current_plan_id) return 0
+    
+    // Si los planes aún no se han cargado, retornar 0 para evitar cálculos incorrectos
+    if (!plans || plans.length === 0) return 0
+    
     const plan = plans.find(p => p.id === userProfile.current_plan_id)
-    const limit = plan?.storage_limit_bytes || 1024 * 1024 * 1024 // 1GB por defecto
-    return Math.min((stats.storageUsed / limit) * 100, 100)
+    
+    // Si no se encuentra el plan específico, retornar 0 hasta que se cargue
+    if (!plan || !plan.storage_limit_bytes) return 0
+    
+    const limit = plan.storage_limit_bytes
+    const used = stats.storageUsed
+    const percentage = (used / limit) * 100
+    
+    return Math.min(percentage, 100)
   }
 
   // Verificar si el usuario tiene una extensión específica activa
@@ -453,7 +464,7 @@ const Dashboard = () => {
                 <div className="mt-2">
                   <div className="flex justify-between text-xs text-gray-500 mb-1">
                     <span>Usado: {formatBytes(stats.storageUsed)}</span>
-                    <span>Límite: {formatBytes(plans.find(p => p.id === userProfile?.current_plan_id)?.storage_limit_bytes || 0)}</span>
+                    <span>Límite: {formatBytes(plans.find(p => p.id === userProfile?.current_plan_id)?.storage_limit_bytes || 1024 * 1024 * 1024)}</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-1.5">
                     <div 
@@ -461,10 +472,10 @@ const Dashboard = () => {
                         getStoragePercentage() >= 90 ? 'bg-red-500' : 
                         getStoragePercentage() >= 70 ? 'bg-yellow-500' : 'bg-green-500'
                       }`}
-                      style={{ width: `${Math.min(getStoragePercentage(), 100)}%` }}
+                      style={{ width: `${Math.max(getStoragePercentage(), 0.5)}%` }}
                     ></div>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">{getStoragePercentage().toFixed(1)}% usado</p>
+                  <p className="text-xs text-gray-500 mt-1">{getStoragePercentage() < 0.1 && getStoragePercentage() > 0 ? '<0.1' : getStoragePercentage().toFixed(1)}% usado</p>
                 </div>
               )}
             </div>
@@ -604,14 +615,14 @@ const Dashboard = () => {
                       getStoragePercentage() >= 90 ? 'bg-red-500' : 
                       getStoragePercentage() >= 70 ? 'bg-yellow-500' : 'bg-primary-600'
                     }`}
-                    style={{ width: `${Math.min(getStoragePercentage(), 100)}%` }}
+                    style={{ width: `${Math.max(getStoragePercentage(), 0.5)}%` }}
                   ></div>
                 </div>
                 <div className="flex justify-between text-xs text-gray-500 mt-1">
                   <span>Usado: {formatBytes(stats.storageUsed)}</span>
-                  <span>Límite: {formatBytes(plans.find(p => p.id === userProfile?.current_plan_id)?.storage_limit_bytes || 0)}</span>
+                  <span>Límite: {formatBytes(plans.find(p => p.id === userProfile?.current_plan_id)?.storage_limit_bytes || 1024 * 1024 * 1024)}</span>
                 </div>
-                <p className="text-xs text-gray-500 text-center mt-1">{getStoragePercentage().toFixed(1)}% usado</p>
+                <p className="text-xs text-gray-500 text-center mt-1">{getStoragePercentage() < 0.1 && getStoragePercentage() > 0 ? '<0.1' : getStoragePercentage().toFixed(1)}% usado</p>
               </div>
             )}
             
