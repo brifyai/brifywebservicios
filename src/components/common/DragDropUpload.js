@@ -263,13 +263,25 @@ const DragDropUpload = ({
             <option value="">Seleccionar carpeta</option>
             {folders
               .filter(folder => {
-                const name = folder.type === 'admin' ? folder.folder_name : folder.correo
+                let name
+                if (folder.type === 'admin') {
+                  name = folder.folder_name
+                } else if (folder.type === 'drive') {
+                  name = folder.folder_name
+                } else {
+                  name = folder.correo
+                }
                 return name && name.trim() !== ''
               })
               .map((folder) => {
-                const displayName = folder.type === 'admin' 
-                  ? folder.folder_name 
-                  : `${folder.correo} (Usuario)`
+                let displayName
+                if (folder.type === 'admin') {
+                  displayName = `${folder.folder_name} (Admin)`
+                } else if (folder.type === 'drive') {
+                  displayName = `${folder.folder_name} (Drive)`
+                } else {
+                  displayName = `${folder.correo} (Usuario)`
+                }
                 return (
                   <option key={folder.id} value={folder.id}>
                     {displayName}

@@ -7,7 +7,7 @@ class GroqService {
       apiKey: process.env.REACT_APP_GROQ_API_KEY,
       dangerouslyAllowBrowser: true // Permitir uso en el navegador
     })
-    this.model = 'gemma2-9b-it'
+    this.model = 'llama-3.1-8b-instant'
   }
 
   /**
@@ -127,7 +127,7 @@ class GroqService {
   }
 
   /**
-   * Genera una respuesta de chat usando GROQ GEMMA 2-9b-it con optimización de contexto
+   * Genera una respuesta de chat usando GROQ Llama 3.1 8B Instant con optimización de contexto
    * @param {string} userMessage - Mensaje del usuario
    * @param {Array} context - Contexto de documentos encontrados
    * @param {Array} chatHistory - Historial de conversación
@@ -137,9 +137,9 @@ class GroqService {
   async generateChatResponse(userMessage, context = [], chatHistory = [], userId = null) {
     try {
       // Límites de tokens para evitar exceder el contexto
-      const MAX_TOTAL_INPUT_TOKENS = 6000 // Límite conservador para gemma2-9b-it
-      const MAX_CONTEXT_TOKENS = 2000
-      const MAX_HISTORY_TOKENS = 1500
+      const MAX_TOTAL_INPUT_TOKENS = 8000 // Límite aumentado para llama-3.1-8b-instant
+      const MAX_CONTEXT_TOKENS = 3000
+      const MAX_HISTORY_TOKENS = 2000
       const MAX_SYSTEM_TOKENS = 500
       
       // Optimizar contexto de documentos

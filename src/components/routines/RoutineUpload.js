@@ -87,44 +87,99 @@ const RoutineUpload = ({ onUploadComplete, onClose }) => {
   // Función para procesar los datos de rutina y alimentación
   const processRoutineData = (rutinaData, alimentacionData) => {
     const planSemanal = {
-      lunes: { ejercicios: [], alimentacion: [] },
-      martes: { ejercicios: [], alimentacion: [] },
-      miercoles: { ejercicios: [], alimentacion: [] },
-      jueves: { ejercicios: [], alimentacion: [] },
-      viernes: { ejercicios: [], alimentacion: [] },
-      sabado: { ejercicios: [], alimentacion: [] },
-      domingo: { ejercicios: [], alimentacion: [] }
+      "Lunes": { ejercicios: [], alimentacion: {} },
+      "Martes": { ejercicios: [], alimentacion: {} },
+      "Miércoles": { ejercicios: [], alimentacion: {} },
+      "Jueves": { ejercicios: [], alimentacion: {} },
+      "Viernes": { ejercicios: [], alimentacion: {} },
+      "Sábado": { ejercicios: [], alimentacion: {} },
+      "Domingo": { ejercicios: [], alimentacion: {} }
+    }
+
+    // Mapeo de días en español
+    const dayMapping = {
+      'lunes': 'Lunes',
+      'martes': 'Martes', 
+      'miercoles': 'Miércoles',
+      'miércoles': 'Miércoles',
+      'jueves': 'Jueves',
+      'viernes': 'Viernes',
+      'sabado': 'Sábado',
+      'sábado': 'Sábado',
+      'domingo': 'Domingo'
     }
 
     // Procesar datos de rutina
     rutinaData.forEach(row => {
-      const dia = row['Día']?.toLowerCase()
+      const diaRaw = row['Día']?.toLowerCase()?.trim()
+      const dia = dayMapping[diaRaw]
+      
       if (dia && planSemanal[dia]) {
-        planSemanal[dia].ejercicios.push({
-          ejercicio: row['Ejercicio'] || '',
-          series: row['Series'] || '',
-          repeticiones: row['Repeticiones'] || '',
-          peso: row['Peso'] || '',
-          descanso: row['Descanso'] || '',
-          notas: row['Notas'] || ''
-        })
+        const ejercicio = {
+          nombre: row['Ejercicio'] || row['Nombre'] || '',
+          series: parseInt(row['Series']) || 0,
+          repeticiones: parseInt(row['Repeticiones']) || 0,
+          descanso_seg: parseInt(row['Descanso (seg)'] || row['Descanso']) || 0
+        }
+        
+        // Solo agregar si tiene nombre de ejercicio
+        if (ejercicio.nombre.trim()) {
+          planSemanal[dia].ejercicios.push(ejercicio)
+        }
       }
     })
 
     // Procesar datos de alimentación
+    const alimentacionPorDia = {}
     alimentacionData.forEach(row => {
-      const dia = row['Día']?.toLowerCase()
-      if (dia && planSemanal[dia]) {
-        planSemanal[dia].alimentacion.push({
-          comida: row['Comida'] || '',
-          alimento: row['Alimento'] || '',
-          cantidad: row['Cantidad'] || '',
-          calorias: row['Calorías'] || '',
-          proteinas: row['Proteínas'] || '',
-          carbohidratos: row['Carbohidratos'] || '',
-          grasas: row['Grasas'] || ''
-        })
+      const diaRaw = row['Día']?.toLowerCase()?.trim()
+      const dia = dayMapping[diaRaw]
+      
+      if (dia) {
+        if (!alimentacionPorDia[dia]) {
+          alimentacionPorDia[dia] = {
+            desayuno: '',
+            almuerzo: '',
+            cena: '',
+            snacks_meriendas: ''
+          }
+        }
+        
+        const tipoComida = row['Tipo de Comida']?.toLowerCase()?.trim()
+        const alimento = row['Alimento'] || row['Descripción'] || ''
+        
+        if (alimento.trim()) {
+          switch (tipoComida) {
+            case 'desayuno':
+              alimentacionPorDia[dia].desayuno = alimento
+              break
+            case 'almuerzo':
+              alimentacionPorDia[dia].almuerzo = alimento
+              break
+            case 'cena':
+              alimentacionPorDia[dia].cena = alimento
+              break
+            case 'snack':
+            case 'merienda':
+            case 'snacks':
+            case 'meriendas':
+              alimentacionPorDia[dia].snacks_meriendas = alimento
+              break
+          }
+        }
       }
+    })
+
+    // Asignar alimentación procesada al plan semanal
+    Object.keys(alimentacionPorDia).forEach(dia => {
+      if (planSemanal[dia]) {
+        planSemanal[dia].alimentacion = alimentacionPorDia[dia]
+      }
+    })
+
+    // Agregar ejercicio vacío al final de cada día (como en el ejemplo)
+    Object.keys(planSemanal).forEach(dia => {
+      planSemanal[dia].ejercicios.push({})
     })
 
     return planSemanal
@@ -178,7 +233,7 @@ const RoutineUpload = ({ onUploadComplete, onClose }) => {
       if (folderError) throw folderError
       
       const folderName = folderData.folder_name || folderData.correo
-      setUploadProgress(50)
+      setUploadProgress(40)
 
       // Subir archivo a Google Drive
       await googleDriveService.setTokens({
@@ -187,9 +242,9 @@ const RoutineUpload = ({ onUploadComplete, onClose }) => {
 
       const googleFileId = await googleDriveService.uploadFile(
         selectedFile,
-        folderData.google_folder_id
+        folderData.id_carpeta_drive
       )
-      setUploadProgress(70)
+      setUploadProgress(60)
 
       // Verificar si ya existe una rutina para este usuario
       const { data: existingRoutine, error: checkError } = await supabase
@@ -198,42 +253,95 @@ const RoutineUpload = ({ onUploadComplete, onClose }) => {
         .eq('user_email', folderName)
         .single()
 
-      let result
+      let routineResult
       if (existingRoutine) {
+        // Si existe rutina previa, eliminar archivo anterior de Google Drive
+        if (existingRoutine.file_id) {
+          try {
+            console.log('🗑️ Eliminando archivo anterior de Google Drive:', existingRoutine.file_id)
+            await googleDriveService.deleteFile(existingRoutine.file_id)
+            console.log('✅ Archivo anterior eliminado exitosamente de Google Drive')
+          } catch (deleteError) {
+            console.error('⚠️ Error eliminando archivo anterior de Google Drive:', deleteError)
+            // No lanzar error, continuar con la actualización
+          }
+        }
+
+        // Eliminar registro anterior de documentos_administrador
+        if (existingRoutine.file_id) {
+          try {
+            console.log('🗑️ Eliminando registro anterior de documentos_administrador')
+            const { error: deleteDocError } = await supabase
+              .from('documentos_administrador')
+              .delete()
+              .eq('metadata->>file_id', existingRoutine.file_id)
+              .eq('metadata->>administrador', existingRoutine.administrador)
+            
+            if (deleteDocError) {
+              console.error('⚠️ Error eliminando registro anterior de documentos_administrador:', deleteDocError)
+            } else {
+              console.log('✅ Registro anterior eliminado de documentos_administrador')
+            }
+          } catch (deleteError) {
+            console.error('⚠️ Error en eliminación de documentos_administrador:', deleteError)
+          }
+        }
+
         // Actualizar rutina existente
-        result = await supabase
+        routineResult = await supabase
           .from('rutinas')
           .update({
             plan_semanal: planSemanal,
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
+            administrador: user.email,
+            file_id: googleFileId
           })
           .eq('user_email', folderName)
       } else {
         // Crear nueva rutina
-        result = await supabase
+        routineResult = await supabase
           .from('rutinas')
           .insert({
             user_email: folderName,
-            plan_semanal: planSemanal
+            plan_semanal: planSemanal,
+            administrador: user.email,
+            file_id: googleFileId
           })
       }
       
-      if (result.error) throw result.error
+      if (routineResult.error) throw routineResult.error
       
-      setUploadProgress(90)
+      setUploadProgress(80)
       
-      // Registrar en documentos_usuario_entrenador
-      const { error: docError } = await supabase
-        .from('documentos_usuario_entrenador')
+      // Registrar en documentos_administrador (nueva tabla requerida)
+      const { error: docAdminError } = await supabase
+        .from('documentos_administrador')
         .insert({
-          usuario: folderName,
-          file_name: selectedFile.name,
-          file_type: 'routine',
-          file_id: googleFileId
+          name: selectedFile.name,
+          file_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          file_size: selectedFile.size,
+          content: `Rutina de entrenamiento para ${folderName}`,
+          metadata: {
+            source: 'routine_upload',
+            file_id: googleFileId,
+            file_type: selectedFile.type,
+            file_size: selectedFile.size,
+            is_chunked: false,
+            original_length: selectedFile.size,
+            tokens_used: 0,
+            processed_successfully: true,
+            user_email: folderName,
+            administrador: user.email,
+            upload_date: new Date().toISOString()
+          },
+          embedding: null, // Las rutinas no necesitan embedding por ahora
+          created_at: new Date().toISOString()
         })
       
-      if (docError) {
-        console.warn('Error registrando en documentos_usuario_entrenador:', docError)
+      if (docAdminError) {
+        console.error('Error registrando en documentos_administrador:', docAdminError)
+        // No lanzar error, solo advertir
+        toast.error('Rutina guardada pero error en registro de documentos')
       }
       
       setUploadProgress(100)

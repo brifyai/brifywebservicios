@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS public.extensiones (
     name_es TEXT NOT NULL,
     description TEXT,
     description_es TEXT,
-    price_usd DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     storage_bonus_bytes BIGINT DEFAULT 0,
     disponible BOOLEAN DEFAULT true,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
@@ -40,7 +40,7 @@ ALTER TABLE public.plan_extensiones ENABLE ROW LEVEL SECURITY;
 
 
 -- 7. Insertar datos de ejemplo de extensiones
-INSERT INTO public.extensiones (id, name, name_es, description, description_es, price_usd, storage_bonus_bytes, disponible) VALUES
+INSERT INTO public.extensiones (id, name, name_es, description, description_es, price, storage_bonus_bytes, disponible) VALUES
 ('1', 'Extra Storage', 'Almacenamiento Extra', 'Additional 500MB storage space', 'Espacio adicional de 500MB de almacenamiento', 1500.00, 524288000, true),
 ('2', 'Premium Support', 'Soporte Premium', 'Priority customer support with 24/7 availability', 'Soporte prioritario al cliente con disponibilidad 24/7', 2000.00, 0, true),
 ('3', 'Advanced Analytics', 'Análisis Avanzado', 'Detailed analytics and reporting features', 'Funciones detalladas de análisis e informes', 2500.00, 0, true),
@@ -51,7 +51,7 @@ ON CONFLICT (id) DO UPDATE SET
     name_es = EXCLUDED.name_es,
     description = EXCLUDED.description,
     description_es = EXCLUDED.description_es,
-    price_usd = EXCLUDED.price_usd,
+    price = EXCLUDED.price,
     storage_bonus_bytes = EXCLUDED.storage_bonus_bytes,
     disponible = EXCLUDED.disponible,
     updated_at = timezone('utc'::text, now());
@@ -64,7 +64,7 @@ RETURNS TABLE (
     name_es TEXT,
     description TEXT,
     description_es TEXT,
-    price_usd DECIMAL,
+    price DECIMAL,
     storage_bonus_bytes BIGINT,
     disponible BOOLEAN,
     is_selected BOOLEAN
@@ -79,7 +79,7 @@ BEGIN
         e.name_es,
         e.description,
         e.description_es,
-        e.price_usd,
+        e.price,
         e.storage_bonus_bytes,
         e.disponible,
         CASE WHEN pe.extension_id IS NOT NULL THEN true ELSE false END as is_selected
@@ -87,7 +87,7 @@ BEGIN
     LEFT JOIN public.plan_extensiones pe ON e.id = pe.extension_id 
         AND pe.plan_id = plan_uuid 
         AND pe.user_id = user_uuid
-    ORDER BY e.price_usd ASC;
+    ORDER BY e.price ASC;
 END;
 $$;
 
@@ -102,7 +102,7 @@ DECLARE
     is_free_trial BOOLEAN;
 BEGIN
     -- Obtener precio base y si es prueba gratis
-    SELECT p.price_usd, p.prueba_gratis
+    SELECT p.price, p.prueba_gratis
     INTO base_price, is_free_trial
     FROM public.plans p
     WHERE p.id = plan_uuid;
@@ -113,7 +113,7 @@ BEGIN
     END IF;
     
     -- Calcular precio de extensiones seleccionadas
-    SELECT COALESCE(SUM(e.price_usd), 0)
+    SELECT COALESCE(SUM(e.price), 0)
     INTO extensions_price
     FROM public.plan_extensiones pe
     JOIN public.extensiones e ON pe.extension_id = e.id

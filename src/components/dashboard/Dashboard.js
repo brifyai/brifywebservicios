@@ -19,6 +19,7 @@ import {
 import LoadingSpinner from '../common/LoadingSpinner'
 import TokenUsage from '../embeddings/TokenUsage'
 import TemplateDownload from '../templates/TemplateDownload'
+import SyncButton from '../drive/SyncButton'
 import toast from 'react-hot-toast'
 
 const Dashboard = () => {
@@ -103,47 +104,54 @@ const Dashboard = () => {
         tokenLimit: 0
       }
       
-      // Obtener carpetas desde carpetas_usuario usando columna administrador
+      // Obtener carpetas combinando carpetas_usuario y grupos_drive
       try {
-        const { data: foldersData, error: foldersError } = await db.userFolders.getByAdministrador(user.email)
-        if (!foldersError && foldersData) {
-          realStats.totalFolders = foldersData.length
-          console.log('Dashboard: Folders loaded:', realStats.totalFolders)
-        }
-      } catch (folderError) {
-        console.error('Error loading folders:', folderError)
-      }
-      
-      // Obtener archivos contando carpetas_usuario donde administrador = user.email
-      try {
+        let totalFolders = 0
+        
+        // Contar carpetas de usuario
         const { data: userFoldersData, error: userFoldersError } = await supabase
           .from('carpetas_usuario')
-          .select('*')
+          .select('id')
           .eq('administrador', user.email)
         
         if (!userFoldersError && userFoldersData) {
-          realStats.totalFiles = userFoldersData.length
-          console.log('Dashboard: Total files (carpetas_usuario) loaded:', realStats.totalFiles)
+          totalFolders += userFoldersData.length
+        }
+        
+        // Contar grupos drive
+        const { data: groupsData, error: groupsError } = await supabase
+          .from('grupos_drive')
+          .select('id')
+          .eq('administrador', user.email)
+        
+        if (!groupsError && groupsData) {
+          totalFolders += groupsData.length
+        }
+        
+        realStats.totalFolders = totalFolders
+        console.log('Dashboard: Total folders loaded:', realStats.totalFolders)
+      } catch (folderError) {
+        console.error('Error loading folders:', folderError)
+      }
+
+      // Obtener archivos desde documentos_administrador
+      try {
+        const { data: filesData, error: filesError } = await supabase
+          .from('documentos_administrador')
+          .select('id')
+          .eq('administrador', user.email)
+        
+        if (!filesError && filesData) {
+          realStats.totalFiles = filesData.length
+          console.log('Dashboard: Total files (documentos_administrador) loaded:', realStats.totalFiles)
         }
       } catch (fileError) {
         console.error('Error loading files:', fileError)
       }
       
-      // Calcular almacenamiento desde documentos_entrenador (sin cargar embeddings)
-      try {
-        const { data: chunksData, error: chunksError } = await supabase
-          .from('documentos_entrenador')
-          .select('id')
-          .eq('entrenador', user.email)
-
-        if (!chunksError && chunksData) {
-          // Estimación simple basada en número de documentos
-          realStats.storageUsed = chunksData.length * 1024 // 1KB por documento estimado
-          console.log('Dashboard: Storage estimated:', realStats.storageUsed, 'bytes for', chunksData.length, 'documents')
-        }
-      } catch (storageError) {
-        console.error('Error calculating storage:', storageError)
-      }
+      // Usar el almacenamiento real del perfil del usuario
+      realStats.storageUsed = userProfile?.used_storage_bytes || 0
+      console.log('Dashboard: Storage from user profile:', realStats.storageUsed, 'bytes')
       
       // Obtener límite de tokens del plan actual PRIMERO
       let planTokenLimit = 1000 // valor por defecto para plan gratuito
@@ -353,22 +361,6 @@ const Dashboard = () => {
               <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
             </svg>
             Ir a Telegram
-          </a>
-          {/* Botón WhatsApp a la derecha */}
-          <a
-            href="https://wa.me/56939558133"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-lg transition-colors duration-200 shadow-md hover:shadow-lg ml-3"
-          >
-            <svg
-              className="w-5 h-5 mr-2"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-            >
-              <path d="M12 0C5.4 0 0 5.1 0 11.4c0 2 .6 3.9 1.7 5.6L0 24l7-1.8c1.5.4 3 .6 4.5.6 6.6 0 12-5.1 12-11.4S18.6 0 12 0zm5.9 16.7c-.2.6-1.2 1.1-1.7 1.2-.4.1-1 .1-1.6-.1-3.5-1.1-5.9-3.2-7.2-6.2-.3-.7-.3-1.3-.2-1.7.1-.5.5-1.2 1-1.3.2-.1.5-.1.8 0 .2.1.5.4.6.7.2.5.5 1.3.6 1.5.1.2.1.4 0 .6-.2.4-.5.6-.8.9-.1.1-.2.2-.1.4.4.9 1.1 1.7 2 2.3.9.6 1.6.8 2.1.6.2-.1.3-.3.5-.6.2-.3.4-.6.6-.7.1-.1.3-.1.5 0 .2.1 1.2.6 1.4.7.2.1.3.1.4.2.2.2.2.8 0 1.2z"/>
-            </svg>
-            WhatsApp
           </a>
         </div>
             
@@ -676,6 +668,11 @@ const Dashboard = () => {
               <DocumentIcon className="h-5 w-5 text-primary-600 mr-3" />
               <span className="text-sm font-medium text-gray-900">Subir Archivos</span>
             </Link>
+            
+            {/* Botón de sincronización de Google Drive */}
+            {isGoogleDriveConnected && (
+              <SyncButton userEmail={user?.email} />
+            )}
             
             {!hasActivePlan() && (
               <Link

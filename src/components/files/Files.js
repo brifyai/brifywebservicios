@@ -57,6 +57,9 @@ const Files = () => {
   useEffect(() => {
     if (selectedFolder) {
       loadFiles(selectedFolder)
+    } else {
+      // Si no hay carpeta seleccionada, cargar todos los archivos
+      loadFiles()
     }
   }, [selectedFolder])
 
@@ -71,27 +74,55 @@ const Files = () => {
 
   const loadFolders = async () => {
     try {
-      // Cargar carpetas del usuario
+      // Cargar carpetas del administrador
       const { data: adminFolders, error: adminError } = await db.adminFolders.getByUser(user.id)
       if (adminError) throw adminError
       
-      const { data: userFolders, error: userError } = await db.userFolders.getByUser(user.id)
-      if (userError) throw userError
+      // Cargar carpetas de usuario
+      const { data: userFoldersData, error: userFoldersError } = await supabase
+        .from('carpetas_usuario')
+        .select('*')
+        .eq('administrador', user.email)
+      
+      if (userFoldersError) throw userFoldersError
+      
+      // Cargar grupos drive
+      const { data: groupsData, error: groupsError } = await supabase
+        .from('grupos_drive')
+        .select('*')
+        .eq('administrador', user.email)
+      
+      if (groupsError) throw groupsError
       
       console.log('Admin folders:', adminFolders)
-      console.log('User folders:', userFolders)
+      console.log('User folders:', userFoldersData)
+      console.log('Groups folders:', groupsData)
       console.log('Current user:', user)
       
       const allFolders = [
         ...(adminFolders || []).map(f => ({ 
           ...f, 
+          id: f.id_drive_carpeta, // Usar id_drive_carpeta como id principal
           type: 'admin',
-          google_folder_id: f.id_drive_carpeta
+          folder_name: 'Master - Brify',
+          google_folder_id: f.id_drive_carpeta,
+          correo: f.correo || user.email
         })),
-        ...(userFolders || []).map(f => ({ 
+        ...(userFoldersData || []).map(f => ({ 
           ...f, 
+          id: f.id_carpeta_drive, // Usar id_carpeta_drive como id principal
           type: 'user',
-          google_folder_id: f.id_carpeta_drive
+          folder_name: f.nombre_carpeta || f.correo,
+          google_folder_id: f.id_carpeta_drive,
+          correo: f.correo
+        })),
+        ...(groupsData || []).map(f => ({ 
+          ...f, 
+          id: f.folder_id, // Usar folder_id como id principal
+          type: 'drive',
+          folder_name: f.group_name || f.nombre_grupo_low,
+          google_folder_id: f.folder_id,
+          correo: f.group_name || f.nombre_grupo_low
         }))
       ]
       
@@ -109,32 +140,89 @@ const Files = () => {
       
       let dbFiles = []
       
-      // Cargar archivos principales desde documentos_usuario_entrenador
-      // Esto evita mostrar los chunks individuales y solo muestra el archivo principal
-      const { data, error } = await supabase
-        .from('documentos_usuario_entrenador')
+      // Construir query para archivos de administrador con filtro opcional por carpeta
+      let adminQuery = supabase
+        .from('documentos_administrador')
         .select('*')
+        .eq('administrador', user.email)
+      
+      // Si hay un folderId seleccionado, filtrar por carpeta_actual
+      if (folderId) {
+        adminQuery = adminQuery.eq('carpeta_actual', folderId)
+      }
+      
+      const { data: adminFiles, error: adminError } = await adminQuery
         .order('created_at', { ascending: false })
       
-      if (error) throw error
+      if (adminError) throw adminError
       
-      // Transformar los datos para que sean compatibles con la interfaz existente
-      dbFiles = (data || []).map(file => ({
+      // Transformar archivos de administrador
+      const adminFilesTransformed = (adminFiles || []).map(file => ({
         id: file.id,
         created_at: file.created_at,
         metadata: {
-          name: file.file_name,
-          file_name: file.file_name,
+          name: file.name || file.file_name || 'Sin nombre',
+          file_name: file.name || file.file_name || 'Sin nombre',
+          file_type: file.file_type,
+          file_id: file.file_id, // ID de Google Drive
+          source: 'documentos_administrador',
+          correo: file.administrador,
+          service_type: 'Admin'
+        },
+        // Agregar campos adicionales para compatibilidad
+        entrenador: file.administrador,
+        usuario: file.administrador,
+        google_file_id: file.file_id,
+        type: 'admin',
+        service_type: 'Admin'
+      }))
+      
+      // Cargar archivos desde documentos_usuario_entrenador
+      let userQuery = supabase
+        .from('documentos_usuario_entrenador')
+        .select('*')
+      
+      // Si hay un folderId seleccionado, filtrar por usuario que corresponda a esa carpeta
+      if (folderId) {
+        // Buscar la carpeta seleccionada para obtener el correo/usuario asociado
+        const selectedFolderData = folders.find(folder => folder.id === folderId)
+        if (selectedFolderData) {
+          // Filtrar archivos por el usuario que corresponde a la carpeta seleccionada
+          const folderEmail = selectedFolderData.correo || selectedFolderData.folder_name
+          if (folderEmail) {
+            userQuery = userQuery.eq('usuario', folderEmail)
+          }
+        }
+      }
+      
+      const { data: userFiles, error: userError } = await userQuery
+        .order('created_at', { ascending: false })
+      
+      if (userError) throw userError
+      
+      // Transformar archivos de usuario
+      const userFilesTransformed = (userFiles || []).map(file => ({
+        id: file.id,
+        created_at: file.created_at,
+        metadata: {
+          name: file.file_name || 'Sin nombre',
+          file_name: file.file_name || 'Sin nombre',
           file_type: file.file_type,
           file_id: file.file_id, // ID de Google Drive
           source: 'documentos_usuario_entrenador',
-          correo: file.usuario
+          correo: file.usuario,
+          service_type: 'Usuario'
         },
         // Agregar campos adicionales para compatibilidad
         entrenador: file.entrenador,
         usuario: file.usuario,
-        google_file_id: file.file_id
+        google_file_id: file.file_id,
+        type: 'user',
+        service_type: 'Usuario'
       }))
+      
+      // Combinar todos los archivos
+      dbFiles = [...adminFilesTransformed, ...userFilesTransformed]
       
       // Si el usuario tiene Google Drive conectado, obtener información adicional
       if (userProfile?.google_refresh_token) {
@@ -414,14 +502,21 @@ const Files = () => {
             
             // Guardar documento principal primero
             const mainFileData = {
-              entrenador: user.email,
-              folder_id: selectedFolder,
+              administrador: user.email,
+              carpeta_actual: selectedFolder,
               content: contentToStore,
-              metadata: baseMetadata,
+              name: file.name,
+              file_type: file.type,
+              file_id: googleFileId,
+              file_size: fileSize,
+              metadata: {
+                ...baseMetadata,
+                correo: folder.correo || folder.folder_name
+              },
               embedding: embedding
             }
             
-            const { data: mainDoc, error: mainError } = await db.trainerDocuments.create(mainFileData)
+            const { data: mainDoc, error: mainError } = await db.adminDocuments.create(mainFileData)
             if (mainError) {
               console.error('Error guardando documento principal:', mainError)
               throw mainError
@@ -441,22 +536,26 @@ const Files = () => {
                 const chunkEmbeddingResult = await embeddingsServiceLib.default.generateEmbedding(chunks[i], user.id)
                 
                 const chunkData = {
-                  entrenador: user.email,
-                  folder_id: selectedFolder,
+                  administrador: user.email,
+                  carpeta_actual: selectedFolder,
                   content: chunks[i],
+                  name: `${file.name} - Parte ${i + 1}`,
+                  file_type: file.type,
+                  file_id: googleFileId,
+                  file_size: Math.round(fileSize / chunks.length), // Tamaño aproximado del chunk
                   metadata: {
                     ...baseMetadata,
                     chunk_type: 'chunk',
                     chunk_index: i + 1,
                     parent_file_id: googleFileId,
                     chunk_of_total: `${i + 1}/${chunks.length}`,
-                    name: `${file.name} - Parte ${i + 1}`,
-                    source: 'chunk_from_web_upload'
+                    source: 'chunk_from_web_upload',
+                    correo: folder.correo || folder.folder_name
                   },
                   embedding: chunkEmbeddingResult.embedding
                 }
                 
-                const { error: chunkError } = await db.trainerDocuments.create(chunkData)
+                const { error: chunkError } = await db.adminDocuments.create(chunkData)
                 if (chunkError) {
                   console.error(`Error guardando chunk ${i + 1}:`, chunkError)
                 } else {
@@ -485,12 +584,13 @@ const Files = () => {
             
             // Actualizar metadata del documento principal
             await supabase
-              .from('documentos_entrenador')
+              .from('documentos_administrador')
               .update({
                 metadata: {
                   ...baseMetadata,
                   chunks_created: successfulChunks,
-                  chunks_failed: chunks.length - successfulChunks
+                  chunks_failed: chunks.length - successfulChunks,
+                  correo: folder.correo || folder.folder_name
                 }
               })
               .eq('id', mainDoc.id)
@@ -535,16 +635,16 @@ const Files = () => {
           // Guardar en la base de datos con estructura JSONB correcta (flujo normal)
           console.log('🔍 googleFileId en flujo normal antes de crear fileData:', googleFileId)
           const fileData = {
-            entrenador: user.email, // Email del entrenador
-            folder_id: selectedFolder,
+            administrador: user.email, // Email del administrador
+            carpeta_actual: selectedFolder,
             content: contentToStore, // Contenido limitado o completo según el tamaño
+            name: file.name,
+            file_type: file.type,
+            file_id: googleFileId, // ID del archivo en Google Drive o local
+            file_size: fileSize,
             metadata: {
-              name: file.name,
               correo: folder.correo || folder.folder_name, // Email de la carpeta (usuario)
               source: 'web_upload',
-              file_id: googleFileId, // ID del archivo en Google Drive o local
-              file_type: file.type,
-              file_size: fileSize,
               upload_date: new Date().toISOString(),
               blobType: file.type,
               is_chunked: content.length > MAX_CONTENT_LENGTH,
@@ -554,7 +654,7 @@ const Files = () => {
             embedding: embedding
           }
           
-          const { error } = await db.trainerDocuments.create(fileData)
+          const { error } = await db.adminDocuments.create(fileData)
           if (error) throw error
           
           // Registrar también en documentos_usuario_entrenador
@@ -686,7 +786,8 @@ const Files = () => {
       // Las estadísticas de almacenamiento se actualizarán automáticamente
       // ya que se calculan desde documentos_entrenador en el dashboard
       
-      // Recargar archivos
+      // Recargar archivos inmediatamente sin caché
+      setFiles([]) // Limpiar estado inmediatamente
       await loadFiles(selectedFolder)
       toast.success('Archivo eliminado exitosamente')
       

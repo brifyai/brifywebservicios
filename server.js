@@ -42,15 +42,17 @@ function extractFileIdFromUri(resourceUri) {
 // Función para obtener detalles del archivo desde Google Drive API
 async function getFileDetails(fileId, accessToken) {
   try {
-    const drive = google.drive({ version: 'v3' });
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: accessToken });
+    
+    const drive = google.drive({ 
+      version: 'v3',
+      auth: oauth2Client
+    });
     
     const response = await drive.files.get({
       fileId: fileId,
-      fields: 'id,name,mimeType,size,createdTime,modifiedTime,parents,owners,webViewLink',
-      auth: new google.auth.OAuth2(),
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
+      fields: 'id,name,mimeType,size,createdTime,modifiedTime,parents,owners,webViewLink'
     });
     
     return response.data;

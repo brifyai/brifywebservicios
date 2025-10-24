@@ -65,6 +65,7 @@ export const useUserExtensions = () => {
                 description,
                 description_es,
                 price,
+                storage_bonus_bytes,
                 disponible
               )
             `)

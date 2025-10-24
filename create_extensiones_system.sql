@@ -1,18 +1,18 @@
 -- Crear tabla de extensiones
 CREATE TABLE IF NOT EXISTS extensiones (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(255) NOT NULL,
-    name_es VARCHAR(255) NOT NULL,
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    name TEXT NOT NULL,
+    name_es TEXT NOT NULL,
     description TEXT,
     description_es TEXT,
-    price_usd DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    extension_code VARCHAR(100) UNIQUE NOT NULL,
-    service_type VARCHAR(50) NOT NULL DEFAULT 'entrenador',
-    disponible BOOLEAN NOT NULL DEFAULT true,
+    price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    extension_code TEXT UNIQUE,
+    service_type TEXT DEFAULT 'general',
+    disponible BOOLEAN DEFAULT true,
     storage_extra_bytes BIGINT DEFAULT 0,
     token_extra_usage INTEGER DEFAULT 0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- Crear tabla de relación entre planes y extensiones seleccionadas por usuarios
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS plan_extensiones (
 );
 
 -- Insertar extensiones de ejemplo
-INSERT INTO extensiones (name, name_es, description, description_es, price_usd, extension_code, service_type, disponible, storage_extra_bytes, token_extra_usage) VALUES
+INSERT INTO extensiones (name, name_es, description, description_es, price, extension_code, service_type, disponible, storage_extra_bytes, token_extra_usage) VALUES
 ('Extra Storage 1GB', 'Almacenamiento Extra 1GB', 'Additional 1GB of storage space', 'Espacio adicional de almacenamiento de 1GB', 10.00, 'storage_1gb', 'entrenador', true, 1073741824, 0),
 ('Extra Storage 5GB', 'Almacenamiento Extra 5GB', 'Additional 5GB of storage space', 'Espacio adicional de almacenamiento de 5GB', 40.00, 'storage_5gb', 'entrenador', true, 5368709120, 0),
 ('Premium Tokens', 'Tokens Premium', 'Additional 1M tokens for AI processing', 'Tokens adicionales de 1M para procesamiento IA', 25.00, 'tokens_1m', 'entrenador', true, 0, 1000000),
@@ -54,10 +54,10 @@ DECLARE
     is_free_trial BOOLEAN;
 BEGIN
     -- Obtener precio base del plan y si es prueba gratis
-    SELECT price_usd, COALESCE(prueba_gratis, false)
+    SELECT price, COALESCE(prueba_gratis, false)
     INTO base_price, is_free_trial
-    FROM plans 
-    WHERE id = p_plan_id;
+    FROM plans
+    WHERE id = plan_uuid;
     
     -- Si es prueba gratis, el precio total es 0
     IF is_free_trial THEN
@@ -65,7 +65,7 @@ BEGIN
     END IF;
     
     -- Calcular precio de extensiones activas
-    SELECT COALESCE(SUM(e.price_usd), 0.00)
+    SELECT COALESCE(SUM(e.price), 0.00)
     INTO extensions_price
     FROM plan_extensiones pe
     JOIN extensiones e ON pe.extension_id = e.id
@@ -79,19 +79,20 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Función para obtener extensiones disponibles para un tipo de servicio
-CREATE OR REPLACE FUNCTION get_available_extensions(p_service_type VARCHAR(50) DEFAULT 'entrenador')
-RETURNS TABLE(
+CREATE OR REPLACE FUNCTION get_extensions_by_service(p_service_type TEXT)
+RETURNS TABLE (
     id UUID,
-    name VARCHAR(255),
-    name_es VARCHAR(255),
+    name TEXT,
+    name_es TEXT,
     description TEXT,
     description_es TEXT,
-    price_usd DECIMAL(10,2),
-    extension_code VARCHAR(100),
+    price DECIMAL(10,2),
+    extension_code TEXT,
     disponible BOOLEAN,
     storage_extra_bytes BIGINT,
     token_extra_usage INTEGER
-) AS $$
+)
+AS $$
 BEGIN
     RETURN QUERY
     SELECT 
@@ -100,14 +101,14 @@ BEGIN
         e.name_es,
         e.description,
         e.description_es,
-        e.price_usd,
+        e.price,
         e.extension_code,
         e.disponible,
         e.storage_extra_bytes,
         e.token_extra_usage
     FROM extensiones e
     WHERE e.service_type = p_service_type
-    ORDER BY e.disponible DESC, e.price_usd ASC;
+    ORDER BY e.disponible DESC, e.price ASC;
 END;
 $$ LANGUAGE plpgsql;
 

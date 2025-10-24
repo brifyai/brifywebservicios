@@ -345,7 +345,7 @@ export const db = {
       const { data, error } = await supabase
         .from('sub_carpetas_administrador')
         .select('*')
-        .eq('administrador_email', email)
+        .eq('administrador_email', email) // Usar 'administrador_email' para esta tabla específica
       return { data, error }
     },
     
@@ -361,7 +361,7 @@ export const db = {
       const { data, error } = await supabase
         .from('sub_carpetas_administrador')
         .select('*')
-        .eq('administrador_email', email)
+        .eq('administrador_email', email) // Usar 'administrador_email' para esta tabla específica
         .eq('tipo_extension', tipoExtension)
         .single()
       return { data, error }
@@ -483,6 +483,61 @@ export const db = {
     }
   },
 
+  // Documentos del administrador
+  adminDocuments: {
+    create: async (documentData) => {
+      const { data, error } = await supabase
+        .from('documentos_administrador')
+        .insert([documentData])
+        .select()
+      return { data, error }
+    },
+    
+    getByUser: async (userId) => {
+      // Obtener el email del usuario para buscar por administrador
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('email')
+        .eq('id', userId)
+        .single()
+      
+      if (userError) return { data: null, error: userError }
+      
+      const { data, error } = await supabase
+        .from('documentos_administrador')
+        .select('*')
+        .eq('administrador', userData.email)
+        .order('created_at', { ascending: false })
+      return { data, error }
+    },
+    
+    getByFolder: async (folderId) => {
+      const { data, error } = await supabase
+        .from('documentos_administrador')
+        .select('*')
+        .eq('carpeta_actual', folderId)
+        .order('created_at', { ascending: false })
+      return { data, error }
+    },
+    
+    update: async (id, updates) => {
+      const { data, error } = await supabase
+        .from('documentos_administrador')
+        .update(updates)
+        .eq('id', id)
+        .select()
+      return { data, error }
+    },
+    
+    delete: async (id) => {
+      const { data, error } = await supabase
+        .from('documentos_administrador')
+        .delete()
+        .eq('id', id)
+      return { data, error }
+    }
+  },
+
   // Documentos del entrenador
   trainerDocuments: {
     create: async (documentData) => {
@@ -597,6 +652,108 @@ export const db = {
         .from('documentos_usuario_entrenador')
         .delete()
         .eq('file_id', fileId)
+      return { data, error }
+    }
+  },
+
+  // Funciones para grupos_drive
+  gruposDrive: {
+    create: async (grupoData) => {
+      const { data, error } = await supabase
+        .from('grupos_drive')
+        .insert(grupoData)
+        .select()
+      return { data, error }
+    },
+
+    getByUserId: async (userId) => {
+      const { data, error } = await supabase
+        .from('grupos_drive')
+        .select('*')
+        .eq('owner_id', userId)
+        .order('created_at', { ascending: false })
+      return { data, error }
+    },
+
+    getByExtension: async (userId, extension) => {
+      const { data, error } = await supabase
+        .from('grupos_drive')
+        .select('*')
+        .eq('owner_id', userId)
+        .eq('extension', extension)
+        .order('created_at', { ascending: false })
+      return { data, error }
+    },
+
+    update: async (id, updates) => {
+      const { data, error } = await supabase
+        .from('grupos_drive')
+        .update(updates)
+        .eq('id', id)
+        .select()
+      return { data, error }
+    },
+
+    delete: async (id) => {
+      const { data, error } = await supabase
+        .from('grupos_drive')
+        .delete()
+        .eq('id', id)
+      return { data, error }
+    }
+  },
+
+  // Funciones para grupos_carpetas
+  gruposCarpetas: {
+    create: async (carpetaData) => {
+      const { data, error } = await supabase
+        .from('grupos_carpetas')
+        .insert(carpetaData)
+        .select()
+      return { data, error }
+    },
+
+    getByCarpetaId: async (carpetaId) => {
+      const { data, error } = await supabase
+        .from('grupos_carpetas')
+        .select('*')
+        .eq('carpeta_id', carpetaId)
+        .order('created_at', { ascending: false })
+      return { data, error }
+    },
+
+    getByUserId: async (userId) => {
+      const { data, error } = await supabase
+        .from('grupos_carpetas')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+      return { data, error }
+    },
+
+    getByUsuarioLector: async (usuarioLector) => {
+      const { data, error } = await supabase
+        .from('grupos_carpetas')
+        .select('*')
+        .eq('usuario_lector', usuarioLector)
+        .order('created_at', { ascending: false })
+      return { data, error }
+    },
+
+    update: async (id, updates) => {
+      const { data, error } = await supabase
+        .from('grupos_carpetas')
+        .update(updates)
+        .eq('id', id)
+        .select()
+      return { data, error }
+    },
+
+    delete: async (id) => {
+      const { data, error } = await supabase
+        .from('grupos_carpetas')
+        .delete()
+        .eq('id', id)
       return { data, error }
     }
   }

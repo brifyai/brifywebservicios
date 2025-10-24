@@ -10,8 +10,7 @@ const Register = () => {
     email: '',
     password: '',
     confirmPassword: '',
-    telegramId: '',
-    wssp: ''
+    telegramId: ''
   })
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
@@ -69,13 +68,6 @@ const Register = () => {
       newErrors.telegramId = 'El ID de Telegram debe contener solo números'
     }
 
-    // WhatsApp es obligatorio, aceptar con o sin '+' pero solo dígitos
-    if (!formData.wssp) {
-      newErrors.wssp = 'El WhatsApp es requerido'
-    } else if (!/^\+?\d+$/.test(formData.wssp)) {
-      newErrors.wssp = 'El WhatsApp debe contener solo números (puedes incluir \'+\')'
-    }
-    
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
@@ -90,13 +82,9 @@ const Register = () => {
     setIsLoading(true)
     
     try {
-      // Sanitizar WhatsApp: quitar cualquier carácter que no sea dígito
-      const sanitizedWssp = formData.wssp ? formData.wssp.replace(/\D/g, '') : null
-
       const userData = {
         name: formData.name.trim(),
-        telegram_id: formData.telegramId || null,
-        wssp: sanitizedWssp
+        telegram_id: formData.telegramId || null
       }
       
       const { error } = await signUp(formData.email, formData.password, userData)
@@ -207,31 +195,6 @@ const Register = () => {
                 <p className="mt-1 text-xs text-gray-500">
                   Puedes encontrar tu ID de Telegram contactando a @userinfobot
                 </p>
-            </div>
-          </div>
-
-          {/* WhatsApp */}
-          <div>
-            <label htmlFor="wssp" className="block text-sm font-medium text-gray-700">
-              WhatsApp
-            </label>
-            <div className="mt-1">
-              <input
-                id="wssp"
-                name="wssp"
-                type="text"
-                required
-                className={`input-field ${errors.wssp ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
-                placeholder="+56950128073 o 56950128073"
-                value={formData.wssp}
-                onChange={handleChange}
-              />
-              {errors.wssp && (
-                <p className="mt-1 text-sm text-red-600">{errors.wssp}</p>
-              )}
-              <p className="mt-1 text-xs text-gray-500">
-                Se guardará solo el número sin el símbolo '+'
-              </p>
             </div>
           </div>
 

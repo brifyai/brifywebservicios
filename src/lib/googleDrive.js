@@ -118,30 +118,11 @@ class GoogleDriveService {
       
       // Si tenemos un refresh_token, usarlo para obtener un access_token
       if (tokens.refresh_token) {
-        const response = await fetch('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
-            client_secret: process.env.REACT_APP_GOOGLE_CLIENT_SECRET,
-            refresh_token: tokens.refresh_token,
-            grant_type: 'refresh_token'
-          })
-        })
-        
-        if (!response.ok) {
-          const errorData = await response.text()
-          console.error('Error refreshing Google token:', response.status, errorData)
-          throw new Error(`Error refreshing token: ${response.status}`)
-        }
-        
-        const refreshedTokens = await response.json()
+        const refreshedTokens = await this.refreshAccessToken(tokens.refresh_token)
         
         if (refreshedTokens.access_token) {
           this.accessToken = refreshedTokens.access_token
-          return true
+          return refreshedTokens
         } else {
           throw new Error('No access token received from refresh')
         }
@@ -151,6 +132,36 @@ class GoogleDriveService {
     } catch (error) {
       console.error('Error setting tokens:', error)
       return false
+    }
+  }
+
+  // Método separado para renovar access token
+  async refreshAccessToken(refreshToken) {
+    try {
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
+          client_secret: process.env.REACT_APP_GOOGLE_CLIENT_SECRET,
+          refresh_token: refreshToken,
+          grant_type: 'refresh_token'
+        })
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.text()
+        console.error('Error refreshing Google token:', response.status, errorData)
+        throw new Error(`Error refreshing token: ${response.status}`)
+      }
+      
+      const refreshedTokens = await response.json()
+      return refreshedTokens
+    } catch (error) {
+      console.error('Error in refreshAccessToken:', error)
+      throw error
     }
   }
 
@@ -210,10 +221,96 @@ class GoogleDriveService {
         }
       })
 
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Google Drive API error:', response.status, errorText)
+        
+        // Si es error 401, intentar renovar el token
+        if (response.status === 401) {
+          console.log('Token expirado, intentando renovar...')
+          await this.handleTokenRefresh()
+          
+          // Reintentar la petición con el nuevo token
+          const retryResponse = await fetch(`https://www.googleapis.com/drive/v3/files?${params.toString()}`, {
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`
+            }
+          })
+          
+          if (!retryResponse.ok) {
+            const retryErrorText = await retryResponse.text()
+            console.error('Google Drive API error after token refresh:', retryResponse.status, retryErrorText)
+            throw new Error(`Error de Google Drive API: ${retryResponse.status}`)
+          }
+          
+          const retryData = await retryResponse.json()
+          
+          if (!retryData || !Array.isArray(retryData.files)) {
+            console.warn('Google Drive API response does not contain files array:', retryData)
+            return []
+          }
+          
+          return retryData.files
+        }
+        
+        throw new Error(`Error de Google Drive API: ${response.status}`)
+      }
+
       const data = await response.json()
+      
+      // Verificar que la respuesta contenga files y sea un array
+      if (!data || !Array.isArray(data.files)) {
+        console.warn('Google Drive API response does not contain files array:', data)
+        return []
+      }
+      
       return data.files
     } catch (error) {
       console.error('Error listing files:', error)
+      throw error
+    }
+  }
+
+  // Manejar renovación automática de tokens
+  async handleTokenRefresh() {
+    try {
+      // Obtener el refresh token desde la base de datos
+      const { data: { user } } = await window.supabase.auth.getUser()
+      if (!user) {
+        throw new Error('Usuario no autenticado')
+      }
+
+      const { data: credentials } = await window.supabase
+        .from('user_credentials')
+        .select('google_refresh_token')
+        .eq('user_id', user.id)
+        .single()
+
+      if (!credentials || !credentials.google_refresh_token) {
+        throw new Error('No se encontró refresh token')
+      }
+
+      const refreshedTokens = await this.refreshAccessToken(credentials.google_refresh_token)
+      
+      if (refreshedTokens.access_token) {
+        this.accessToken = refreshedTokens.access_token
+        
+        // Actualizar el token en la base de datos
+        await window.supabase
+          .from('user_credentials')
+          .update({ 
+            google_access_token: refreshedTokens.access_token,
+            updated_at: new Date().toISOString()
+          })
+          .eq('user_id', user.id)
+        
+        console.log('Token renovado exitosamente')
+        return true
+      }
+      
+      throw new Error('No se pudo renovar el token')
+    } catch (error) {
+      console.error('Error renovando token:', error)
       throw error
     }
   }
@@ -305,6 +402,48 @@ class GoogleDriveService {
     } catch (error) {
       console.error('Error sharing folder:', error)
       throw error
+    }
+  }
+
+  // Obtener permisos de una carpeta
+  async getFolderPermissions(folderId) {
+    if (!this.accessToken) {
+      throw new Error('Google Drive no está inicializado')
+    }
+
+    try {
+      const response = await fetch(`https://www.googleapis.com/drive/v3/files/${folderId}/permissions?fields=permissions(id,type,role,emailAddress,displayName)`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        throw new Error(`Error obteniendo permisos: ${response.status}`)
+      }
+
+      const data = await response.json()
+      
+      // Devolver TODOS los permisos para que isFolderShared pueda determinar correctamente si está compartida
+      // Una carpeta está compartida si tiene más de 1 permiso (propietario + otros usuarios)
+      const allPermissions = data.permissions || []
+      
+      console.log(`🔍 Debug getFolderPermissions - Carpeta ${folderId}:`, {
+        totalPermissions: allPermissions.length,
+        permissions: allPermissions.map(p => ({
+          type: p.type,
+          role: p.role,
+          email: p.emailAddress,
+          displayName: p.displayName
+        }))
+      })
+
+      return allPermissions
+    } catch (error) {
+      console.error('Error getting folder permissions:', error)
+      return []
     }
   }
 

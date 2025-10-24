@@ -26,6 +26,8 @@ const Folders = () => {
   const [creating, setCreating] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
+  const [newFolderEmail, setNewFolderEmail] = useState('')
+  const [folderType, setFolderType] = useState('Alumno') // Para extensión Entrenador
   const [selectedParentFolder, setSelectedParentFolder] = useState(null)
   const [availableSubFolders, setAvailableSubFolders] = useState([])
 
@@ -77,13 +79,15 @@ const Folders = () => {
         console.log('🔍 No se encontraron subcarpetas, buscando con administrador...')
         const { data: adminData } = await db.adminFolders.getByUser(user.id)
         if (adminData && adminData.length > 0) {
-          const adminEmail = adminData[0].administrador
+          const adminEmail = adminData[0].correo // Usar 'correo' en lugar de 'administrador'
+          console.log('📧 Email del administrador encontrado:', adminEmail)
           const result = await supabase
             .from('sub_carpetas_administrador')
             .select('*')
             .eq('administrador_email', adminEmail)
           subFolders = result.data
           error = result.error
+          console.log('🔍 Subcarpetas encontradas con email del administrador:', subFolders?.length || 0)
         }
       }
       
@@ -175,7 +179,7 @@ const Folders = () => {
       // Extensiones activas del usuario
       const { data: userExts, error: userExtsError } = await supabase
         .from('plan_extensiones')
-        .select(`*, extensiones (id, name, name_es, type)`) 
+        .select(`*, extensiones (id, name, name_es, service_type)`) 
         .eq('user_id', user.id)
       if (userExtsError) {
         console.error('❌ Error obteniendo extensiones del usuario:', userExtsError)
@@ -279,39 +283,93 @@ const Folders = () => {
       let dbFolders = []
       
       if (parentId) {
-        // Si estamos dentro de una carpeta, cargar subcarpetas (carpetas de usuario)
-        const { data, error } = await db.userFolders.getByAdministrador(user.email)
-        if (error) throw error
-        dbFolders = (data || []).map(folder => ({
+        // Si estamos dentro de una carpeta, cargar subcarpetas (carpetas de usuario y grupos)
+        
+        // Cargar carpetas de usuario
+        const { data: userFoldersData, error: userFoldersError } = await supabase
+          .from('carpetas_usuario')
+          .select('*')
+          .eq('administrador', user.email)
+        
+        if (userFoldersError) throw userFoldersError
+        
+        const userFolders = (userFoldersData || []).map(folder => ({
           ...folder,
-          folder_name: folder.correo, // El nombre de la carpeta es el correo
+          folder_name: folder.nombre_carpeta || folder.correo,
           google_folder_id: folder.id_carpeta_drive,
-          type: 'user'
+          shared_email: folder.correo,
+          type: 'user',
+          synced: true
         }))
+        
+        // Cargar grupos drive
+        const { data: groupsData, error: groupsError } = await supabase
+          .from('grupos_drive')
+          .select('*')
+          .eq('administrador', user.email)
+        
+        if (groupsError) throw groupsError
+        
+        const groupFolders = (groupsData || []).map(folder => ({
+          ...folder,
+          folder_name: folder.group_name || folder.nombre_grupo_low,
+          google_folder_id: folder.folder_id,
+          shared_email: 'Grupo compartido',
+          type: 'group',
+          synced: true
+        }))
+        
+        dbFolders = [...userFolders, ...groupFolders]
       } else {
-        // Cargar carpeta administrador y carpetas de usuario
+        // Cargar carpeta administrador y todas las carpetas
         const { data: adminData, error: adminError } = await db.adminFolders.getByUser(user.id)
         if (adminError) throw adminError
         
-        const { data: userData, error: userError } = await db.userFolders.getByAdministrador(user.email)
-        if (userError) throw userError
+        // Cargar carpetas de usuario
+        const { data: userFoldersData, error: userFoldersError } = await supabase
+          .from('carpetas_usuario')
+          .select('*')
+          .eq('administrador', user.email)
         
-        // Combinar carpetas admin y de usuario
+        if (userFoldersError) throw userFoldersError
+        
+        // Cargar grupos drive
+        const { data: groupsData, error: groupsError } = await supabase
+          .from('grupos_drive')
+          .select('*')
+          .eq('administrador', user.email)
+        
+        if (groupsError) throw groupsError
+        
+        // Combinar todas las carpetas
         const adminFolders = (adminData || []).map(folder => ({
           ...folder,
           folder_name: 'Master - Brify',
           google_folder_id: folder.id_drive_carpeta,
-          type: 'admin'
+          shared_email: 'Carpeta administrador',
+          type: 'admin',
+          synced: true
         }))
         
-        const userFolders = (userData || []).map(folder => ({
+        const userFolders = (userFoldersData || []).map(folder => ({
           ...folder,
-          folder_name: folder.correo,
+          folder_name: folder.nombre_carpeta || folder.correo,
           google_folder_id: folder.id_carpeta_drive,
-          type: 'user'
+          shared_email: folder.correo,
+          type: 'user',
+          synced: true
         }))
         
-        dbFolders = [...adminFolders, ...userFolders]
+        const groupFolders = (groupsData || []).map(folder => ({
+          ...folder,
+          folder_name: folder.group_name || folder.nombre_grupo_low,
+          google_folder_id: folder.folder_id,
+          shared_email: 'Grupo compartido',
+          type: 'group',
+          synced: true
+        }))
+        
+        dbFolders = [...adminFolders, ...userFolders, ...groupFolders]
       }
       
       // Si el usuario tiene Google Drive conectado, sincronizar con Drive
@@ -361,13 +419,26 @@ const Folders = () => {
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) {
-      toast.error('El email del cliente es requerido')
+      toast.error('El nombre de la carpeta es requerido')
       return
     }
     
-    if (!isValidEmail(newFolderName)) {
-      toast.error('Debes ingresar un email válido')
-      return
+    // Validaciones específicas según el tipo de extensión
+    if (selectedParentFolder) {
+      const extension = selectedParentFolder.tipo_extension
+      
+      if (extension === 'entrenador' && folderType === 'Alumno') {
+        if (!isValidEmail(newFolderName)) {
+          toast.error('Para alumnos, debes ingresar un email válido')
+          return
+        }
+      }
+    } else {
+      // Sin carpeta padre seleccionada, requiere email válido
+      if (!isValidEmail(newFolderName)) {
+        toast.error('Debes ingresar un email válido')
+        return
+      }
     }
 
     // Evitar crear subcarpetas - solo permitir creación en el nivel principal
@@ -419,10 +490,27 @@ const Folders = () => {
           
           googleFolderId = driveFolder.id
           
-          // Compartir la carpeta con el email especificado
-          await googleDriveService.shareFolder(googleFolderId, newFolderName)
+          // Determinar el email para compartir
+          let emailToShare = null
+          if (selectedParentFolder) {
+            const extension = selectedParentFolder.tipo_extension
+            
+            if (extension === 'entrenador' && folderType === 'Alumno') {
+              emailToShare = newFolderName // Para alumnos, el nombre es el email
+            } else if ((extension === 'brify' || extension === 'abogados' || (extension === 'entrenador' && folderType === 'Normal')) && newFolderEmail.trim()) {
+              emailToShare = newFolderEmail // Email opcional para grupos
+            }
+          } else {
+            emailToShare = newFolderName // Comportamiento por defecto
+          }
           
-          toast.success(`Carpeta creada y compartida con ${newFolderName}`)
+          // Compartir la carpeta si hay email
+          if (emailToShare) {
+            await googleDriveService.shareFolder(googleFolderId, emailToShare)
+            toast.success(`Carpeta creada y compartida con ${emailToShare}`)
+          } else {
+            toast.success('Carpeta creada exitosamente')
+          }
         } catch (error) {
           console.error('Error creating folder in Google Drive:', error)
           toast.error('Error creando la carpeta en Google Drive')
@@ -463,101 +551,176 @@ const Folders = () => {
       
       console.log(`✅ Extensión final asignada: ${extension}`)
       
-      // Guardar en la tabla carpetas_usuario
-      const folderData = {
-        telegram_id: userProfile?.telegram_id || null,
-        correo: newFolderName, // El nombre de la carpeta será el correo
-        id_carpeta_drive: googleFolderId,
-        administrador: user.email, // Email del administrador que crea la carpeta
-        extension: extension // Campo para identificar la extensión
-      }
+      // Determinar el tipo de registro según la extensión y configuración
+      let shouldUseGruposDrive = false
+      let shouldUseUserFolders = true
       
-      console.log('💾 Datos de carpeta a guardar:', folderData)
-      
-      const { error } = await db.userFolders.create(folderData)
-      
-      if (error) {
-        console.error('Error saving folder to database:', error)
-        toast.error('Error guardando la carpeta')
-        return
-      }
-      
-      // Crear usuario automáticamente en la tabla users
-      try {
-        // Verificar si el usuario ya existe
-        const { data: existingUser, error: checkError } = await supabase
-          .from('users')
-          .select('id')
-          .eq('email', newFolderName)
-          .single()
+      if (selectedParentFolder) {
+        const ext = selectedParentFolder.tipo_extension
         
-        if (checkError && checkError.code !== 'PGRST116') {
-          console.error('Error checking existing user:', checkError)
+        if (ext === 'brify' || ext === 'abogados') {
+          // Para Brify y Abogados siempre usar grupos_drive
+          shouldUseGruposDrive = true
+          shouldUseUserFolders = false
+        } else if (ext === 'entrenador') {
+          if (folderType === 'Normal') {
+            // Para Entrenador Normal usar grupos_drive
+            shouldUseGruposDrive = true
+            shouldUseUserFolders = false
+          }
+          // Para Entrenador Alumno usar carpetas_usuario (por defecto)
+        }
+      }
+      
+      console.log(`📊 Tipo de registro: grupos_drive=${shouldUseGruposDrive}, carpetas_usuario=${shouldUseUserFolders}`)
+      
+      // Registrar en grupos_drive si corresponde
+      if (shouldUseGruposDrive) {
+        const grupoData = {
+          owner_id: user.id,
+          group_name: newFolderName,
+          folder_id: googleFolderId,
+          administrador: user.email,
+          extension: extension,
+          nombre_grupo_low: newFolderName.toLowerCase()
         }
         
-        // Si el usuario no existe, crearlo
-        if (!existingUser) {
-          // Extraer el nombre del email (parte antes del @)
-          const nameFromEmail = newFolderName.split('@')[0]
-          
-          const userData = {
-            email: newFolderName,
-            name: nameFromEmail,
-            cliente: true, // Marcar como cliente
-            is_active: true,
-            registered_via: 'folder_creation',
-            used_storage_bytes: 0,
-            admin: false,
-            onboarding_status: 'completed'
+        console.log('💾 Datos de grupo a guardar en grupos_drive:', grupoData)
+        
+        const { error: grupoError } = await db.gruposDrive.create(grupoData)
+        
+        if (grupoError) {
+          console.error('Error saving group to grupos_drive:', grupoError)
+          toast.error('Error guardando el grupo')
+          return
+        }
+        
+        // Si hay email para compartir, registrar en grupos_carpetas
+        const emailToRegister = selectedParentFolder.tipo_extension === 'entrenador' && folderType === 'Normal' ? newFolderEmail : newFolderEmail
+        
+        if (emailToRegister && emailToRegister.trim()) {
+          const carpetaData = {
+            user_id: user.id,
+            role: 'lector',
+            carpeta_id: googleFolderId,
+            administrador: user.email,
+            usuario_lector: emailToRegister
           }
           
-          const { error: userError } = await supabase
-            .from('users')
-            .insert([userData])
+          console.log('💾 Datos de carpeta compartida a guardar en grupos_carpetas:', carpetaData)
           
-          if (userError) {
-            console.error('Error creating user:', userError)
-            // No fallar la creación de carpeta si falla la creación del usuario
-            toast.error('Carpeta creada pero error creando usuario automático')
-          } else {
-            console.log('Usuario creado automáticamente:', newFolderName)
+          const { error: carpetaError } = await db.gruposCarpetas.create(carpetaData)
+          
+          if (carpetaError) {
+            console.error('Error saving shared folder to grupos_carpetas:', carpetaError)
+            // No fallar la creación, solo mostrar advertencia
+            toast.error('Grupo creado pero error registrando el acceso compartido')
+          }
+        }
+      }
+      
+      // Registrar en carpetas_usuario si corresponde
+      if (shouldUseUserFolders) {
+        const folderData = {
+          telegram_id: userProfile?.telegram_id || null,
+          correo: newFolderName, // El nombre de la carpeta será el correo
+          id_carpeta_drive: googleFolderId,
+          administrador: user.email, // Email del administrador que crea la carpeta
+          extension: extension // Campo para identificar la extensión
+        }
+        
+        console.log('💾 Datos de carpeta a guardar en carpetas_usuario:', folderData)
+        
+        const { error } = await db.userFolders.create(folderData)
+        
+        if (error) {
+          console.error('Error saving folder to database:', error)
+          toast.error('Error guardando la carpeta')
+          return
+        }
+      }
+      
+      // Crear usuario automáticamente en la tabla users solo para carpetas de tipo "Alumno" o flujo tradicional
+      if (shouldUseUserFolders) {
+        try {
+          // Verificar si el usuario ya existe
+          const { data: existingUser, error: checkError } = await supabase
+            .from('users')
+            .select('id')
+            .eq('email', newFolderName)
+            .single()
+          
+          if (checkError && checkError.code !== 'PGRST116') {
+            console.error('Error checking existing user:', checkError)
+          }
+          
+          // Si el usuario no existe, crearlo
+          if (!existingUser) {
+            // Extraer el nombre del email (parte antes del @)
+            const nameFromEmail = newFolderName.split('@')[0]
             
-            // Enviar correo de bienvenida
+            const userData = {
+              email: newFolderName,
+              name: nameFromEmail,
+              cliente: true, // Marcar como cliente
+              is_active: true,
+              registered_via: 'folder_creation',
+              used_storage_bytes: 0,
+              admin: false,
+              onboarding_status: 'completed'
+            }
+            
+            const { error: userError } = await supabase
+              .from('users')
+              .insert([userData])
+            
+            if (userError) {
+              console.error('Error creating user:', userError)
+              // No fallar la creación de carpeta si falla la creación del usuario
+              toast.error('Carpeta creada pero error creando usuario automático')
+            } else {
+              console.log('Usuario creado automáticamente:', newFolderName)
+              
+              // Enviar correo de bienvenida
+              try {
+                const result = await emailService.sendWelcomeEmail(newFolderName, nameFromEmail, user.id, extension)
+                if (result.success) {
+                  console.log('Correo de bienvenida enviado exitosamente')
+                  toast.success(`Carpeta creada, usuario registrado y correo de bienvenida enviado a ${newFolderName}`)
+                } else {
+                  console.error('Error enviando correo de bienvenida:', result.error)
+                  toast.success(`Carpeta creada y usuario registrado. Error enviando correo de bienvenida.`)
+                }
+              } catch (emailError) {
+                console.error('Error en servicio de email:', emailError)
+                toast.success(`Carpeta creada y usuario registrado. Error enviando correo de bienvenida.`)
+              }
+            }
+          } else {
+            console.log('Usuario ya existe:', newFolderName)
+            // Enviar correo de bienvenida también para usuarios existentes
             try {
+              const nameFromEmail = newFolderName.split('@')[0]
               const result = await emailService.sendWelcomeEmail(newFolderName, nameFromEmail, user.id, extension)
               if (result.success) {
-                console.log('Correo de bienvenida enviado exitosamente')
-                toast.success(`Carpeta creada, usuario registrado y correo de bienvenida enviado a ${newFolderName}`)
+                console.log('Correo de bienvenida enviado a usuario existente')
+                toast.success(`Carpeta creada y correo de bienvenida enviado a ${newFolderName}`)
               } else {
                 console.error('Error enviando correo de bienvenida:', result.error)
-                toast.success(`Carpeta creada y usuario registrado. Error enviando correo de bienvenida.`)
+                toast.success(`Carpeta creada exitosamente`)
               }
             } catch (emailError) {
               console.error('Error en servicio de email:', emailError)
-              toast.success(`Carpeta creada y usuario registrado. Error enviando correo de bienvenida.`)
-            }
-          }
-        } else {
-          console.log('Usuario ya existe:', newFolderName)
-          // Enviar correo de bienvenida también para usuarios existentes
-          try {
-            const nameFromEmail = newFolderName.split('@')[0]
-            const result = await emailService.sendWelcomeEmail(newFolderName, nameFromEmail, user.id, extension)
-            if (result.success) {
-              console.log('Correo de bienvenida enviado a usuario existente')
-              toast.success(`Carpeta creada y correo de bienvenida enviado a ${newFolderName}`)
-            } else {
-              console.error('Error enviando correo de bienvenida:', result.error)
               toast.success(`Carpeta creada exitosamente`)
             }
-          } catch (emailError) {
-            console.error('Error en servicio de email:', emailError)
-            toast.success(`Carpeta creada exitosamente`)
           }
+        } catch (userCreationError) {
+          console.error('Error in user creation process:', userCreationError)
+          // No fallar la creación de carpeta si falla la creación del usuario
+          toast.success('Carpeta creada exitosamente')
         }
-      } catch (userCreationError) {
-        console.error('Error in user creation process:', userCreationError)
-        // No fallar la creación de carpeta si falla la creación del usuario
+      } else {
+        // Para carpetas de tipo "Normal" en grupos, mostrar mensaje de éxito simple
         toast.success('Carpeta creada exitosamente')
       }
       
@@ -566,7 +729,8 @@ const Folders = () => {
       
       // Limpiar formulario
       setNewFolderName('')
-
+      setNewFolderEmail('')
+      setFolderType('Alumno')
       setShowCreateModal(false)
       
       // No mostrar mensaje genérico ya que se muestran mensajes específicos arriba
@@ -651,7 +815,10 @@ const Folders = () => {
       // Navegar a la pestaña de archivos con la carpeta preseleccionada
       navigate('/files', { 
         state: { 
-          selectedFolder: folder,
+          selectedFolder: {
+            ...folder,
+            id: folder.google_folder_id // Usar google_folder_id como id para el filtrado
+          },
           folderId: folder.google_folder_id,
           folderName: folder.folder_name
         } 
@@ -953,22 +1120,141 @@ const Folders = () => {
                   Selecciona donde crear la nueva carpeta
                 </p>
               </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Email del cliente
-                </label>
-                <input
-                  type="email"
-                  value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  placeholder="cliente@ejemplo.com"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  El email será usado como nombre de carpeta y se compartirá automáticamente
-                </p>
-              </div>
+
+              {/* Mostrar campos según la extensión seleccionada */}
+              {selectedParentFolder && (
+                <>
+                  {/* Para Brify y Abogados: Input de nombre + email opcional */}
+                  {(selectedParentFolder.tipo_extension === 'brify' || selectedParentFolder.tipo_extension === 'abogados') && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Nombre de la carpeta *
+                        </label>
+                        <input
+                          type="text"
+                          value={newFolderName}
+                          onChange={(e) => setNewFolderName(e.target.value)}
+                          placeholder="Nombre del grupo o proyecto"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Nombre que tendrá la carpeta del grupo
+                        </p>
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Email para compartir (opcional)
+                        </label>
+                        <input
+                          type="email"
+                          value={newFolderEmail}
+                          onChange={(e) => setNewFolderEmail(e.target.value)}
+                          placeholder="usuario@ejemplo.com"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Si proporcionas un email, la carpeta se compartirá automáticamente
+                        </p>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Para Entrenador: Selector de tipo + campos correspondientes */}
+                  {selectedParentFolder.tipo_extension === 'entrenador' && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Tipo de carpeta
+                        </label>
+                        <select
+                          value={folderType}
+                          onChange={(e) => setFolderType(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                        >
+                          <option value="Alumno">Alumno</option>
+                          <option value="Normal">Normal</option>
+                        </select>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Alumno: registro individual | Normal: registro de grupo
+                        </p>
+                      </div>
+
+                      {folderType === 'Alumno' ? (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Email del alumno *
+                          </label>
+                          <input
+                            type="email"
+                            value={newFolderName}
+                            onChange={(e) => setNewFolderName(e.target.value)}
+                            placeholder="alumno@ejemplo.com"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            El email será usado como nombre de carpeta y se compartirá automáticamente
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Nombre del grupo *
+                            </label>
+                            <input
+                              type="text"
+                              value={newFolderName}
+                              onChange={(e) => setNewFolderName(e.target.value)}
+                              placeholder="Nombre del grupo de entrenamiento"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              Nombre que tendrá la carpeta del grupo
+                            </p>
+                          </div>
+                          
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Email para compartir (opcional)
+                            </label>
+                            <input
+                              type="email"
+                              value={newFolderEmail}
+                              onChange={(e) => setNewFolderEmail(e.target.value)}
+                              placeholder="entrenador@ejemplo.com"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              Si proporcionas un email, la carpeta se compartirá automáticamente
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* Fallback para cuando no hay carpeta padre seleccionada */}
+              {!selectedParentFolder && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Email del cliente
+                  </label>
+                  <input
+                    type="email"
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    placeholder="cliente@ejemplo.com"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    El email será usado como nombre de carpeta y se compartirá automáticamente
+                  </p>
+                </div>
+              )}
             </div>
             
             <div className="flex space-x-3 mt-6">
@@ -976,7 +1262,8 @@ const Folders = () => {
                 onClick={() => {
                   setShowCreateModal(false)
                   setNewFolderName('')
-          
+                  setNewFolderEmail('')
+                  setFolderType('Alumno')
                 }}
                 className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                 disabled={creating}
@@ -985,7 +1272,7 @@ const Folders = () => {
               </button>
               <button
                 onClick={handleCreateFolder}
-                disabled={creating || !newFolderName.trim() || !isValidEmail(newFolderName)}
+                disabled={creating || !newFolderName.trim() || (selectedParentFolder && selectedParentFolder.tipo_extension === 'entrenador' && folderType === 'Alumno' && !isValidEmail(newFolderName)) || (!selectedParentFolder && !isValidEmail(newFolderName))}
                 className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {creating ? 'Creando...' : 'Crear Carpeta'}

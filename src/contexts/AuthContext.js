@@ -201,13 +201,12 @@ export const AuthProvider = ({ children }) => {
           return { error: profileError }
         }
 
-        // Crear/actualizar credenciales del usuario con WhatsApp
+        // Crear/actualizar credenciales del usuario
         try {
           const { error: credentialsError } = await db.userCredentials.upsert({
             user_id: authData.user.id,
             email: email,
             telegram_chat_id: userData.telegram_id || null,
-            wssp: userData.wssp || null,
             updated_at: new Date().toISOString()
           })
           if (credentialsError) {
