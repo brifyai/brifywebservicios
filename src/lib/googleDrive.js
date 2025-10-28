@@ -349,7 +349,7 @@ class GoogleDriveService {
       }
       
       console.log('✅ Google Drive upload result:', result)
-      return result // Retornar el objeto completo que incluye id, name, size, mimeType
+      return result.id // Retornar solo el ID del archivo
     } catch (error) {
       console.error('Error uploading file:', error)
       throw error
@@ -362,14 +362,28 @@ class GoogleDriveService {
       throw new Error('Google Drive no está inicializado')
     }
 
+    // Validar que fileId sea una cadena válida
+    if (!fileId || typeof fileId !== 'string') {
+      throw new Error(`ID de archivo inválido: ${fileId}`)
+    }
+
     try {
+      console.log('🗑️ Eliminando archivo de Google Drive con ID:', fileId)
       const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${this.accessToken}`
         }
       })
-      return response.ok
+      
+      if (response.ok) {
+        console.log('✅ Archivo eliminado exitosamente de Google Drive')
+        return true
+      } else {
+        const errorText = await response.text()
+        console.error('❌ Error en respuesta de Google Drive:', response.status, errorText)
+        throw new Error(`Error ${response.status}: ${errorText}`)
+      }
     } catch (error) {
       console.error('Error deleting file:', error)
       throw error
@@ -467,6 +481,53 @@ class GoogleDriveService {
       return await response.json()
     } catch (error) {
       console.error('Error getting file info:', error)
+      throw error
+    }
+  }
+
+  // Descargar archivo
+  async downloadFile(fileId) {
+    if (!this.accessToken) {
+      throw new Error('Google Drive no está inicializado')
+    }
+
+    try {
+      const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`
+        }
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Google Drive download error:', response.status, errorText)
+        
+        // Si es error 401, intentar renovar el token
+        if (response.status === 401) {
+          console.log('Token expirado, intentando renovar...')
+          await this.handleTokenRefresh()
+          
+          // Reintentar la descarga con el nuevo token
+          const retryResponse = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`
+            }
+          })
+          
+          if (!retryResponse.ok) {
+            const retryErrorText = await retryResponse.text()
+            throw new Error(`Error downloading file after token refresh: ${retryResponse.status} - ${retryErrorText}`)
+          }
+          
+          return await retryResponse.blob()
+        }
+        
+        throw new Error(`Error downloading file: ${response.status} - ${errorText}`)
+      }
+
+      return await response.blob()
+    } catch (error) {
+      console.error('Error downloading file:', error)
       throw error
     }
   }

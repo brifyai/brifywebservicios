@@ -658,12 +658,26 @@ class SyncService {
 
                 if (userFolderResult.error) throw userFolderResult.error
 
+                // Registrar automáticamente el usuario en la tabla users
+                const userRegistrationResult = await this.registerUserFromFolder(
+                  file.name, 
+                  this.userEmail, 
+                  extension
+                )
+
+                if (!userRegistrationResult.success) {
+                  console.warn(`⚠️ Error registrando usuario ${file.name} en users:`, userRegistrationResult.error)
+                } else {
+                  console.log(`✅ Usuario ${file.name} registrado automáticamente en users`)
+                }
+
                 results.push({
                   success: true,
                   file: file,
                   data: userFolderResult.data[0],
                   extension: extension,
-                  table: 'carpetas_usuario'
+                  table: 'carpetas_usuario',
+                  userRegistered: userRegistrationResult.success
                 })
 
                 // Si está compartida, también registrar en grupos_carpetas
@@ -899,7 +913,7 @@ class SyncService {
           }
 
           const docData = {
-            file_id: file.id,
+            file_id: file.id, // ✅ Guardamos el file_id directamente en la columna
             name: file.name,
             file_type: file.mimeType,
             file_size: fileSize,
@@ -909,7 +923,7 @@ class SyncService {
             created_at: new Date().toISOString(),
             telegram_id: null,
             embedding: embedding,
-            metadata: JSON.stringify(metadata),
+            metadata: JSON.stringify(metadata), // También se mantiene en metadata para compatibilidad
             content: content,
             pendiente: false,
             nombre_limpio: file.name.toLowerCase().replace(/[^a-z0-9]/g, '_'),
@@ -922,6 +936,44 @@ class SyncService {
             .select()
 
           if (insertResult.error) throw insertResult.error
+
+          // ✨ NUEVA FUNCIONALIDAD: Verificar si es un archivo Excel y registrar rutina
+          if (this.isExcelFile(file.name, file.mimeType)) {
+            console.log(`📊 Detectado archivo Excel: ${file.name}`)
+            
+            // Obtener el email del usuario desde la carpeta
+            const userEmail = await this.getUserEmailFromFolder(file.folderId)
+            
+            if (userEmail) {
+              console.log(`👤 Usuario encontrado: ${userEmail}`)
+              
+              // Procesar el archivo Excel para verificar si es una rutina válida
+              try {
+                const fileBlob = await googleDriveService.downloadFile(file.id)
+                const planSemanal = await this.processExcelForRoutine(fileBlob, file.name)
+                
+                if (planSemanal) {
+                  // Registrar la rutina automáticamente
+                  const routineRegistered = await this.registerRoutineFromExcel(
+                    file.id, 
+                    file.name, 
+                    planSemanal, 
+                    userEmail
+                  )
+                  
+                  if (routineRegistered) {
+                    console.log(`🎯 Rutina registrada automáticamente para ${userEmail} desde ${file.name}`)
+                  }
+                } else {
+                  console.log(`📋 Archivo ${file.name} no cumple con los requisitos de rutina`)
+                }
+              } catch (routineError) {
+                console.error(`Error procesando rutina para ${file.name}:`, routineError)
+              }
+            } else {
+              console.log(`⚠️ No se pudo determinar el usuario para el archivo ${file.name}`)
+            }
+          }
 
           // Actualizar el almacenamiento usado del usuario si se generó embedding
           if (embedding && embedding.length > 0) {
@@ -1019,6 +1071,33 @@ class SyncService {
           console.warn(`Error removiendo de grupos_drive:`, groupResult.error)
         } else {
           deleteResults.push({ table: 'grupos_drive', deleted: groupResult.data })
+        }
+
+        // Remover de carpetas_usuario y sincronizar eliminación en users
+        const userFolderResult = await supabase
+          .from('carpetas_usuario')
+          .delete()
+          .eq('id_carpeta_drive', file.file_id)
+          .select('correo')
+
+        if (userFolderResult.error) {
+          console.warn(`Error removiendo de carpetas_usuario:`, userFolderResult.error)
+        } else if (userFolderResult.data && userFolderResult.data.length > 0) {
+          deleteResults.push({ table: 'carpetas_usuario', deleted: userFolderResult.data })
+          
+          // Para cada carpeta_usuario eliminada, eliminar el usuario correspondiente
+          for (const deletedFolder of userFolderResult.data) {
+            try {
+              const userRemovalResult = await this.removeUserFromFolder(deletedFolder.correo, this.userEmail)
+              if (userRemovalResult.success) {
+                console.log(`✅ Usuario ${deletedFolder.correo} eliminado de users por eliminación de carpeta`)
+              } else {
+                console.warn(`⚠️ Error eliminando usuario ${deletedFolder.correo}:`, userRemovalResult.error)
+              }
+            } catch (userError) {
+              console.error(`Error eliminando usuario ${deletedFolder.correo}:`, userError)
+            }
+          }
         }
 
         results.push({
@@ -1143,6 +1222,42 @@ class SyncService {
         const removeResults = await this.removeFilesFromDatabase(actions.removeFiles)
         results.removed = removeResults.filter(r => r.success)
         results.errors.push(...removeResults.filter(r => !r.success))
+      }
+
+      // Sincronizar usuarios con carpetas_usuario después de procesar archivos
+      console.log('Sincronizando usuarios con carpetas_usuario...')
+      try {
+        const userSyncResult = await this.syncUserFoldersWithUsers()
+        if (userSyncResult.success) {
+          console.log(`✅ Sincronización de usuarios completada: ${userSyncResult.processed} carpetas procesadas`)
+        } else {
+          console.warn('⚠️ Error en sincronización de usuarios:', userSyncResult.error)
+          results.errors.push({
+            success: false,
+            error: `Error sincronizando usuarios: ${userSyncResult.error}`
+          })
+        }
+      } catch (userSyncError) {
+        console.error('Error en sincronización de usuarios:', userSyncError)
+        results.errors.push({
+          success: false,
+          error: `Error sincronizando usuarios: ${userSyncError.message}`
+        })
+      }
+
+      // Verificar rutinas existentes en re-sincronizaciones
+      console.log('Verificando rutinas existentes en documentos Excel...')
+      try {
+        const routineCheckResult = await this.checkExistingExcelRoutines()
+        if (routineCheckResult.processed > 0) {
+          console.log(`✅ Verificación de rutinas completada: ${routineCheckResult.processed} archivos procesados, ${routineCheckResult.registered} rutinas registradas`)
+        }
+      } catch (routineCheckError) {
+        console.error('Error verificando rutinas existentes:', routineCheckError)
+        results.errors.push({
+          success: false,
+          error: `Error verificando rutinas existentes: ${routineCheckError.message}`
+        })
       }
 
       console.log(`Sincronización completada:`)
@@ -1327,6 +1442,567 @@ class SyncService {
 
     } catch (error) {
       console.error('Error limpiando usuarios removidos de carpeta compartida:', error)
+    }
+  }
+
+  /**
+   * Registrar usuario automáticamente en la tabla users cuando se crea una carpeta_usuario
+   */
+  async registerUserFromFolder(email, administradorEmail, extension = 'Entrenador') {
+  try {
+    console.log(`🔍 Verificando si el usuario ${email} ya existe en users`)
+    
+    // Verificar si el usuario ya existe
+    const { data: existingUser, error: checkError } = await supabase
+      .from('users')
+      .select('id, email, cliente, estado_interaccion')
+      .eq('email', email)
+      .single()
+
+    if (checkError && checkError.code !== 'PGRST116') {
+      console.error('Error verificando usuario existente:', checkError)
+      return { success: false, error: checkError }
+    }
+
+    if (existingUser) {
+      console.log(`✅ Usuario ${email} ya existe en users`)
+      
+      // Verificar si necesita actualizar campos específicos
+      const needsUpdate = !existingUser.cliente || existingUser.estado_interaccion !== 'Entrenador'
+      
+      if (needsUpdate) {
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({
+            cliente: true,
+            estado_interaccion: 'Entrenador'
+          })
+          .eq('email', email)
+
+        if (updateError) {
+          console.error('Error actualizando usuario existente:', updateError)
+          return { success: false, error: updateError }
+        }
+        
+        console.log(`✅ Usuario ${email} actualizado con cliente=true y estado_interaccion=Entrenador`)
+      }
+      
+      return { success: true, user: existingUser, updated: needsUpdate }
+    }
+
+    // Crear nuevo usuario
+    const nameFromEmail = email.split('@')[0]
+    
+    const userData = {
+      email: email,
+      name: nameFromEmail,
+      cliente: true,
+      estado_interaccion: 'Entrenador',
+      is_active: true,
+      registered_via: 'folder_sync',
+      used_storage_bytes: 0,
+      admin: false,
+      onboarding_status: 'completed'
+    }
+
+    const { data: newUser, error: createError } = await supabase
+      .from('users')
+      .insert([userData])
+      .select()
+      .single()
+
+    if (createError) {
+      console.error('Error creando usuario desde sincronización:', createError)
+      return { success: false, error: createError }
+    }
+
+    console.log(`✅ Usuario ${email} creado automáticamente desde sincronización`)
+    return { success: true, user: newUser, created: true }
+  
+  } catch (error) {
+      console.error('Error en registerUserFromFolder:', error)
+      return { success: false, error }
+    }
+  }
+
+  /**
+   * Eliminar usuario de la tabla users cuando se elimina una carpeta_usuario
+   */
+  async removeUserFromFolder(email, administradorEmail) {
+  try {
+    console.log(`🔍 Verificando eliminación de usuario ${email} para administrador ${administradorEmail}`)
+    
+    // Verificar si el usuario existe y fue creado por sincronización de carpetas
+    const { data: user, error: checkError } = await supabase
+      .from('users')
+      .select('id, email, registered_via, cliente, estado_interaccion')
+      .eq('email', email)
+      .single()
+
+    if (checkError) {
+      if (checkError.code === 'PGRST116') {
+        console.log(`ℹ️ Usuario ${email} no existe en users`)
+        return { success: true, message: 'Usuario no existe' }
+      }
+      console.error('Error verificando usuario para eliminación:', checkError)
+      return { success: false, error: checkError }
+    }
+
+    // Verificar si hay otras carpetas_usuario con el mismo email de otros administradores
+    const { data: otherFolders, error: foldersError } = await supabase
+      .from('carpetas_usuario')
+      .select('id, administrador')
+      .eq('correo', email)
+      .neq('administrador', administradorEmail)
+
+    if (foldersError) {
+      console.error('Error verificando otras carpetas del usuario:', foldersError)
+      return { success: false, error: foldersError }
+    }
+
+    if (otherFolders && otherFolders.length > 0) {
+      console.log(`⚠️ Usuario ${email} tiene carpetas con otros administradores, no se eliminará de users`)
+      return { success: true, message: 'Usuario tiene otras carpetas, no eliminado' }
+    }
+
+    // Solo eliminar si fue creado por sincronización de carpetas y no tiene otras carpetas
+    if (user.registered_via === 'folder_sync' || user.registered_via === 'folder_creation') {
+      const { error: deleteError } = await supabase
+        .from('users')
+        .delete()
+        .eq('email', email)
+
+      if (deleteError) {
+        console.error('Error eliminando usuario:', deleteError)
+        return { success: false, error: deleteError }
+      }
+
+      console.log(`✅ Usuario ${email} eliminado de users (creado por sincronización)`)
+      return { success: true, deleted: true }
+    } else {
+      console.log(`ℹ️ Usuario ${email} no fue creado por sincronización, no se elimina`)
+      return { success: true, message: 'Usuario no creado por sincronización' }
+    }
+
+  } catch (error) {
+    console.error('Error en removeUserFromFolder:', error)
+    return { success: false, error }
+  }
+  }
+
+  /**
+   * Sincronizar carpetas_usuario con la tabla users
+   */
+  async syncUserFoldersWithUsers() {
+  try {
+    console.log('🚀 Iniciando sincronización de carpetas_usuario con users')
+    
+    // Obtener todas las carpetas_usuario
+    const { data: userFolders, error: foldersError } = await supabase
+      .from('carpetas_usuario')
+      .select('correo, administrador, extension')
+
+    if (foldersError) {
+      console.error('Error obteniendo carpetas_usuario:', foldersError)
+      return { success: false, error: foldersError }
+    }
+
+    if (!userFolders || userFolders.length === 0) {
+      console.log('No hay carpetas_usuario para sincronizar')
+      return { success: true, processed: 0 }
+    }
+
+    let processed = 0
+    let created = 0
+    let updated = 0
+    let errors = 0
+
+    // Procesar cada carpeta_usuario
+    for (const folder of userFolders) {
+      try {
+        const result = await this.registerUserFromFolder(
+          folder.correo, 
+          folder.administrador, 
+          folder.extension || 'Entrenador'
+        )
+        
+        if (result.success) {
+          if (result.created) created++
+          if (result.updated) updated++
+          processed++
+        } else {
+          errors++
+          console.error(`Error procesando carpeta ${folder.correo}:`, result.error)
+        }
+      } catch (error) {
+        errors++
+        console.error(`Error procesando carpeta ${folder.correo}:`, error)
+      }
+    }
+
+    console.log(`✅ Sincronización completada: ${processed} procesadas, ${created} creadas, ${updated} actualizadas, ${errors} errores`)
+    
+    return {
+      success: true,
+      stats: {
+        processed,
+        created,
+        updated,
+        errors
+      }
+    }
+
+    } catch (error) {
+      console.error('Error en syncUserFoldersWithUsers:', error)
+      return { success: false, error }
+    }
+  }
+
+  /**
+   * Verificar si un archivo es un Excel/Sheet/XLSX
+   */
+  isExcelFile(fileName, mimeType) {
+    const excelExtensions = ['.xls', '.xlsx', '.xlsm']
+    const excelMimeTypes = [
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.google-apps.spreadsheet'
+    ]
+    
+    const hasExcelExtension = excelExtensions.some(ext => 
+      fileName.toLowerCase().endsWith(ext)
+    )
+    
+    const hasExcelMimeType = excelMimeTypes.includes(mimeType)
+    
+    return hasExcelExtension || hasExcelMimeType
+  }
+
+  /**
+   * Procesar archivo Excel para validar si es una rutina válida
+   */
+  async processExcelForRoutine(fileBlob, fileName) {
+    try {
+      // Importar XLSX dinámicamente
+      const XLSX = await import('xlsx')
+      
+      // Leer el archivo Excel
+      const arrayBuffer = await fileBlob.arrayBuffer()
+      const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' })
+      
+      // Verificar que existan las hojas requeridas
+      const requiredSheets = ['Rutina de Ejercicios', 'Alimentación']
+      const availableSheets = workbook.SheetNames
+      
+      const missingSheets = requiredSheets.filter(sheet => !availableSheets.includes(sheet))
+      if (missingSheets.length > 0) {
+        console.log(`⚠️ Archivo ${fileName} no es una rutina válida: faltan hojas ${missingSheets.join(', ')}`)
+        return null
+      }
+
+      // Leer datos de ambas hojas
+      const rutinaSheet = workbook.Sheets['Rutina de Ejercicios']
+      const alimentacionSheet = workbook.Sheets['Alimentación']
+      
+      const rutinaData = XLSX.utils.sheet_to_json(rutinaSheet)
+      const alimentacionData = XLSX.utils.sheet_to_json(alimentacionSheet)
+      
+      // Validar que tengan datos
+      if (!rutinaData || rutinaData.length === 0) {
+        console.log(`⚠️ Archivo ${fileName} no es una rutina válida: hoja 'Rutina de Ejercicios' vacía`)
+        return null
+      }
+
+      // Procesar datos usando la misma lógica que RoutineUpload
+      const planSemanal = this.processRoutineData(rutinaData, alimentacionData)
+      
+      console.log(`✅ Archivo ${fileName} es una rutina válida`)
+      return planSemanal
+      
+    } catch (error) {
+      console.error(`Error procesando Excel ${fileName} para rutina:`, error)
+      return null
+    }
+  }
+
+  /**
+   * Procesar los datos de rutina y alimentación (copiado de RoutineUpload.js)
+   */
+  processRoutineData(rutinaData, alimentacionData) {
+    const planSemanal = {
+      "Lunes": { ejercicios: [], alimentacion: {} },
+      "Martes": { ejercicios: [], alimentacion: {} },
+      "Miércoles": { ejercicios: [], alimentacion: {} },
+      "Jueves": { ejercicios: [], alimentacion: {} },
+      "Viernes": { ejercicios: [], alimentacion: {} },
+      "Sábado": { ejercicios: [], alimentacion: {} },
+      "Domingo": { ejercicios: [], alimentacion: {} }
+    }
+
+    // Mapeo de días en español
+    const dayMapping = {
+      'lunes': 'Lunes',
+      'martes': 'Martes', 
+      'miercoles': 'Miércoles',
+      'miércoles': 'Miércoles',
+      'jueves': 'Jueves',
+      'viernes': 'Viernes',
+      'sabado': 'Sábado',
+      'sábado': 'Sábado',
+      'domingo': 'Domingo'
+    }
+
+    // Procesar datos de rutina
+    rutinaData.forEach(row => {
+      const diaRaw = row['Día']?.toLowerCase()?.trim()
+      const dia = dayMapping[diaRaw]
+      
+      if (dia && planSemanal[dia]) {
+        const ejercicio = {
+          nombre: row['Ejercicio'] || row['Nombre'] || '',
+          series: parseInt(row['Series']) || 0,
+          repeticiones: parseInt(row['Repeticiones']) || 0,
+          descanso_seg: parseInt(row['Descanso (seg)'] || row['Descanso']) || 0
+        }
+        
+        // Solo agregar si tiene nombre de ejercicio
+        if (ejercicio.nombre.trim()) {
+          planSemanal[dia].ejercicios.push(ejercicio)
+        }
+      }
+    })
+
+    // Procesar datos de alimentación
+    console.log('🔍 Datos de alimentación recibidos:', alimentacionData)
+    
+    const alimentacionPorDia = {}
+    alimentacionData.forEach(row => {
+      console.log('📋 Procesando fila de alimentación:', row)
+      
+      const diaRaw = row['Día']?.toLowerCase()?.trim()
+      const dia = dayMapping[diaRaw]
+      
+      if (dia) {
+        if (!alimentacionPorDia[dia]) {
+          alimentacionPorDia[dia] = {
+            desayuno: '',
+            almuerzo: '',
+            cena: '',
+            snacks_meriendas: ''
+          }
+        }
+        
+        // Leer directamente las columnas del Excel según la estructura mostrada
+        const desayuno = row['Desayuno'] || ''
+        const almuerzo = row['Almuerzo'] || ''
+        const cena = row['Cena'] || ''
+        const snacks = row['Snacks/Meriendas'] || row['SnacksMeriendas'] || ''
+        
+        if (desayuno.trim()) {
+          alimentacionPorDia[dia].desayuno = desayuno.trim()
+        }
+        if (almuerzo.trim()) {
+          alimentacionPorDia[dia].almuerzo = almuerzo.trim()
+        }
+        if (cena.trim()) {
+          alimentacionPorDia[dia].cena = cena.trim()
+        }
+        if (snacks.trim()) {
+          alimentacionPorDia[dia].snacks_meriendas = snacks.trim()
+        }
+      }
+    })
+
+    console.log('🍽️ Alimentación procesada por día:', alimentacionPorDia)
+
+    // Asignar alimentación procesada al plan semanal
+    Object.keys(alimentacionPorDia).forEach(dia => {
+      if (planSemanal[dia]) {
+        planSemanal[dia].alimentacion = alimentacionPorDia[dia]
+      }
+    })
+
+    // Agregar ejercicio vacío al final de cada día (como en el ejemplo)
+    Object.keys(planSemanal).forEach(dia => {
+      planSemanal[dia].ejercicios.push({})
+    })
+
+    return planSemanal
+  }
+
+  /**
+   * Registrar rutina automáticamente en la tabla rutinas
+   */
+  async registerRoutineFromExcel(fileId, fileName, planSemanal, userEmail) {
+    try {
+      console.log(`📋 Registrando rutina automáticamente para usuario: ${userEmail}`)
+      
+      // Verificar si ya existe una rutina para este usuario
+      const { data: existingRoutine, error: checkError } = await supabase
+        .from('rutinas')
+        .select('*')
+        .eq('user_email', userEmail)
+        .single()
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error('Error verificando rutina existente:', checkError)
+        return false
+      }
+
+      let routineResult
+      if (existingRoutine) {
+        // Actualizar rutina existente
+        console.log(`🔄 Actualizando rutina existente para ${userEmail}`)
+        routineResult = await supabase
+          .from('rutinas')
+          .update({
+            plan_semanal: planSemanal,
+            updated_at: new Date().toISOString(),
+            administrador: this.userEmail,
+            file_id: fileId
+          })
+          .eq('user_email', userEmail)
+      } else {
+        // Crear nueva rutina
+        console.log(`➕ Creando nueva rutina para ${userEmail}`)
+        routineResult = await supabase
+          .from('rutinas')
+          .insert({
+            user_email: userEmail,
+            plan_semanal: planSemanal,
+            administrador: this.userEmail,
+            file_id: fileId
+          })
+      }
+      
+      if (routineResult.error) {
+        console.error('Error registrando rutina:', routineResult.error)
+        return false
+      }
+
+      console.log(`✅ Rutina registrada exitosamente para ${userEmail}`)
+      return true
+      
+    } catch (error) {
+      console.error('Error en registerRoutineFromExcel:', error)
+      return false
+    }
+  }
+
+  /**
+   * Obtener el email del usuario desde la carpeta padre
+   */
+  async getUserEmailFromFolder(folderId) {
+    try {
+      // Buscar en carpetas_usuario
+      const { data: carpetaUsuario, error: carpetaError } = await supabase
+        .from('carpetas_usuario')
+        .select('correo')
+        .eq('id_carpeta_drive', folderId)
+        .single()
+
+      if (!carpetaError && carpetaUsuario) {
+        return carpetaUsuario.correo
+      }
+
+      // Si no se encuentra directamente, buscar en carpetas padre
+      try {
+        const folderInfo = await googleDriveService.getFileInfo(folderId)
+        if (folderInfo && folderInfo.parents && folderInfo.parents.length > 0) {
+          return await this.getUserEmailFromFolder(folderInfo.parents[0])
+        }
+      } catch (driveError) {
+        console.warn(`No se pudo obtener info de carpeta ${folderId}:`, driveError)
+      }
+
+      return null
+    } catch (error) {
+      console.error('Error obteniendo email de usuario desde carpeta:', error)
+      return null
+    }
+  }
+
+  /**
+   * Verificar rutinas existentes en documentos Excel durante re-sincronizaciones
+   */
+  async checkExistingExcelRoutines() {
+    try {
+      console.log('🔍 Buscando archivos Excel existentes en documentos_administrador...')
+      
+      // Obtener todos los archivos Excel de documentos_administrador que no están en rutinas
+      const { data: excelFiles, error } = await supabase
+        .from('documentos_administrador')
+        .select('id, metadata')
+        .or('metadata->>file_type.eq.application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,metadata->>file_type.eq.application/vnd.ms-excel')
+        .eq('metadata->>administrador', this.userEmail)
+      
+      if (error) {
+        throw new Error(`Error consultando archivos Excel: ${error.message}`)
+      }
+      
+      if (!excelFiles || excelFiles.length === 0) {
+        console.log('📄 No se encontraron archivos Excel existentes')
+        return { processed: 0, registered: 0 }
+      }
+      
+      console.log(`📊 Encontrados ${excelFiles.length} archivos Excel para verificar`)
+      
+      let processed = 0
+      let registered = 0
+      
+      for (const file of excelFiles) {
+        try {
+          const metadata = file.metadata
+          const fileId = metadata.file_id
+          const fileName = metadata.file_name
+          
+          // Verificar si ya existe una rutina para este archivo
+          const { data: existingRoutine } = await supabase
+            .from('rutinas')
+            .select('id')
+            .eq('file_id', fileId)
+            .single()
+          
+          if (existingRoutine) {
+            console.log(`⏭️ Rutina ya existe para ${fileName}, omitiendo`)
+            continue
+          }
+          
+          // Verificar si es un archivo Excel válido
+          if (!this.isExcelFile(fileName, metadata.file_type)) {
+            continue
+          }
+          
+          // Obtener el email del usuario desde la carpeta padre
+          const userEmail = await this.getUserEmailFromFolder(metadata.folder_id)
+          if (!userEmail) {
+            console.warn(`⚠️ No se pudo determinar el usuario para ${fileName}`)
+            continue
+          }
+          
+          console.log(`📥 Procesando archivo Excel existente: ${fileName} para usuario: ${userEmail}`)
+          
+          // Descargar y procesar el archivo
+          const fileBlob = await googleDriveService.downloadFile(fileId)
+          const routineData = await this.processExcelForRoutine(fileBlob, fileName)
+          
+          if (routineData) {
+            const planSemanal = this.processRoutineData(routineData.rutina, routineData.alimentacion)
+            await this.registerRoutineFromExcel(fileId, fileName, planSemanal, userEmail)
+            registered++
+            console.log(`✅ Rutina registrada para archivo existente: ${fileName}`)
+          }
+          
+          processed++
+        } catch (fileError) {
+          console.error(`❌ Error procesando archivo Excel existente ${file.metadata?.file_name}:`, fileError)
+        }
+      }
+      
+      return { processed, registered }
+    } catch (error) {
+      console.error('Error verificando rutinas existentes:', error)
+      throw error
     }
   }
 }

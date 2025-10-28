@@ -130,8 +130,12 @@ const RoutineUpload = ({ onUploadComplete, onClose }) => {
     })
 
     // Procesar datos de alimentación
+    console.log('🔍 Datos de alimentación recibidos:', alimentacionData)
+    
     const alimentacionPorDia = {}
     alimentacionData.forEach(row => {
+      console.log('📋 Procesando fila de alimentación:', row)
+      
       const diaRaw = row['Día']?.toLowerCase()?.trim()
       const dia = dayMapping[diaRaw]
       
@@ -145,30 +149,28 @@ const RoutineUpload = ({ onUploadComplete, onClose }) => {
           }
         }
         
-        const tipoComida = row['Tipo de Comida']?.toLowerCase()?.trim()
-        const alimento = row['Alimento'] || row['Descripción'] || ''
+        // Leer directamente las columnas del Excel según la estructura mostrada
+        const desayuno = row['Desayuno'] || ''
+        const almuerzo = row['Almuerzo'] || ''
+        const cena = row['Cena'] || ''
+        const snacks = row['Snacks/Meriendas'] || row['SnacksMeriendas'] || ''
         
-        if (alimento.trim()) {
-          switch (tipoComida) {
-            case 'desayuno':
-              alimentacionPorDia[dia].desayuno = alimento
-              break
-            case 'almuerzo':
-              alimentacionPorDia[dia].almuerzo = alimento
-              break
-            case 'cena':
-              alimentacionPorDia[dia].cena = alimento
-              break
-            case 'snack':
-            case 'merienda':
-            case 'snacks':
-            case 'meriendas':
-              alimentacionPorDia[dia].snacks_meriendas = alimento
-              break
-          }
+        if (desayuno.trim()) {
+          alimentacionPorDia[dia].desayuno = desayuno.trim()
+        }
+        if (almuerzo.trim()) {
+          alimentacionPorDia[dia].almuerzo = almuerzo.trim()
+        }
+        if (cena.trim()) {
+          alimentacionPorDia[dia].cena = cena.trim()
+        }
+        if (snacks.trim()) {
+          alimentacionPorDia[dia].snacks_meriendas = snacks.trim()
         }
       }
     })
+
+    console.log('🍽️ Alimentación procesada por día:', alimentacionPorDia)
 
     // Asignar alimentación procesada al plan semanal
     Object.keys(alimentacionPorDia).forEach(dia => {
@@ -320,6 +322,7 @@ const RoutineUpload = ({ onUploadComplete, onClose }) => {
           name: selectedFile.name,
           file_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           file_size: selectedFile.size,
+          file_id: googleFileId, // Agregar file_id como campo directo
           content: `Rutina de entrenamiento para ${folderName}`,
           metadata: {
             source: 'routine_upload',
