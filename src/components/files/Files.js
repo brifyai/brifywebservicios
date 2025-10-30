@@ -749,6 +749,42 @@ const Files = () => {
     }
     
     try {
+      const fileName = file.metadata?.name || file.metadata?.file_name || ''
+      const fileType = file.metadata?.file_type || ''
+      
+      // Verificar si es un archivo Excel y está registrado en rutinas
+      const isExcelFile = fileType?.includes('spreadsheet') || fileType?.includes('excel') || 
+                         fileName.toLowerCase().match(/\.(xlsx?|xls)$/)
+      
+      if (isExcelFile && file.google_file_id) {
+        console.log('🔍 Verificando si el archivo Excel está registrado en rutinas...')
+        
+        // Buscar en la tabla rutinas si este archivo está registrado
+        const { data: routineData, error: routineCheckError } = await supabase
+          .from('rutinas')
+          .select('id, nombre_archivo')
+          .eq('file_id', file.google_file_id)
+        
+        if (routineCheckError) {
+          console.error('Error verificando rutinas:', routineCheckError)
+        } else if (routineData && routineData.length > 0) {
+          console.log('📋 Archivo Excel encontrado en rutinas, eliminando registros...')
+          
+          // Eliminar de la tabla rutinas
+          const { error: routineDeleteError } = await supabase
+            .from('rutinas')
+            .delete()
+            .eq('file_id', file.google_file_id)
+          
+          if (routineDeleteError) {
+            console.error('Error eliminando de rutinas:', routineDeleteError)
+            toast.error('Error eliminando las rutinas asociadas al archivo')
+          } else {
+            console.log('✅ Rutinas eliminadas exitosamente')
+          }
+        }
+      }
+      
       // Eliminar de Google Drive si existe
       if (file.google_file_id && userProfile?.google_refresh_token) {
         try {
@@ -762,13 +798,33 @@ const Files = () => {
         }
       }
       
-      // Eliminar de documentos_usuario_entrenador
-      const { error: userTrainerDeleteError } = await supabase
-        .from('documentos_usuario_entrenador')
-        .delete()
-        .eq('id', file.id)
+      // Eliminar de documentos_administrador (archivos de admin)
+      if (file.metadata?.source === 'documentos_administrador' || file.type === 'admin') {
+        const { error: adminDeleteError } = await supabase
+          .from('documentos_administrador')
+          .delete()
+          .eq('id', file.id)
+        
+        if (adminDeleteError) {
+          console.error('Error eliminando de documentos_administrador:', adminDeleteError)
+          throw adminDeleteError
+        }
+        console.log('✅ Archivo eliminado de documentos_administrador')
+      }
       
-      if (userTrainerDeleteError) throw userTrainerDeleteError
+      // Eliminar de documentos_usuario_entrenador (archivos de usuario)
+      if (file.metadata?.source === 'documentos_usuario_entrenador' || file.type === 'user') {
+        const { error: userTrainerDeleteError } = await supabase
+          .from('documentos_usuario_entrenador')
+          .delete()
+          .eq('id', file.id)
+        
+        if (userTrainerDeleteError) {
+          console.error('Error eliminando de documentos_usuario_entrenador:', userTrainerDeleteError)
+          throw userTrainerDeleteError
+        }
+        console.log('✅ Archivo eliminado de documentos_usuario_entrenador')
+      }
       
       // También eliminar todos los chunks relacionados de documentos_entrenador
       if (file.google_file_id) {
@@ -780,6 +836,8 @@ const Files = () => {
         if (chunksDeleteError) {
           console.error('Error eliminando chunks de documentos_entrenador:', chunksDeleteError)
           // No lanzamos error para no interrumpir el flujo principal
+        } else {
+          console.log('✅ Chunks eliminados de documentos_entrenador')
         }
       }
       

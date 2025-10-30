@@ -32,6 +32,7 @@ const Folders = () => {
   const [availableSubFolders, setAvailableSubFolders] = useState([])
 
   const [searchTerm, setSearchTerm] = useState('')
+  const [selectedSubFolder, setSelectedSubFolder] = useState(null) // Para filtrar por subcarpeta
   const [ranEnsureOnce, setRanEnsureOnce] = useState(false)
 
   useEffect(() => {
@@ -124,7 +125,27 @@ const Folders = () => {
         return isAvailable
       })
       
-      console.log('✅ Subcarpetas disponibles finales:', availableSubFolders)
+      // Ordenar subcarpetas según un orden específico
+      const orderPriority = {
+        'brify': 1,
+        'abogados': 2,
+        'entrenador': 3,
+        'veterinarios': 4
+      }
+      
+      availableSubFolders.sort((a, b) => {
+        const priorityA = orderPriority[a.tipo_extension] || 999
+        const priorityB = orderPriority[b.tipo_extension] || 999
+        
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB
+        }
+        
+        // Si tienen la misma prioridad, ordenar alfabéticamente
+        return a.nombre_subcarpeta.localeCompare(b.nombre_subcarpeta)
+      })
+      
+      console.log('✅ Subcarpetas disponibles finales (ordenadas):', availableSubFolders)
       setAvailableSubFolders(availableSubFolders)
       
       // Seleccionar Brify por defecto si está disponible
@@ -159,11 +180,11 @@ const Folders = () => {
         console.warn('⚠️ Credenciales de Google Drive no disponibles; no se pueden crear subcarpetas')
         return
       }
-      const tokensOk = await googleDriveService.setTokens({
+      const tokensResult = await googleDriveService.setTokens({
         access_token: credentials.google_access_token,
         refresh_token: credentials.google_refresh_token
       })
-      if (!tokensOk) {
+      if (!tokensResult) {
         console.warn('⚠️ No se pudieron configurar tokens de Google Drive')
         return
       }
@@ -179,7 +200,7 @@ const Folders = () => {
       // Extensiones activas del usuario
       const { data: userExts, error: userExtsError } = await supabase
         .from('plan_extensiones')
-        .select(`*, extensiones (id, name, name_es, service_type)`) 
+        .select(`*, extensiones (id, name, name_es)`) 
         .eq('user_id', user.id)
       if (userExtsError) {
         console.error('❌ Error obteniendo extensiones del usuario:', userExtsError)
@@ -299,7 +320,8 @@ const Folders = () => {
           google_folder_id: folder.id_carpeta_drive,
           shared_email: folder.correo,
           type: 'user',
-          synced: true
+          synced: true,
+          extension: folder.extension // Incluir el campo extension para el filtrado
         }))
         
         // Cargar grupos drive
@@ -316,7 +338,8 @@ const Folders = () => {
           google_folder_id: folder.folder_id,
           shared_email: 'Grupo compartido',
           type: 'group',
-          synced: true
+          synced: true,
+          extension: folder.extension // Incluir el campo extension para el filtrado
         }))
         
         dbFolders = [...userFolders, ...groupFolders]
@@ -357,7 +380,8 @@ const Folders = () => {
           google_folder_id: folder.id_carpeta_drive,
           shared_email: folder.correo,
           type: 'user',
-          synced: true
+          synced: true,
+          extension: folder.extension // Incluir el campo extension para el filtrado
         }))
         
         const groupFolders = (groupsData || []).map(folder => ({
@@ -366,32 +390,44 @@ const Folders = () => {
           google_folder_id: folder.folder_id,
           shared_email: 'Grupo compartido',
           type: 'group',
-          synced: true
+          synced: true,
+          extension: folder.extension // Incluir el campo extension para el filtrado
         }))
         
-        dbFolders = [...adminFolders, ...userFolders, ...groupFolders]
+        // Cargar subcarpetas administrador disponibles
+        const subFoldersAdmin = availableSubFolders.map(subfolder => ({
+          ...subfolder,
+          folder_name: subfolder.nombre_subcarpeta,
+          google_folder_id: subfolder.id_drive_carpeta,
+          shared_email: 'Subcarpeta administrador',
+          type: 'sub_carpetas_administrador',
+          synced: true,
+          parent_folder_id: subfolder.id_drive_carpeta
+        }))
+        
+        dbFolders = [...adminFolders, ...subFoldersAdmin, ...userFolders, ...groupFolders]
       }
       
       // Si el usuario tiene Google Drive conectado, sincronizar con Drive
       if (userProfile?.google_refresh_token) {
         try {
-          const tokenSet = await googleDriveService.setTokens({
+          const tokenResult = await googleDriveService.setTokens({
             refresh_token: userProfile.google_refresh_token
           })
           
-          if (!tokenSet) {
+          if (!tokenResult) {
             console.error('Failed to set Google Drive tokens')
             setFolders(dbFolders)
             return
           }
           
           // Obtener carpetas de Google Drive
-          const driveFolders = await googleDriveService.listFiles(parentId, 'folder')
+          const driveFolders = await googleDriveService.listFiles(parentId, 100)
           
           // Combinar información de DB y Drive
           const combinedFolders = dbFolders.map(dbFolder => {
-            const driveFolder = (driveFolders && Array.isArray(driveFolders)) 
-              ? driveFolders.find(df => df.id === dbFolder.google_folder_id)
+            const driveFolder = (driveFolders && Array.isArray(driveFolders.files)) 
+              ? driveFolders.files.find(df => df.id === dbFolder.google_folder_id)
               : null
             return {
               ...dbFolder,
@@ -465,11 +501,11 @@ const Folders = () => {
       // Si tiene Google Drive conectado, crear la carpeta en Drive
       if (userProfile?.google_refresh_token) {
         try {
-          const tokenSet = await googleDriveService.setTokens({
+          const tokenResult = await googleDriveService.setTokens({
             refresh_token: userProfile.google_refresh_token
           })
           
-          if (!tokenSet) {
+          if (!tokenResult) {
             toast.error('Error inicializando Google Drive')
             setCreating(false)
             return
@@ -744,30 +780,109 @@ const Folders = () => {
   }
 
   const handleDeleteFolder = async (folder) => {
-    if (!window.confirm(`¿Estás seguro de que quieres eliminar la carpeta "${folder.name}"?`)) {
+    // Prevenir eliminación de subcarpetas del administrador
+    if (folder.type === 'sub_carpetas_administrador') {
+      toast.error('Las carpetas de administrador no se pueden eliminar')
       return
+    }
+
+    const folderName = folder.folder_name || folder.name || 'Sin nombre'
+    
+    // Verificar si la carpeta tiene archivos antes de eliminar
+    try {
+      const { data: files, error: filesError } = await supabase
+        .from('documentos_administrador')
+        .select('id, name')
+        .eq('carpeta_actual', folder.google_folder_id || folder.id_drive_carpeta)
+      
+      if (filesError) {
+        console.error('Error checking files:', filesError)
+      }
+      
+      let confirmMessage = `¿Estás seguro de que quieres eliminar la carpeta "${folderName}"?`
+      
+      if (files && files.length > 0) {
+        confirmMessage += `\n\nEsta carpeta contiene ${files.length} archivo(s). Al eliminar la carpeta, todos los archivos también serán eliminados permanentemente.`
+      }
+      
+      if (!window.confirm(confirmMessage)) {
+        return
+      }
+    } catch (error) {
+      console.error('Error checking files before deletion:', error)
+      if (!window.confirm(`¿Estás seguro de que quieres eliminar la carpeta "${folderName}"?`)) {
+        return
+      }
     }
     
     try {
+      // Eliminar archivos de la carpeta si existen
+      try {
+        const { error: deleteFilesError } = await supabase
+          .from('documentos_administrador')
+          .delete()
+          .eq('carpeta_actual', folder.google_folder_id || folder.id_drive_carpeta)
+        
+        if (deleteFilesError) {
+          console.error('Error deleting files from database:', deleteFilesError)
+        }
+      } catch (error) {
+        console.error('Error in file deletion process:', error)
+      }
+
       // Eliminar de Google Drive si existe
       if (folder.google_folder_id && userProfile?.google_refresh_token) {
         try {
-          await googleDriveService.setTokens({
+          const tokenResult = await googleDriveService.setTokens({
             refresh_token: userProfile.google_refresh_token
           })
-          await googleDriveService.deleteFile(folder.google_folder_id)
+          if (tokenResult) {
+            await googleDriveService.deleteFile(folder.google_folder_id)
+          }
         } catch (error) {
           console.error('Error deleting from Google Drive:', error)
         }
       }
       
-      // Eliminar de la base de datos
-      const { error } = currentFolder
-        ? await db.userFolders.delete(folder.id)
-        : await db.adminFolders.delete(folder.id)
+      // Eliminar de la base de datos según el tipo de carpeta
+      let deleteError = null
       
-      if (error) {
-        console.error('Error deleting folder from database:', error)
+      if (currentFolder) {
+        // Estamos en carpetas de usuario - eliminar de carpetas_usuario
+        const { error } = await supabase
+          .from('carpetas_usuario')
+          .delete()
+          .eq('id', folder.id)
+        deleteError = error
+      } else {
+        // Estamos en carpetas de administrador - eliminar de grupos_drive y grupos_carpetas
+        if (folder.type === 'group') {
+          // Eliminar de grupos_drive
+          const { error } = await supabase
+            .from('grupos_drive')
+            .delete()
+            .eq('id', folder.id)
+          deleteError = error
+          
+          // También eliminar de grupos_carpetas si existe
+          if (!deleteError) {
+            await supabase
+              .from('grupos_carpetas')
+              .delete()
+              .eq('grupo_id', folder.id)
+          }
+        } else {
+          // Para otros tipos, usar la tabla correspondiente
+          const { error } = await supabase
+            .from('carpetas_usuario')
+            .delete()
+            .eq('id', folder.id)
+          deleteError = error
+        }
+      }
+      
+      if (deleteError) {
+        console.error('Error deleting folder from database:', deleteError)
         toast.error('Error eliminando la carpeta')
         return
       }
@@ -811,18 +926,23 @@ const Folders = () => {
 
   const handleFolderClick = (folder) => {
     // Redirigir a la pestaña de archivos con la carpeta seleccionada
-    if (folder.type === 'user') {
+    const folderId = folder.google_folder_id || folder.id_drive_carpeta || folder.folder_id
+    const folderName = folder.folder_name || folder.name
+    
+    if (folderId) {
       // Navegar a la pestaña de archivos con la carpeta preseleccionada
       navigate('/files', { 
         state: { 
           selectedFolder: {
             ...folder,
-            id: folder.google_folder_id // Usar google_folder_id como id para el filtrado
+            id: folderId // Usar el ID correcto para el filtrado
           },
-          folderId: folder.google_folder_id,
-          folderName: folder.folder_name
+          folderId: folderId,
+          folderName: folderName
         } 
       })
+    } else {
+      toast.error('No se puede acceder a esta carpeta: ID no disponible')
     }
   }
 
@@ -855,10 +975,62 @@ const Folders = () => {
     return emailRegex.test(email)
   }
 
-  const filteredFolders = folders.filter(folder =>
-    folder.folder_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    folder.shared_email?.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  const filteredFolders = folders
+    .filter(folder => {
+      // Filtro por término de búsqueda
+      const matchesSearch = folder.folder_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        folder.shared_email?.toLowerCase().includes(searchTerm.toLowerCase())
+      
+      // Filtro por subcarpeta seleccionada - LÓGICA CORREGIDA CON CAMPO EXTENSION
+      let matchesSubFolder = true
+      
+      if (selectedSubFolder) {
+        // Si hay una subcarpeta seleccionada, solo mostrar:
+        // 1. La subcarpeta seleccionada misma
+        // 2. Las carpetas que tienen el mismo tipo_extension que la subcarpeta seleccionada
+        
+        if (folder.type === 'sub_carpetas_administrador') {
+          // Solo mostrar la subcarpeta seleccionada
+          matchesSubFolder = folder.id === selectedSubFolder.id
+        } else if (folder.type === 'user' || folder.type === 'group') {
+          // Para carpetas de usuario y grupos, usar el campo 'extension'
+          // que indica a qué subcarpeta pertenecen (brify, abogados, entrenador)
+          matchesSubFolder = folder.extension === selectedSubFolder.tipo_extension
+        } else {
+          // Para otros tipos de carpetas, no mostrar cuando hay filtro activo
+          matchesSubFolder = false
+        }
+      }
+      
+      // Debug del filtrado - logs más detallados
+      if (selectedSubFolder) {
+        console.log(`🔍 FILTRADO DEBUG:`)
+        console.log(`  - Carpeta: "${folder.folder_name}"`)
+        console.log(`  - Tipo: ${folder.type}`)
+        console.log(`  - extension: ${folder.extension}`)
+        console.log(`  - parent_folder_id: ${folder.parent_folder_id}`)
+        console.log(`  - google_folder_id: ${folder.google_folder_id}`)
+        console.log(`  - folder.id: ${folder.id}`)
+        console.log(`  - selectedSubFolder.id: ${selectedSubFolder.id}`)
+        console.log(`  - selectedSubFolder.tipo_extension: ${selectedSubFolder.tipo_extension}`)
+        console.log(`  - selectedSubFolder.nombre_subcarpeta: ${selectedSubFolder.nombre_subcarpeta}`)
+        console.log(`  - Coincide con filtro: ${matchesSubFolder}`)
+        console.log(`  ---`)
+      }
+      
+      return matchesSearch && matchesSubFolder
+    })
+    .sort((a, b) => {
+      // Ordenamiento jerárquico: sub_carpetas_administrador primero
+      const aIsAdmin = a.type === 'sub_carpetas_administrador'
+      const bIsAdmin = b.type === 'sub_carpetas_administrador'
+      
+      if (aIsAdmin && !bIsAdmin) return -1
+      if (!aIsAdmin && bIsAdmin) return 1
+      
+      // Si ambos son del mismo tipo, ordenar alfabéticamente
+      return a.folder_name.localeCompare(b.folder_name)
+    })
 
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A'
@@ -944,20 +1116,44 @@ const Folders = () => {
       {/* Subcarpetas disponibles */}
       {availableSubFolders.length > 0 && (
         <div className="bg-gray-50 rounded-lg p-4 mb-6">
-          <h3 className="text-sm font-medium text-gray-900 mb-3">Subcarpetas disponibles</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-gray-900">Subcarpetas disponibles</h3>
+            {selectedSubFolder && (
+              <button
+                onClick={() => setSelectedSubFolder(null)}
+                className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+              >
+                Mostrar todas
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
             {availableSubFolders.map((subfolder) => (
-              <div
+              <button
                 key={subfolder.id}
-                className="flex items-center p-2 bg-white rounded border border-gray-200 hover:border-primary-300 transition-colors"
+                onClick={() => setSelectedSubFolder(selectedSubFolder?.id === subfolder.id ? null : subfolder)}
+                className={`flex items-center p-2 rounded border transition-colors text-left ${
+                  selectedSubFolder?.id === subfolder.id
+                    ? 'bg-primary-50 border-primary-300 text-primary-700'
+                    : 'bg-white border-gray-200 hover:border-primary-300 text-gray-700'
+                }`}
               >
-                <FolderIcon className="h-4 w-4 text-primary-600 mr-2" />
-                <span className="text-sm text-gray-700 truncate">
+                <FolderIcon className={`h-4 w-4 mr-2 ${
+                  selectedSubFolder?.id === subfolder.id ? 'text-primary-600' : 'text-primary-600'
+                }`} />
+                <span className="text-sm truncate">
                   {subfolder.nombre_subcarpeta}
                 </span>
-              </div>
+              </button>
             ))}
           </div>
+          {selectedSubFolder && (
+            <div className="mt-3 p-2 bg-primary-50 rounded border border-primary-200">
+              <p className="text-xs text-primary-700">
+                Mostrando carpetas de: <strong>{selectedSubFolder.nombre_subcarpeta}</strong>
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -1018,25 +1214,37 @@ const Folders = () => {
                     <h3 className="font-medium text-gray-900 truncate">
                       {folder.folder_name}
                     </h3>
+                    {/* Temporalmente oculto el estado de sincronización
                     <div className="flex items-center mt-1">
                       <div className={`w-2 h-2 rounded-full mr-2 ${
-                        folder.synced ? 'bg-green-400' : 'bg-yellow-400'
+                        folder.synced ? 'bg-green-400' : 'bg-gray-400'
                       }`} />
                       <span className="text-xs text-gray-500">
-                        {folder.synced ? 'Sincronizado' : 'Solo local'}
+                        {folder.synced ? 'Sincronizado' : 'Pendiente'}
                       </span>
                     </div>
+                    */}
                   </div>
                 </div>
                 
                 <div className="flex space-x-2">
-                  <button
-                    onClick={() => handleDeleteFolder(folder)}
-                    className="text-red-600 hover:text-red-700 p-1"
-                    title="Eliminar carpeta"
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                  </button>
+                  {folder.type !== 'sub_carpetas_administrador' && (
+                    <button
+                      onClick={() => handleDeleteFolder(folder)}
+                      className="text-red-600 hover:text-red-700 p-1"
+                      title="Eliminar carpeta"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                  )}
+                  {folder.type === 'sub_carpetas_administrador' && (
+                    <div 
+                      className="text-gray-400 p-1 cursor-not-allowed"
+                      title="Las carpetas de administrador no se pueden eliminar"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </div>
+                  )}
                 </div>
               </div>
               
