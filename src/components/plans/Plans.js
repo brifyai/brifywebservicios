@@ -18,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
 import UpgradePlan from './UpgradePlan'
+import TemplateDownload from '../common/TemplateDownload'
 
 const Plans = () => {
   const { user, userProfile, hasActivePlan, updateUserProfile } = useAuth()
@@ -755,65 +756,137 @@ const Plans = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Alerta Google Drive no conectado */}
-        {!isGoogleDriveConnected && (
-          <div className="mb-8 bg-blue-50 border border-blue-200 rounded-2xl p-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <div className="p-3 bg-blue-100 rounded-xl mr-4">
-                  <CloudIcon className="h-6 w-6 text-blue-600" />
+        {/* Estado del Usuario */}
+        <div className="mb-8 space-y-4">
+          {/* Alerta Google Drive no conectado */}
+          {!isGoogleDriveConnected && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <div className="p-3 bg-amber-100 rounded-xl mr-4">
+                    <CloudIcon className="h-6 w-6 text-amber-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-amber-900">
+                      🔗 Conecta tu Google Drive
+                    </h3>
+                    <p className="text-amber-700 mt-1">
+                      Para comenzar, necesitas conectar tu cuenta de Google Drive para almacenar tus archivos y activar todas las funcionalidades.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleConnectGoogleDrive}
+                  className="bg-amber-600 hover:bg-amber-700 text-white font-medium py-3 px-6 rounded-xl transition-colors duration-200 shadow-lg hover:shadow-xl"
+                >
+                  Conectar Drive
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Plan actual */}
+          {hasActivePlan() && (
+            <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <div className="p-3 bg-green-100 rounded-xl mr-4">
+                    <CheckIcon className="h-6 w-6 text-green-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-green-900">
+                      ✅ Plan Activo: {getCurrentPlanName()}
+                    </h3>
+                    <p className="text-green-700 mt-1">
+                      Tu plan está activo y funcionando correctamente. Disfruta de todas las funcionalidades.
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <button
+                    onClick={() => handleOpenUpgrade(plans.find(p => p.id === userProfile.current_plan_id))}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200 text-sm"
+                  >
+                    Administrar Plan
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Plantilla de Rutina - Promoción Principal */}
+        <div className="mb-12 bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl p-8 text-white shadow-2xl">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+            <div>
+              <div className="flex items-center mb-4">
+                <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mr-4">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-blue-900">
-                    Google Drive no conectado
-                  </h3>
-                  <p className="text-blue-700 mt-1">
-                    Debes conectar tu cuenta de Google Drive para poder comprar planes y usar todas las funcionalidades.
-                  </p>
+                  <h2 className="text-2xl font-bold">📋 Plantilla de Rutinas</h2>
+                  <p className="text-blue-100">Personaliza tu entrenamiento y dieta</p>
                 </div>
               </div>
-              <button
-                onClick={handleConnectGoogleDrive}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-xl transition-colors duration-200 shadow-lg hover:shadow-xl"
-              >
-                Conectar Drive
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Plan actual */}
-        {hasActivePlan() && (
-          <div className="mb-8 bg-green-50 border border-green-200 rounded-2xl p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-green-100 rounded-xl mr-4">
-                <CheckIcon className="h-6 w-6 text-green-600" />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-green-900">
-                  Plan Activo: {getCurrentPlanName()}
-                </h3>
-                <p className="text-green-700 mt-1">
-                  Tu plan está activo y funcionando correctamente.
+              
+              <h3 className="text-xl font-semibold mb-3">Transforma tu rutina diaria</h3>
+              <ul className="space-y-2 mb-6">
+                <li className="flex items-center">
+                  <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
+                  <span>Planificación semanal de ejercicios personalizados</span>
+                </li>
+                <li className="flex items-center">
+                  <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
+                  <span>Registro detallado de dieta y nutrición</span>
+                </li>
+                <li className="flex items-center">
+                  <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
+                  <span>Recordatorios automáticos todas las mañanas</span>
+                </li>
+                <li className="flex items-center">
+                  <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
+                  <span>Consultas específicas con nuestra IA</span>
+                </li>
+              </ul>
+              
+              <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                <p className="text-sm text-blue-100 mb-2">
+                  🚀 Disponible para todos los usuarios. ¡Descarga y comienza hoy mismo!
                 </p>
               </div>
             </div>
+            
+            <div className="bg-white rounded-2xl p-6 shadow-xl">
+              <TemplateDownload />
+            </div>
           </div>
-        )}
+        </div>
 
         {/* Planes Disponibles */}
-        <div className="mb-8">
+        <div className="mb-12">
           <div className="text-center mb-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">
-              Elige tu Plan
+            <h2 className="text-3xl font-bold text-gray-900 mb-4">
+              💎 Elige tu Plan Perfecto
             </h2>
-            <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-              Selecciona el plan que mejor se adapte a tus necesidades. 
-              Todos los planes incluyen acceso completo a la plataforma.
+            <p className="text-lg text-gray-600 max-w-3xl mx-auto">
+              Selecciona el plan que mejor se adapte a tus necesidades.
+              Todos los planes incluyen acceso completo a la plataforma y soporte prioritario.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="relative">
+            {/* Indicador de scroll */}
+            <div className="absolute -top-8 right-0 text-sm text-gray-500 flex items-center">
+              <svg className="w-4 h-4 mr-1 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+              Desliza para ver más planes
+            </div>
+            
+            <div className="overflow-x-auto pb-4">
+              <div className="flex space-x-6 min-w-max px-2">
             {plans.map((plan) => {
               const isProcessing = processingPayment === plan.id
               const isCurrent = isCurrentPlan(plan.id)
@@ -822,16 +895,16 @@ const Plans = () => {
               return (
                 <div
                   key={plan.id}
-                  className={`relative bg-white rounded-3xl shadow-lg border-2 transition-all duration-300 hover:shadow-xl ${
+                  className={`relative bg-white rounded-3xl shadow-xl border-2 transition-all duration-300 hover:shadow-2xl hover:-translate-y-1 w-80 flex-shrink-0 ${
                     plan.plan_code?.toLowerCase() === 'premium'
-                      ? 'border-gradient-to-r from-yellow-400 to-orange-500 border-yellow-400'
+                      ? 'border-gradient-to-r from-yellow-400 to-orange-500 border-yellow-400 ring-4 ring-yellow-100'
                       : isCurrent
-                      ? 'border-green-400'
+                      ? 'border-green-400 ring-4 ring-green-100'
                       : 'border-gray-200 hover:border-gray-300'
                   }`}
                 >
                   {getPlanBadge(plan.plan_code)}
-                  
+                   
                   <div className="p-8">
                     {/* Header del plan */}
                     <div className="text-center mb-6">
@@ -853,7 +926,7 @@ const Plans = () => {
                             <span className="text-4xl font-bold text-green-600">
                               $0
                             </span>
-                            <span className="text-xs text-green-600 font-medium">
+                            <span className="text-xs text-green-600 font-medium bg-green-100 px-3 py-1 rounded-full">
                               PRUEBA GRATIS
                             </span>
                           </div>
@@ -871,20 +944,20 @@ const Plans = () => {
                         )}
                         <span className="text-gray-600 ml-2">/{plan.duration_days} días</span>
                       </div>
-                      <p className="text-gray-600">
-                        {plan.service_type === 'entrenador' ? 'Plan Entrenador' : plan.service_type}
+                      <p className="text-gray-600 font-medium">
+                        {plan.service_type === 'entrenador' ? '🏋️ Plan Entrenador' : `💼 ${plan.service_type}`}
                       </p>
                     </div>
 
                     {/* Características */}
-                    <div className="space-y-4 mb-6">
-                      <div className="flex items-center text-sm">
+                    <div className="space-y-3 mb-6">
+                      <div className="flex items-center text-sm bg-gray-50 p-3 rounded-lg">
                         <CloudIcon className="h-4 w-4 text-blue-600 mr-3" />
-                        <span>Almacenamiento: {formatStorage(plan.storage_limit_bytes)}</span>
+                        <span className="font-medium">Almacenamiento: {formatStorage(plan.storage_limit_bytes)}</span>
                       </div>
-                      <div className="flex items-center text-sm">
+                      <div className="flex items-center text-sm bg-gray-50 p-3 rounded-lg">
                         <ClockIcon className="h-4 w-4 text-blue-600 mr-3" />
-                        <span>Duración: {plan.duration_days} días</span>
+                        <span className="font-medium">Duración: {plan.duration_days} días</span>
                       </div>
                       
                       {features.map((feature, index) => (
@@ -977,9 +1050,9 @@ const Plans = () => {
                         <div className="space-y-3">
                           <button
                             disabled
-                            className="w-full bg-green-100 text-green-800 font-semibold py-3 px-6 rounded-xl cursor-not-allowed"
+                            className="w-full bg-green-100 text-green-800 font-semibold py-3 px-6 rounded-xl cursor-not-allowed border-2 border-green-200"
                           >
-                            Plan Actual
+                            ✅ Plan Actual
                           </button>
                           {getAvailableExtensionsCount() > 0 && (
                             <button
@@ -1029,7 +1102,7 @@ const Plans = () => {
                           ) : (
                             <div className="flex items-center justify-center">
                               <CreditCardIcon className="h-4 w-4 mr-2" />
-                              {!isGoogleDriveConnected ? 'Conecta Google Drive' : 'Comenzar Prueba'}
+                              {!isGoogleDriveConnected ? 'Conecta Google Drive' : '🚀 Comenzar Prueba Gratis'}
                             </div>
                           )}
                         </button>
@@ -1039,43 +1112,95 @@ const Plans = () => {
                 </div>
               )
             })}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Información adicional */}
-        <div className="bg-gray-50 rounded-3xl p-8">
-          <h3 className="text-xl font-semibold text-gray-900 mb-6 text-center">
-            ¿Tienes preguntas sobre nuestros planes?
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm text-gray-600">
-            <div className="bg-white rounded-2xl p-6 shadow-sm">
-              <h4 className="font-medium text-gray-900 mb-3 flex items-center">
-                <CreditCardIcon className="h-5 w-5 mr-2 text-blue-600" />
-                Métodos de Pago
-              </h4>
-              <p>Aceptamos pagos a través de Mercado Pago, incluyendo tarjetas de crédito, débito y transferencias bancarias.</p>
+        {/* Información adicional - Preguntas Frecuentes */}
+        <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-3xl p-8 shadow-lg">
+          <div className="text-center mb-8">
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">
+              ❓ Preguntas Frecuentes
+            </h3>
+            <p className="text-gray-600">
+              Todo lo que necesitas saber sobre nuestros planes y servicios
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-start">
+                <div className="p-2 bg-blue-100 rounded-lg mr-4">
+                  <CreditCardIcon className="h-6 w-6 text-blue-600" />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">¿Qué métodos de pago aceptan?</h4>
+                  <p className="text-sm text-gray-600">
+                    Aceptamos pagos a través de Mercado Pago, incluyendo tarjetas de crédito, débito y transferencias bancarias seguras.
+                  </p>
+                </div>
+              </div>
             </div>
-            <div className="bg-white rounded-2xl p-6 shadow-sm">
-              <h4 className="font-medium text-gray-900 mb-3 flex items-center">
-                <CheckIcon className="h-5 w-5 mr-2 text-green-600" />
-                Soporte
-              </h4>
-              <p>Nuestro equipo de soporte está disponible para ayudarte con cualquier pregunta sobre los planes y funcionalidades.</p>
+            
+            <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-start">
+                <div className="p-2 bg-green-100 rounded-lg mr-4">
+                  <CheckIcon className="h-6 w-6 text-green-600" />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">¿Qué tipo de soporte ofrecen?</h4>
+                  <p className="text-sm text-gray-600">
+                    Nuestro equipo de soporte está disponible 24/7 para ayudarte con cualquier pregunta sobre los planes y funcionalidades.
+                  </p>
+                </div>
+              </div>
             </div>
-            <div className="bg-white rounded-2xl p-6 shadow-sm">
-              <h4 className="font-medium text-gray-900 mb-3 flex items-center">
-                <ClockIcon className="h-5 w-5 mr-2 text-purple-600" />
-                Renovación
-              </h4>
-              <p>Los planes se renuevan automáticamente. Puedes cancelar en cualquier momento desde tu perfil.</p>
+            
+            <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-start">
+                <div className="p-2 bg-purple-100 rounded-lg mr-4">
+                  <ClockIcon className="h-6 w-6 text-purple-600" />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">¿Cómo funciona la renovación?</h4>
+                  <p className="text-sm text-gray-600">
+                    Los planes se renuevan automáticamente al finalizar el período. Puedes cancelar en cualquier momento desde tu perfil sin penalizaciones.
+                  </p>
+                </div>
+              </div>
             </div>
-            <div className="bg-white rounded-2xl p-6 shadow-sm">
-              <h4 className="font-medium text-gray-900 mb-3 flex items-center">
-                <CheckIcon className="h-5 w-5 mr-2 text-orange-600" />
-                Garantía
-              </h4>
-              <p>Ofrecemos garantía de satisfacción de 7 días. Si no estás satisfecho, te devolvemos tu dinero.</p>
+            
+            <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-start">
+                <div className="p-2 bg-orange-100 rounded-lg mr-4">
+                  <CheckIcon className="h-6 w-6 text-orange-600" />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">¿Tienen garantía de devolución?</h4>
+                  <p className="text-sm text-gray-600">
+                    Ofrecemos garantía de satisfacción de 7 días. Si no estás satisfecho con nuestro servicio, te devolvemos tu dinero completo.
+                  </p>
+                </div>
+              </div>
             </div>
+          </div>
+          
+          <div className="text-center mt-8">
+            <p className="text-gray-600 mb-4">
+              ¿Aún tienes preguntas? Estamos aquí para ayudarte.
+            </p>
+            <a
+              href="https://t.me/brifybeta_bot"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl"
+            >
+              <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+              </svg>
+              Contactar Soporte
+            </a>
           </div>
         </div>
       </div>
