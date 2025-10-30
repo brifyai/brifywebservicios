@@ -195,7 +195,7 @@ class GoogleDriveService {
 
       return await googleDriveMiddleware.post(
         'https://www.googleapis.com/drive/v3/files?fields=id,name,parents',
-        JSON.stringify(fileMetadata),
+        fileMetadata,
         { 'Content-Type': 'application/json' },
         this.currentUserId
       )
@@ -315,7 +315,7 @@ class GoogleDriveService {
 
       return await googleDriveMiddleware.post(
         `https://www.googleapis.com/drive/v3/files/${folderId}/permissions?sendNotificationEmail=true`,
-        JSON.stringify(permission),
+        permission,
         { 'Content-Type': 'application/json' },
         this.currentUserId
       )
