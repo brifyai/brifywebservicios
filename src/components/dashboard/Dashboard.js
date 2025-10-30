@@ -32,6 +32,7 @@ import {
   ArrowPathIcon
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
+import SyncButton from '../drive/SyncButton'
 import toast from 'react-hot-toast'
 
 const Dashboard = () => {
@@ -579,6 +580,28 @@ const Dashboard = () => {
                   </span>
                 </div>
               </Link>
+
+              {/* Sincronización Drive */}
+              {isGoogleDriveConnected && (
+                <div className="group bg-gradient-to-br from-teal-600 to-teal-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
+                      <CloudIcon className="h-8 w-8 text-white" />
+                    </div>
+                    <ArrowRightIcon className="h-6 w-6 text-white/70 group-hover:text-white transition-colors" />
+                  </div>
+                  <h3 className="text-xl font-bold mb-2">Sincronizar Drive</h3>
+                  <p className="text-teal-100 text-sm mb-4">
+                    Sincroniza tus archivos con Google Drive
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-teal-200">Mantener actualizado</span>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-lg p-1">
+                      <SyncButton userEmail={user?.email} />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -18,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
 import UpgradePlan from './UpgradePlan'
+import TemplateDownload from '../common/TemplateDownload'
 
 const Plans = () => {
   const { user, userProfile, hasActivePlan, updateUserProfile } = useAuth()
@@ -915,6 +916,55 @@ const Plans = () => {
           </div>
         </div>
       )}
+
+      {/* Plantilla de Rutina - Promoción Principal */}
+      <div className="mb-12 bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl p-8 text-white shadow-2xl">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+          <div>
+            <div className="flex items-center mb-4">
+              <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mr-4">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold">📋 Plantilla de Rutinas</h2>
+                <p className="text-blue-100">Personaliza tu entrenamiento y dieta</p>
+              </div>
+            </div>
+            
+            <h3 className="text-xl font-semibold mb-3">Transforma tu rutina diaria</h3>
+            <ul className="space-y-2 mb-6">
+              <li className="flex items-center">
+                <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
+                <span>Planificación semanal de ejercicios personalizados</span>
+              </li>
+              <li className="flex items-center">
+                <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
+                <span>Registro detallado de dieta y nutrición</span>
+              </li>
+              <li className="flex items-center">
+                <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
+                <span>Recordatorios automáticos todas las mañanas</span>
+              </li>
+              <li className="flex items-center">
+                <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
+                <span>Consultas específicas con nuestra IA</span>
+              </li>
+            </ul>
+            
+            <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+              <p className="text-sm text-blue-100 mb-2">
+                🚀 Disponible para todos los usuarios. ¡Descarga y comienza hoy mismo!
+              </p>
+            </div>
+          </div>
+          
+          <div className="bg-white rounded-2xl p-6 shadow-xl">
+            <TemplateDownload />
+          </div>
+        </div>
+      </div>
 
       {/* Planes */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
