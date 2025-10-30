@@ -155,6 +155,20 @@ const Dashboard = () => {
         .limit(1)
         .single()
 
+      // Cargar el límite de tokens del plan del usuario
+      let tokensLimit = 10000 // valor por defecto
+      if (userProfile?.current_plan_id) {
+        const { data: planData } = await supabase
+          .from('plans')
+          .select('token_limit_usage')
+          .eq('id', userProfile.current_plan_id)
+          .single()
+        
+        if (planData?.token_limit_usage) {
+          tokensLimit = planData.token_limit_usage
+        }
+      }
+
       // Cargar estadísticas de documentos
       const { data: docStats } = await supabase
         .from('documentos_usuario_entrenador')
@@ -164,7 +178,7 @@ const Dashboard = () => {
       // Simular datos de búsquedas y chats
       const simulatedMetrics = {
         tokensUsed: tokenData?.tokens_used || 0,
-        tokensLimit: userProfile?.plan?.token_limit || 10000,
+        tokensLimit: tokensLimit,
         documentsProcessed: docStats?.length || 0,
         searchesPerformed: Math.floor(Math.random() * 50) + 10,
         chatsCreated: Math.floor(Math.random() * 30) + 5,
@@ -173,6 +187,7 @@ const Dashboard = () => {
       }
 
       setMetrics(simulatedMetrics)
+      console.log('Metrics loaded with correct token limit:', tokensLimit)
     } catch (error) {
       console.error('Error loading metrics:', error)
     }
