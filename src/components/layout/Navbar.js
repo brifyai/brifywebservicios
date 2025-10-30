@@ -112,12 +112,18 @@ const Navbar = () => {
           <div className="flex items-center">
             <div className="flex-shrink-0 flex items-center">
               <Link to="/dashboard" className="flex items-center group">
-                <div className="w-8 h-8 bg-black rounded-lg shadow-sm group-hover:shadow-md transition-all duration-300 flex items-center justify-center mr-3">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+                <div className="relative">
+                  <div className="w-8 h-8 bg-black rounded-lg shadow-sm group-hover:shadow-md transition-all duration-300 flex items-center justify-center mr-3">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </div>
+                  {/* Etiqueta BETA cruzada */}
+                  <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rotate-45 transform origin-center flex items-center justify-center">
+                    <span className="text-white text-[8px] font-bold -rotate-45 whitespace-nowrap">BETA</span>
+                  </div>
                 </div>
                 <span className="text-lg font-semibold text-gray-900 group-hover:text-black transition-colors duration-300">
                   Brify AI
@@ -278,12 +284,18 @@ const Navbar = () => {
           <div className="px-4 pt-4 pb-3">
             {/* Logo en móvil */}
             <div className="flex items-center mb-4 pb-4 border-b border-gray-100">
-              <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center mr-3">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
+              <div className="relative">
+                <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center mr-3">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+                {/* Etiqueta BETA cruzada */}
+                <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rotate-45 transform origin-center flex items-center justify-center">
+                  <span className="text-white text-[8px] font-bold -rotate-45 whitespace-nowrap">BETA</span>
+                </div>
               </div>
               <span className="text-lg font-semibold text-gray-900">
                 Brify AI
