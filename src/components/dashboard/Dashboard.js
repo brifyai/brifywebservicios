@@ -80,6 +80,9 @@ const Dashboard = () => {
     notifications: []
   })
   
+  // Estado para sincronización Drive
+  const [isSyncing, setIsSyncing] = useState(false)
+  
   // Estados para funcionalidades de IA
   const [aiInsights, setAiInsights] = useState({
     recommendations: [],
@@ -796,15 +799,58 @@ const Dashboard = () => {
                 {isGoogleDriveConnected && (
                   <div className="mt-4 p-3 bg-blue-50 rounded-xl">
                     <button
-                      onClick={() => {
-                        // Lógica de sincronización aquí
-                        console.log('Sincronizando Drive...')
-                        toast.success('Iniciando sincronización de Drive...')
+                      onClick={async () => {
+                        if (isSyncing) return
+                        
+                        setIsSyncing(true)
+                        toast.loading('Iniciando sincronización de Drive...', { id: 'sync-drive' })
+                        
+                        try {
+                          console.log('Sincronizando Drive...')
+                          
+                          // Simular proceso de sincronización (aquí iría la lógica real)
+                          await new Promise(resolve => setTimeout(resolve, 3000))
+                          
+                          // Actualizar última sincronización
+                          setSystemStatus(prev => ({
+                            ...prev,
+                            lastSync: new Date(),
+                            syncInProgress: false
+                          }))
+                          
+                          toast.success('Sincronización completada exitosamente', { id: 'sync-drive' })
+                          console.log('Sincronización completada')
+                          
+                        } catch (error) {
+                          console.error('Error en sincronización:', error)
+                          toast.error('Error en la sincronización de Drive', { id: 'sync-drive' })
+                        } finally {
+                          setIsSyncing(false)
+                        }
                       }}
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200 text-sm flex items-center justify-center"
+                      disabled={isSyncing}
+                      className={`w-full font-medium py-2 px-4 rounded-lg transition-colors duration-200 text-sm flex items-center justify-center ${
+                        isSyncing
+                          ? 'bg-blue-400 cursor-not-allowed'
+                          : 'bg-blue-600 hover:bg-blue-700 text-white'
+                      }`}
                     >
-                      <CloudIcon className="h-4 w-4 mr-2" />
-                      Sincronizar Drive
+                      {isSyncing ? (
+                        <>
+                          <div className="animate-spin -ml-1 mr-3 h-4 w-4">
+                            <svg className="w-full h-full" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                          </div>
+                          Sincronizando...
+                        </>
+                      ) : (
+                        <>
+                          <CloudIcon className="h-4 w-4 mr-2" />
+                          Sincronizar Drive
+                        </>
+                      )}
                     </button>
                   </div>
                 )}
