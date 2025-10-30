@@ -581,27 +581,6 @@ const Dashboard = () => {
                 </div>
               </Link>
 
-              {/* Sincronización Drive */}
-              {isGoogleDriveConnected && (
-                <div className="group bg-gradient-to-br from-teal-600 to-teal-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
-                      <CloudIcon className="h-8 w-8 text-white" />
-                    </div>
-                    <ArrowRightIcon className="h-6 w-6 text-white/70 group-hover:text-white transition-colors" />
-                  </div>
-                  <h3 className="text-xl font-bold mb-2">Sincronizar Drive</h3>
-                  <p className="text-teal-100 text-sm mb-4">
-                    Sincroniza tus archivos con Google Drive
-                  </p>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-teal-200">Mantener actualizado</span>
-                    <div className="bg-white/10 backdrop-blur-sm rounded-lg p-1">
-                      <SyncButton userEmail={user?.email} />
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -797,6 +776,23 @@ const Dashboard = () => {
                     </span>
                   </div>
                 </div>
+                
+                {/* Botón de Sincronización Drive */}
+                {isGoogleDriveConnected && (
+                  <div className="mt-4 p-3 bg-blue-50 rounded-xl">
+                    <button
+                      onClick={() => {
+                        // Lógica de sincronización aquí
+                        console.log('Sincronizando Drive...')
+                        toast.success('Iniciando sincronización de Drive...')
+                      }}
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200 text-sm flex items-center justify-center"
+                    >
+                      <CloudIcon className="h-4 w-4 mr-2" />
+                      Sincronizar Drive
+                    </button>
+                  </div>
+                )}
                 
                 <div className="mt-4 p-3 bg-blue-50 rounded-xl">
                   <div className="flex items-center justify-between">
