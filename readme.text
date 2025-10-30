@@ -1,0 +1,34 @@
+INFORMACIÓN PARA PROYECTO
+
+BASE DE DATOS: 
+SUPABASE URL: https://leoyybfbnjajkktprhro.supabase.co
+SPABASE KEY PUBLIC: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxlb3l5YmZibmphamtrdHByaHJvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg4MTQ0MTYsImV4cCI6MjA2NDM5MDQxNn0.VfJoDIHgXB1k4kwgndmr2yLNDeDBBIrOVsbqaSWrjHU
+
+
+API GEMINI PARA EMBEBIDOS: 'AIzaSyBveZcn7HLx2zIagNdnjioZS8PXqkJIUeg'
+
+
+TABLAS NECESARIAS CREADAS:
+
+users: id, telegram_id, email, name, is_active, current_plan_id -> public.plans.id, plan_expiration, used_storage_bytes, registered_via, password_hash, salt, admin, onboarding_status
+plans: id, name, storage_limit_bytes, price_usd, duration_days, name_es, plan_code, service_type  
+user_credentials: id, telegram_chat_id, google_refresh_token, updated_at  
+payments: id, user_id, plan_id, amount_usd, payment_status, payment_provider, payment_ref, paid_at
+carpetas_usuario: id, telegram_id, correo, id_carpeta_drive, created_at, administrador
+carpeta_adminsitrador: id, correo, id_drive_carpeta, plan_name, telegram_id  
+admin_users: id, telegram_id_admin, telegram_id_user, correo_user, created_at
+documentos_entrenador: id, content, metadata -> contemplar los siguientes datos el file_id hace referencia del id de google drive al subirlo ({"loc": {"lines": {"to": 1036, "from": 1027}}, "name": "78202665-manual-de-entrenamiento-180731225650 (1).pdf", "correo": "mateo@gmail.com", "source": "blob", "file_id": "BQACAgEAAxkBAAICBWij3wtn2V1ToIvAZ8BAyNtYG7reAALNBgACPqAgRYdTib-Wc899NgQ", "blobType": "application/json"}=), embedding, entrenador
+documentos_usuario_entrenador: id, telegram_id, file_id, file_type, file_name, created_at, usuario, entrenador
+user_tokens_usage: id, user_id, total_tokens, last_updated_at
+
+CONFIGURACIÓN DE VARIABLES DE ENTORNO:
+
+Crea un archivo .env en la raíz del proyecto con las siguientes variables:
+
+REACT_APP_GOOGLE_CLIENT_ID=tu_google_client_id
+REACT_APP_GOOGLE_CLIENT_SECRET=tu_google_client_secret
+REACT_APP_GROQ_API_KEY=tu_groq_api_key
+REACT_APP_MERCADOPAGO_PUBLIC_KEY=tu_mercadopago_public_key
+REACT_APP_MERCADOPAGO_ACCESS_TOKEN=tu_mercadopago_access_token
+
+NOTA: Las credenciales reales deben configurarse en las variables de entorno y no deben incluirse en el código fuente por seguridad.
