@@ -310,7 +310,6 @@ const AIChat = () => {
             <p className="font-medium mb-1">¿Cómo funciona el Chat IA?</p>
             <ul className="space-y-1 text-blue-700">
               <li>• Busca automáticamente en tus documentos información relevante</li>
-              <li>• Usa IA avanzada (GROQ Llama 3.1 8B Instant) para generar respuestas precisas</li>
               <li>• Mantiene el contexto de la conversación para respuestas coherentes</li>
               <li>• Te indica qué documentos usó para generar cada respuesta</li>
             </ul>
