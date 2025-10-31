@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { EyeIcon, EyeSlashIcon, UserIcon, LockClosedIcon, EnvelopeIcon, ArrowRightIcon } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
+import SEO from '../common/SEO'
 
 const Register = () => {
   const [formData, setFormData] = useState({
@@ -100,10 +101,75 @@ const Register = () => {
   }
 
   if (isLoading) {
-    return <LoadingSpinner text="Creando cuenta..." />
+    return (
+      <>
+        <SEO
+          title="Cargando... | Brify AI"
+          description="Creando cuenta en Brify AI"
+          noIndex={true}
+        />
+        <LoadingSpinner text="Creando cuenta..." />
+      </>
+    )
+  }
+
+  // Structured data para la página de registro
+  const registerStructuredData = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "name": "Crear Cuenta - Brify AI",
+    "description": "Regístrate en Brify AI y comienza a gestionar tus documentos con inteligencia artificial",
+    "url": "https://brifyai.com/register",
+    "isPartOf": {
+      "@type": "WebSite",
+      "name": "Brify AI",
+      "url": "https://brifyai.com"
+    },
+    "breadcrumb": {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Inicio",
+          "item": "https://brifyai.com"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Crear Cuenta",
+          "item": "https://brifyai.com/register"
+        }
+      ]
+    },
+    "mainEntity": {
+      "@type": "WebForm",
+      "name": "Formulario de Registro",
+      "description": "Formulario seguro para crear tu cuenta de Brify AI",
+      "action": {
+        "@type": "Action",
+        "name": "Crear Cuenta",
+        "target": "https://brifyai.com/register"
+      }
+    }
   }
 
   return (
+    <>
+      <SEO
+        title="Crear Cuenta Gratis | Brify AI - Regístrate y Transforma tu Productividad"
+        description="Regístrate gratis en Brify AI y accede a la gestión documental con IA. Chat con documentos, organización automática y productividad inteligente. Comienza ahora."
+        keywords="crear cuenta brify ai, registrarse brify, signup brify ai, gestión documental gratuita, chat con documentos gratis, organización inteligente"
+        canonicalUrl="https://brifyai.com/register"
+        ogType="website"
+        structuredData={registerStructuredData}
+        additionalMeta={[
+          { name: 'page-type', content: 'authentication' },
+          { name: 'target-audience', content: 'new-users' },
+          { name: 'user-intent', content: 'register' },
+          { name: 'signup-type', content: 'free' }
+        ]}
+      />
     <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-black flex">
       {/* Panel Izquierdo - Branding */}
       <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-purple-600 to-pink-700 relative overflow-hidden">
@@ -459,6 +525,7 @@ const Register = () => {
         </div>
       </div>
     </div>
+    </>
   )
 }
 

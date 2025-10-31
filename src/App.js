@@ -2,6 +2,7 @@ import React from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { HelmetProvider } from 'react-helmet-async'
 
 // Componentes
 import Login from './components/auth/Login'
@@ -56,9 +57,10 @@ const AuthenticatedLayout = ({ children }) => {
 
 function App() {
   return (
-    <AuthProvider>
-      <Router>
-        <div className="App">
+    <HelmetProvider>
+      <AuthProvider>
+        <Router>
+          <div className="App">
           <Toaster
             position="top-right"
             toastOptions={{
@@ -213,9 +215,10 @@ function App() {
               } 
             />
           </Routes>
-        </div>
-      </Router>
-    </AuthProvider>
+          </div>
+        </Router>
+      </AuthProvider>
+    </HelmetProvider>
   )
 }
 

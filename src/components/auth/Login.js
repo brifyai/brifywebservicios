@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { EyeIcon, EyeSlashIcon, UserIcon, LockClosedIcon, ArrowRightIcon } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
+import SEO from '../common/SEO'
 
 const Login = () => {
   const [formData, setFormData] = useState({
@@ -74,10 +75,74 @@ const Login = () => {
   }
 
   if (isLoading) {
-    return <LoadingSpinner text="Iniciando sesión..." />
+    return (
+      <>
+        <SEO
+          title="Cargando... | Brify AI"
+          description="Iniciando sesión en Brify AI"
+          noIndex={true}
+        />
+        <LoadingSpinner text="Iniciando sesión..." />
+      </>
+    )
+  }
+
+  // Structured data para la página de login
+  const loginStructuredData = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "name": "Iniciar Sesión - Brify AI",
+    "description": "Accede a tu cuenta de Brify AI para gestionar tus documentos con inteligencia artificial",
+    "url": "https://brifyai.com/login",
+    "isPartOf": {
+      "@type": "WebSite",
+      "name": "Brify AI",
+      "url": "https://brifyai.com"
+    },
+    "breadcrumb": {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Inicio",
+          "item": "https://brifyai.com"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Iniciar Sesión",
+          "item": "https://brifyai.com/login"
+        }
+      ]
+    },
+    "mainEntity": {
+      "@type": "WebForm",
+      "name": "Formulario de Inicio de Sesión",
+      "description": "Formulario seguro para acceder a tu cuenta de Brify AI",
+      "action": {
+        "@type": "Action",
+        "name": "Iniciar Sesión",
+        "target": "https://brifyai.com/login"
+      }
+    }
   }
 
   return (
+    <>
+      <SEO
+        title="Iniciar Sesión | Brify AI - Tu Asistente Inteligente de Documentos"
+        description="Accede a tu cuenta de Brify AI y transforma la gestión de tus documentos con inteligencia artificial. Chat con documentos, organización automática y más."
+        keywords="iniciar sesión brify ai, login brify, acceso brify ai, gestión documental ia, chat con documentos, organización inteligente"
+        canonicalUrl="https://brifyai.com/login"
+        ogType="website"
+        structuredData={loginStructuredData}
+        additionalMeta={[
+          { name: 'page-type', content: 'authentication' },
+          { name: 'target-audience', content: 'registered-users' },
+          { name: 'user-intent', content: 'login' }
+        ]}
+      />
     <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-black flex">
       {/* Panel Izquierdo - Branding */}
       <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-blue-600 to-purple-700 relative overflow-hidden">
@@ -324,6 +389,7 @@ const Login = () => {
         </div>
       </div>
     </div>
+    </>
   )
 }
 

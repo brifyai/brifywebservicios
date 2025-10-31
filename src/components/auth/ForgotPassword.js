@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { EnvelopeIcon, ArrowLeftIcon, ArrowRightIcon, LockClosedIcon } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
 import toast from 'react-hot-toast'
+import SEO from '../common/SEO'
 
 const ForgotPassword = () => {
   const [email, setEmail] = useState('')
@@ -58,8 +59,64 @@ const ForgotPassword = () => {
     }
   }
 
+  // Structured data para la página de recuperación de contraseña
+  const forgotPasswordStructuredData = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "name": "Recuperar Contraseña - Brify AI",
+    "description": "Recupera el acceso a tu cuenta de Brify AI de forma segura y rápida",
+    "url": "https://brifyai.com/forgot-password",
+    "isPartOf": {
+      "@type": "WebSite",
+      "name": "Brify AI",
+      "url": "https://brifyai.com"
+    },
+    "breadcrumb": {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Inicio",
+          "item": "https://brifyai.com"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Recuperar Contraseña",
+          "item": "https://brifyai.com/forgot-password"
+        }
+      ]
+    },
+    "mainEntity": {
+      "@type": "WebForm",
+      "name": "Formulario de Recuperación de Contraseña",
+      "description": "Formulario seguro para recuperar el acceso a tu cuenta de Brify AI",
+      "action": {
+        "@type": "Action",
+        "name": "Recuperar Contraseña",
+        "target": "https://brifyai.com/forgot-password"
+      }
+    }
+  }
+
   if (emailSent) {
     return (
+      <>
+        <SEO
+          title="Email Enviado | Brify AI - Recuperación de Contraseña"
+          description="Hemos enviado un enlace de recuperación a tu email. Sigue las instrucciones para restablecer tu contraseña de Brify AI."
+          keywords="recuperación contraseña brify, email enviado brify, restablecer contraseña, enlace recuperación, seguridad brify ai"
+          canonicalUrl="https://brifyai.com/forgot-password?sent=true"
+          ogType="website"
+          structuredData={forgotPasswordStructuredData}
+          additionalMeta={[
+            { name: 'page-type', content: 'authentication' },
+            { name: 'target-audience', content: 'registered-users' },
+            { name: 'user-intent', content: 'password-recovery' },
+            { name: 'form-status', content: 'email-sent' }
+          ]}
+        />
       <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-black flex">
         {/* Panel Izquierdo - Branding */}
         <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-green-600 to-teal-700 relative overflow-hidden">
@@ -223,10 +280,26 @@ const ForgotPassword = () => {
           </div>
         </div>
       </div>
+      </>
     )
   }
 
   return (
+    <>
+      <SEO
+        title="Recuperar Contraseña | Brify AI - Restablece tu Acceso Seguro"
+        description="¿Olvidaste tu contraseña? Recupera el acceso a tu cuenta de Brify AI de forma segura. Recibe un enlace único y válido por 24 horas en tu email."
+        keywords="olvidé contraseña brify, recuperar contraseña brify, restablecer acceso, recuperación segura, enlace temporal brify"
+        canonicalUrl="https://brifyai.com/forgot-password"
+        ogType="website"
+        structuredData={forgotPasswordStructuredData}
+        additionalMeta={[
+          { name: 'page-type', content: 'authentication' },
+          { name: 'target-audience', content: 'registered-users' },
+          { name: 'user-intent', content: 'password-recovery' },
+          { name: 'form-status', content: 'input' }
+        ]}
+      />
     <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-black flex">
       {/* Panel Izquierdo - Branding */}
       <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-green-600 to-teal-700 relative overflow-hidden">
@@ -408,6 +481,7 @@ const ForgotPassword = () => {
         </div>
       </div>
     </div>
+    </>
   )
 }
 
