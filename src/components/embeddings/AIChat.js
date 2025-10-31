@@ -49,16 +49,31 @@ const AIChat = () => {
   // Forzar scroll a arriba en móvil cuando el componente se monta
   useEffect(() => {
     if (window.innerWidth < 768) {
-      // Forzar scroll a la parte superior en móvil
-      window.scrollTo(0, 0)
-      // También prevenir scroll futuro
+      // Prevenir scroll del body y html
+      const originalBodyStyle = document.body.style.scrollBehavior
+      const originalHtmlStyle = document.documentElement.style.scrollBehavior
+      
       document.body.style.scrollBehavior = 'auto'
       document.documentElement.style.scrollBehavior = 'auto'
       
-      // Restaurar scroll behavior después de un breve tiempo
+      // Forzar scroll a la parte superior inmediatamente
+      window.scrollTo(0, 0)
+      
+      // También forzar scroll del contenedor principal si existe
+      const mainContainer = document.querySelector('main')
+      if (mainContainer) {
+        mainContainer.scrollTop = 0
+      }
+      
+      // Restaurar scroll behavior después de un tiempo más largo
       setTimeout(() => {
-        document.body.style.scrollBehavior = ''
-        document.documentElement.style.scrollBehavior = ''
+        document.body.style.scrollBehavior = originalBodyStyle
+        document.documentElement.style.scrollBehavior = originalHtmlStyle
+      }, 300)
+      
+      // Prevenir scroll por foco del input
+      setTimeout(() => {
+        window.scrollTo(0, 0)
       }, 100)
     }
   }, []) // Solo se ejecuta al montar el componente
@@ -304,7 +319,7 @@ const AIChat = () => {
               placeholder="Escribe tu pregunta aquí..."
               disabled={loading}
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
-              autoFocus
+              autoFocus={window.innerWidth >= 768} // Solo autoFocus en desktop
             />
           </div>
           <button

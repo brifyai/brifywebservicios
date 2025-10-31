@@ -51,19 +51,37 @@
   
   @media (max-width: 767px) {
     .scroll-to-top-mobile {
-      scroll-behavior: smooth;
-      scroll-padding-top: 0;
+      scroll-behavior: auto !important;
+      scroll-padding-top: 0 !important;
+      scroll-snap-type: none !important;
     }
     
-    /* Forzar scroll al inicio para body en móvil */
+    /* Prevenir scroll no deseado en body y html en móvil */
     body {
-      scroll-behavior: smooth;
-      scroll-padding-top: 0;
+      scroll-behavior: auto !important;
+      scroll-padding-top: 0 !important;
+      overflow-x: hidden;
+    }
+    
+    html {
+      scroll-behavior: auto !important;
+      scroll-padding-top: 0 !important;
     }
     
     /* Asegurar que el contenedor principal no tenga scroll inicial */
     .min-h-screen {
-      scroll-snap-type: y start;
+      scroll-snap-type: none !important;
+    }
+    
+    /* Prevenir scroll en contenedor main */
+    main {
+      scroll-behavior: auto !important;
+      scroll-padding-top: 0 !important;
+    }
+    
+    /* Prevenir scroll por foco en inputs */
+    input:focus, textarea:focus, select:focus {
+      scroll-margin-top: 0 !important;
     }
   }
 }
