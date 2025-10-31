@@ -89,14 +89,14 @@ const Profile = () => {
       try {
         const { data: tokenUsage, error } = await supabase
           .from('user_tokens_usage')
-          .select('total_tokens')
+          .select('total_tokens_used')
           .eq('user_id', user.id)
-          .maybeSingle()
+          .single()
         
         if (!error && tokenUsage) {
           setStats(prevStats => ({
             ...prevStats,
-            tokensUsed: tokenUsage.total_tokens || 0
+            tokensUsed: tokenUsage.total_tokens_used || 0
           }))
         }
       } catch (tokenError) {

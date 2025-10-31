@@ -33,6 +33,7 @@ import {
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
 import SyncButton from '../drive/SyncButton'
+import { SyncService } from '../../services/SyncService'
 import toast from 'react-hot-toast'
 
 const Dashboard = () => {
@@ -60,7 +61,11 @@ const Dashboard = () => {
     searchesPerformed: 0,
     chatsCreated: 0,
     syncStatus: 'idle',
-    systemHealth: 'healthy'
+    systemHealth: 'healthy',
+    // Estados dinámicos
+    foldersStatus: 'Estable',
+    filesStatus: 'Actual',
+    storageStatus: 'Óptimo'
   })
   
   // Estados para accesos rápidos
@@ -149,13 +154,13 @@ const Dashboard = () => {
 
   const loadMetrics = async () => {
     try {
-      // Cargar uso de tokens
-      const { data: tokenData } = await supabase
+      console.log('Cargando métricas reales para usuario:', user.id)
+      
+      // Cargar uso de tokens real
+      const { data: tokenData, error: tokenError } = await supabase
         .from('user_tokens_usage')
-        .select('tokens_used')
+        .select('total_tokens_used')
         .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
         .single()
 
       // Cargar el límite de tokens del plan del usuario
@@ -172,27 +177,118 @@ const Dashboard = () => {
         }
       }
 
-      // Cargar estadísticas de documentos
-      const { data: docStats } = await supabase
+      // Cargar estadísticas reales de documentos con detalles
+      const { data: docStats, error: docError } = await supabase
         .from('documentos_usuario_entrenador')
-        .select('id, created_at')
+        .select('id, file_name, file_size, folder_id, created_at')
         .eq('user_id', user.id)
 
-      // Simular datos de búsquedas y chats
-      const simulatedMetrics = {
-        tokensUsed: tokenData?.tokens_used || 0,
-        tokensLimit: tokensLimit,
-        documentsProcessed: docStats?.length || 0,
-        searchesPerformed: Math.floor(Math.random() * 50) + 10,
-        chatsCreated: Math.floor(Math.random() * 30) + 5,
-        syncStatus: isGoogleDriveConnected ? 'synced' : 'pending',
-        systemHealth: 'healthy'
+      // Contar carpetas únicas reales
+      const uniqueFolderIds = [...new Set(docStats?.map(doc => doc.folder_id).filter(Boolean) || [])]
+      let foldersCount = 0
+      if (uniqueFolderIds.length > 0) {
+        const { data: foldersData } = await supabase
+          .from('sub_carpetas_administrador')
+          .select('id')
+          .in('id', uniqueFolderIds)
+        foldersCount = foldersData?.length || 0
       }
 
-      setMetrics(simulatedMetrics)
-      console.log('Metrics loaded with correct token limit:', tokensLimit)
+      // Calcular almacenamiento real
+      const totalStorage = docStats?.reduce((sum, doc) => sum + (doc.file_size || 0), 0) || 0
+
+      // Cargar estadísticas de actividad real si existe la tabla user_activity_stats
+      let searchesPerformed = 0
+      let chatsCreated = 0
+      try {
+        const { data: activityData } = await supabase
+          .from('user_activity_stats')
+          .select('semantic_searches_count, ai_chats_count')
+          .eq('user_id', user.id)
+          .single()
+        
+        if (activityData) {
+          searchesPerformed = activityData.semantic_searches_count || 0
+          chatsCreated = activityData.ai_chats_count || 0
+        }
+      } catch (activityError) {
+        console.log('Tabla user_activity_stats no disponible aún')
+      }
+
+      // Calcular estados dinámicos basados en actividad real
+      const now = new Date()
+      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000)
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+      
+      // Estado de Carpetas: basado en carpetas creadas recientemente
+      let foldersStatus = 'Estable'
+      const recentFolders = docStats?.filter(doc =>
+        doc.folder_id && new Date(doc.created_at) > oneDayAgo
+      ).length || 0
+      if (recentFolders > 0) {
+        foldersStatus = 'Activo'
+      }
+      
+      // Estado de Archivos: basado en archivos procesados recientemente
+      let filesStatus = 'Actual'
+      const recentFiles = docStats?.filter(doc =>
+        new Date(doc.created_at) > oneHourAgo
+      ).length || 0
+      if (recentFiles > 0) {
+        filesStatus = 'Procesando'
+      } else if (docStats?.length === 0) {
+        filesStatus = 'Vacío'
+      }
+      
+      // Estado de Almacenamiento: basado en el uso real
+      let storageStatus = 'Óptimo'
+      const storageMB = totalStorage / (1024 * 1024)
+      if (storageMB > 100) {
+        storageStatus = 'Alto'
+      } else if (storageMB > 500) {
+        storageStatus = 'Crítico'
+      } else if (storageMB > 10) {
+        storageStatus = 'Moderado'
+      }
+
+      // Métricas reales con estados dinámicos
+      const realMetrics = {
+        tokensUsed: tokenData?.total_tokens_used || 0,
+        tokensLimit: tokensLimit,
+        documentsProcessed: docStats?.length || 0,
+        foldersCount: foldersCount,
+        storage: totalStorage,
+        searchesPerformed: searchesPerformed,
+        chatsCreated: chatsCreated,
+        syncStatus: isGoogleDriveConnected ? 'synced' : 'pending',
+        systemHealth: 'healthy',
+        // Estados dinámicos
+        foldersStatus: foldersStatus,
+        filesStatus: filesStatus,
+        storageStatus: storageStatus
+      }
+
+      setMetrics(realMetrics)
+      console.log('Métricas reales cargadas:', realMetrics)
+      
     } catch (error) {
-      console.error('Error loading metrics:', error)
+      console.error('Error loading real metrics:', error)
+      // Valores por defecto en caso de error
+      setMetrics({
+        tokensUsed: 0,
+        tokensLimit: 10000,
+        documentsProcessed: 0,
+        foldersCount: 0,
+        storage: 0,
+        searchesPerformed: 0,
+        chatsCreated: 0,
+        syncStatus: 'pending',
+        systemHealth: 'healthy',
+        // Estados dinámicos por defecto
+        foldersStatus: 'Estable',
+        filesStatus: 'Actual',
+        storageStatus: 'Óptimo'
+      })
     }
   }
 
@@ -618,12 +714,12 @@ const Dashboard = () => {
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Tokens - Métrica más importante */}
-                <div className="bg-white border border-gray-200 rounded-3xl p-4 shadow-sm h-[163px] flex flex-col">
-                  <div className="flex items-center justify-between mb-2">
+                <div className="bg-white border border-gray-200 rounded-3xl p-4 shadow-sm h-[181.5px] flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
                     <div className="p-2 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-sm">
                       <CpuChipIcon className="h-4 w-4 text-white" />
                     </div>
-                    <div className={`flex items-center text-xs ${
+                    <div className={`flex items-center text-sm ${
                       metrics.tokensUsed / metrics.tokensLimit > 0.8 ? 'text-red-500' : 'text-green-500'
                     }`}>
                       {metrics.tokensUsed / metrics.tokensLimit > 0.8 ? (
@@ -634,83 +730,125 @@ const Dashboard = () => {
                       {Math.round((metrics.tokensUsed / metrics.tokensLimit) * 100)}%
                     </div>
                   </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-1">
-                    {formatNumber(metrics.tokensUsed)}
-                  </h3>
-                  <p className="text-xs text-gray-600 mb-2">Tokens utilizados este mes</p>
-                  <div className="w-full bg-gray-200 rounded-full h-1">
-                    <div
-                      className={`h-1 rounded-full transition-all duration-300 ${
-                        metrics.tokensUsed / metrics.tokensLimit > 0.8 ? 'bg-red-500' : 'bg-blue-500'
-                      }`}
-                      style={{ width: `${Math.min((metrics.tokensUsed / metrics.tokensLimit) * 100, 100)}%` }}
-                    ></div>
+                  <div className="text-center flex-1 flex flex-col justify-center">
+                    <h3 className="text-lg font-bold text-gray-900 mb-1">
+                      {formatNumber(metrics.tokensUsed)}
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-2">Tokens usados</p>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Límite: {formatNumber(metrics.tokensLimit)}
-                  </p>
+                  <div className="space-y-2">
+                    <div className="w-full bg-gray-200 rounded-full h-1">
+                      <div
+                        className={`h-1 rounded-full transition-all duration-300 ${
+                          metrics.tokensUsed / metrics.tokensLimit > 0.8 ? 'bg-red-500' : 'bg-blue-500'
+                        }`}
+                        style={{ width: `${Math.min((metrics.tokensUsed / metrics.tokensLimit) * 100, 100)}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-sm text-gray-500 text-center">
+                      Límite: {formatNumber(metrics.tokensLimit)}
+                    </p>
+                  </div>
                 </div>
 
-                {/* Documentos */}
-                <div className="bg-white border border-gray-200 rounded-3xl p-4 shadow-sm h-[163px] flex flex-col">
-                  <div className="flex items-center justify-between mb-2">
+                {/* Carpetas */}
+                <div className="bg-white border border-gray-200 rounded-3xl p-4 shadow-sm h-[181.5px] flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <div className="p-2 bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-xl shadow-sm">
+                      <FolderOpenIcon className="h-4 w-4 text-white" />
+                    </div>
+                    <div className={`flex items-center text-sm ${
+                      metrics.foldersStatus === 'Activo' ? 'text-green-500' : 'text-yellow-500'
+                    }`}>
+                      {metrics.foldersStatus === 'Activo' ? (
+                        <ArrowTrendingUpIcon className="h-3 w-3 mr-1" />
+                      ) : (
+                        <MinusIcon className="h-3 w-3 mr-1" />
+                      )}
+                      {metrics.foldersStatus}
+                    </div>
+                  </div>
+                  <div className="text-center flex-1 flex flex-col justify-center">
+                    <h3 className="text-lg font-bold text-gray-900 mb-1">
+                      {formatNumber(metrics.foldersCount || 0)}
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-2">Carpetas</p>
+                  </div>
+                  <div className="flex items-center text-sm text-gray-500 justify-center">
+                    <CheckCircleIcon className="h-3 w-3 mr-1 text-green-500" />
+                    Organizadas
+                  </div>
+                </div>
+
+                {/* Archivos */}
+                <div className="bg-white border border-gray-200 rounded-3xl p-4 shadow-sm h-[181.5px] flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
                     <div className="p-2 bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-sm">
                       <DocumentIcon className="h-4 w-4 text-white" />
                     </div>
-                    <div className="flex items-center text-green-500 text-xs">
-                      <ArrowTrendingUpIcon className="h-3 w-3 mr-1" />
-                      +12%
+                    <div className={`flex items-center text-sm ${
+                      metrics.filesStatus === 'Procesando' ? 'text-blue-500' :
+                      metrics.filesStatus === 'Vacío' ? 'text-gray-500' : 'text-green-500'
+                    }`}>
+                      {metrics.filesStatus === 'Procesando' ? (
+                        <ArrowPathIcon className="h-3 w-3 mr-1 animate-spin" />
+                      ) : metrics.filesStatus === 'Vacío' ? (
+                        <MinusIcon className="h-3 w-3 mr-1" />
+                      ) : (
+                        <CheckCircleIcon className="h-3 w-3 mr-1" />
+                      )}
+                      {metrics.filesStatus}
                     </div>
                   </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-1">
-                    {formatNumber(metrics.documentsProcessed)}
-                  </h3>
-                  <p className="text-xs text-gray-600 mb-2">Documentos procesados</p>
-                  <div className="flex items-center text-xs text-gray-500">
+                  <div className="text-center flex-1 flex flex-col justify-center">
+                    <h3 className="text-lg font-bold text-gray-900 mb-1">
+                      {formatNumber(metrics.documentsProcessed)}
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-2">Archivos</p>
+                  </div>
+                  <div className="flex items-center text-sm text-gray-500 justify-center">
                     <CheckCircleIcon className="h-3 w-3 mr-1 text-green-500" />
                     Todos sincronizados
                   </div>
                 </div>
 
-                {/* Búsquedas */}
-                <div className="bg-white border border-gray-200 rounded-3xl p-4 shadow-sm h-[163px] flex flex-col">
-                  <div className="flex items-center justify-between mb-2">
+                {/* Almacenamiento */}
+                <div className="bg-white border border-gray-200 rounded-3xl p-4 shadow-sm h-[181.5px] flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
                     <div className="p-2 bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl shadow-sm">
-                      <MagnifyingGlassIcon className="h-4 w-4 text-white" />
+                      <CloudIcon className="h-4 w-4 text-white" />
                     </div>
-                    <div className="flex items-center text-purple-500 text-xs">
-                      <ArrowTrendingUpIcon className="h-3 w-3 mr-1" />
-                      +8%
-                    </div>
-                  </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-1">
-                    {formatNumber(metrics.searchesPerformed)}
-                  </h3>
-                  <p className="text-xs text-gray-600 mb-2">Búsquedas realizadas</p>
-                  <div className="flex items-center text-xs text-gray-500">
-                    <FireIcon className="h-3 w-3 mr-1 text-orange-500" />
-                    Alta actividad
-                  </div>
-                </div>
-
-                {/* Chats */}
-                <div className="bg-white border border-gray-200 rounded-3xl p-4 shadow-sm h-[163px] flex flex-col">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="p-2 bg-gradient-to-br from-pink-500 to-pink-600 rounded-xl shadow-sm">
-                      <ChatBubbleLeftRightIcon className="h-4 w-4 text-white" />
-                    </div>
-                    <div className="flex items-center text-pink-500 text-xs">
-                      <ArrowTrendingUpIcon className="h-3 w-3 mr-1" />
-                      +15%
+                    <div className={`flex items-center text-sm ${
+                      metrics.storageStatus === 'Crítico' ? 'text-red-500' :
+                      metrics.storageStatus === 'Alto' ? 'text-orange-500' :
+                      metrics.storageStatus === 'Moderado' ? 'text-yellow-500' : 'text-purple-500'
+                    }`}>
+                      {metrics.storageStatus === 'Crítico' ? (
+                        <ArrowTrendingUpIcon className="h-3 w-3 mr-1" />
+                      ) : metrics.storageStatus === 'Alto' ? (
+                        <ArrowTrendingUpIcon className="h-3 w-3 mr-1" />
+                      ) : metrics.storageStatus === 'Moderado' ? (
+                        <MinusIcon className="h-3 w-3 mr-1" />
+                      ) : (
+                        <CheckCircleIcon className="h-3 w-3 mr-1" />
+                      )}
+                      {metrics.storageStatus}
                     </div>
                   </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-1">
-                    {formatNumber(metrics.chatsCreated)}
-                  </h3>
-                  <p className="text-xs text-gray-600 mb-2">Conversaciones con IA</p>
-                  <div className="flex items-center text-xs text-gray-500">
-                    <SparklesIcon className="h-3 w-3 mr-1 text-purple-500" />
-                    IA respondiendo
+                  <div className="text-center flex-1 flex flex-col justify-center">
+                    <h3 className="text-lg font-bold text-gray-900 mb-1">
+                      {metrics.storage > 1024 * 1024
+                        ? `${(metrics.storage / (1024 * 1024)).toFixed(1)} MB`
+                        : metrics.storage > 1024
+                        ? `${(metrics.storage / 1024).toFixed(1)} KB`
+                        : `${metrics.storage} B`
+                      }
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-2">Almacenamiento</p>
+                  </div>
+                  <div className="flex items-center text-sm text-gray-500 justify-center">
+                    <CheckCircleIcon className="h-3 w-3 mr-1 text-green-500" />
+                    Google Drive
                   </div>
                 </div>
               </div>
@@ -740,7 +878,7 @@ const Dashboard = () => {
                 </div>
               </div>
               
-              <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm min-h-[341px]">
+              <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm min-h-[231px]">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
                     <div className="flex items-center space-x-3">
@@ -803,29 +941,57 @@ const Dashboard = () => {
                         if (isSyncing) return
                         
                         setIsSyncing(true)
+                        setSystemStatus(prev => ({ ...prev, syncInProgress: true }))
                         toast.loading('Iniciando sincronización de Drive...', { id: 'sync-drive' })
                         
                         try {
-                          console.log('Sincronizando Drive...')
+                          console.log('Iniciando sincronización real de Drive...')
                           
-                          // Simular proceso de sincronización (aquí iría la lógica real)
-                          await new Promise(resolve => setTimeout(resolve, 3000))
+                          // Usar el SyncService real
+                          const syncService = new SyncService(user?.email)
+                          await syncService.initialize()
+                          
+                          // Detectar discrepancias
+                          const discrepancies = await syncService.detectDiscrepancies()
+                          console.log('Discrepancias detectadas:', discrepancies)
+                          
+                          if (discrepancies && (discrepancies.toAdd?.length > 0 || discrepancies.toRemove?.length > 0 || discrepancies.toUpdate?.length > 0)) {
+                            // Construir acciones para aplicar
+                            const actions = {
+                              addFiles: discrepancies.toAdd || [],
+                              removeFiles: discrepancies.toRemove || [],
+                              updateFiles: discrepancies.toUpdate || []
+                            }
+                            
+                            // Aplicar sincronización
+                            const result = await syncService.applySyncActions(actions)
+                            console.log('Resultado de sincronización:', result)
+                            
+                            if (result && (result.added || result.removed || result.updated)) {
+                              toast.success(`Sincronización completada: ${result.added?.length || 0} agregados, ${result.removed?.length || 0} eliminados, ${result.updated?.length || 0} actualizados`, { id: 'sync-drive' })
+                            } else {
+                              toast.success('Todo está sincronizado. No hay cambios pendientes.', { id: 'sync-drive' })
+                            }
+                          } else {
+                            toast.success('Todo está sincronizado. No hay cambios pendientes.', { id: 'sync-drive' })
+                          }
                           
                           // Actualizar última sincronización
+                          const now = new Date()
                           setSystemStatus(prev => ({
                             ...prev,
-                            lastSync: new Date(),
+                            lastSync: now,
                             syncInProgress: false
                           }))
                           
-                          toast.success('Sincronización completada exitosamente', { id: 'sync-drive' })
-                          console.log('Sincronización completada')
+                          console.log('Sincronización real completada a las:', now.toISOString())
                           
                         } catch (error) {
-                          console.error('Error en sincronización:', error)
-                          toast.error('Error en la sincronización de Drive', { id: 'sync-drive' })
+                          console.error('Error en sincronización real:', error)
+                          toast.error(`Error en la sincronización: ${error.message}`, { id: 'sync-drive' })
                         } finally {
                           setIsSyncing(false)
+                          setSystemStatus(prev => ({ ...prev, syncInProgress: false }))
                         }
                       }}
                       disabled={isSyncing}
