@@ -300,12 +300,22 @@ const Login = () => {
               © 2024 Brify AI. Todos los derechos reservados.
             </p>
             <div className="mt-2 flex justify-center space-x-4">
-              <button className="text-xs text-white hover:text-gray-300 transition-colors">
+              <a
+                href="https://www.brifyai.com/privacidad.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-white hover:text-gray-300 transition-colors"
+              >
                 Privacidad
-              </button>
-              <button className="text-xs text-white hover:text-gray-300 transition-colors">
+              </a>
+              <a
+                href="https://www.brifyai.com/terminos.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-white hover:text-gray-300 transition-colors"
+              >
                 Términos
-              </button>
+              </a>
               <button className="text-xs text-white hover:text-gray-300 transition-colors">
                 Soporte
               </button>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, EyeSlashIcon, UserIcon, LockClosedIcon, EnvelopeIcon, ArrowRightIcon } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
 
 const Register = () => {
@@ -104,204 +104,359 @@ const Register = () => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <div className="mx-auto h-12 w-12 flex items-center justify-center rounded-full bg-primary-100">
-            <svg className="h-8 w-8 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-            </svg>
-          </div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Crear Cuenta
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            ¿Ya tienes una cuenta?{' '}
-            <Link
-              to="/login"
-              className="font-medium text-primary-600 hover:text-primary-500 transition-colors duration-200"
-            >
-              Inicia sesión aquí
-            </Link>
-          </p>
+    <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-black flex">
+      {/* Panel Izquierdo - Branding */}
+      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-purple-600 to-pink-700 relative overflow-hidden">
+        <div className="absolute inset-0 bg-black opacity-20"></div>
+        
+        {/* Patrón decorativo */}
+        <div className="absolute inset-0">
+          <div className="absolute top-20 left-20 w-32 h-32 bg-white/10 rounded-full blur-xl"></div>
+          <div className="absolute bottom-20 right-20 w-48 h-48 bg-white/5 rounded-full blur-2xl"></div>
+          <div className="absolute top-1/2 left-1/3 w-24 h-24 bg-white/10 rounded-full blur-lg"></div>
         </div>
         
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="space-y-4">
+        <div className="relative z-10 flex flex-col justify-center px-12 py-16">
+          <div className="flex items-center space-x-4 mb-8">
+            <div className="w-16 h-16 bg-white rounded-2xl shadow-2xl flex items-center justify-center">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M2 17L12 22L22 17" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M2 12L12 17L22 12" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-4xl font-bold text-white">Brify AI</h1>
+              <p className="text-purple-100 text-lg">Comienza tu viaje</p>
+            </div>
+          </div>
+          
+          <div className="space-y-6">
+            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
+              <h3 className="text-xl font-semibold text-white mb-3">🎯 Únete a la Revolución</h3>
+              <p className="text-purple-100">
+                Forma parte de la nueva era de la gestión documental con inteligencia artificial
+              </p>
+            </div>
+            
+            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
+              <h3 className="text-xl font-semibold text-white mb-3">⚡ Productividad Instantánea</h3>
+              <p className="text-purple-100">
+                Automatiza tareas repetitivas y enfócate en lo que realmente importa
+              </p>
+            </div>
+            
+            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
+              <h3 className="text-xl font-semibold text-white mb-3">🔒 Seguridad Garantizada</h3>
+              <p className="text-purple-100">
+                Tus datos están protegidos con encriptación de nivel empresarial
+              </p>
+            </div>
+          </div>
+          
+          <div className="mt-12 flex items-center space-x-4">
+            <div className="w-12 h-12 bg-green-400 rounded-full flex items-center justify-center">
+              <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-white font-medium">Únete a la Comunidad</p>
+              <p className="text-purple-100 text-sm">Más de 10,000 usuarios activos</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Panel Derecho - Formulario */}
+      <div className="flex-1 flex items-center justify-center px-6 py-12 sm:px-8 lg:px-16">
+        <div className="max-w-md w-full">
+          {/* Logo móvil */}
+          <div className="lg:hidden flex items-center justify-center mb-8">
+            <div className="w-12 h-12 bg-black rounded-2xl shadow-lg flex items-center justify-center">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <span className="ml-3 text-2xl font-bold text-gray-900">Brify AI</span>
+          </div>
+
+          <div className="text-center mb-8">
+            <h2 className="text-4xl font-bold text-white mb-2">
+              Crea tu cuenta
+            </h2>
+            <p className="text-lg text-white">
+              Comienza a transformar tu productividad hoy
+            </p>
+          </div>
+          
+          <form className="space-y-6" onSubmit={handleSubmit}>
             {/* Name */}
             <div>
-              <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+              <label htmlFor="name" className="block text-sm font-semibold text-gray-900 mb-2">
                 Nombre Completo
               </label>
-              <div className="mt-1">
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <UserIcon className="h-5 w-5 text-gray-400" />
+                </div>
                 <input
                   id="name"
                   name="name"
                   type="text"
                   autoComplete="name"
                   required
-                  className={`input-field ${errors.name ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
+                  className={`w-full pl-12 pr-4 py-4 border ${errors.name ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 'border-gray-200 focus:border-purple-500 focus:ring-purple-500'} rounded-2xl focus:ring-2 focus:outline-none transition-all duration-200 bg-white text-gray-900 placeholder-gray-400`}
                   placeholder="Tu nombre completo"
                   value={formData.name}
                   onChange={handleChange}
                 />
-                {errors.name && (
-                  <p className="mt-1 text-sm text-red-600">{errors.name}</p>
-                )}
               </div>
+              {errors.name && (
+                <p className="mt-2 text-sm text-red-600 flex items-center">
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {errors.name}
+                </p>
+              )}
             </div>
 
             {/* Email */}
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+              <label htmlFor="email" className="block text-sm font-semibold text-gray-900 mb-2">
                 Correo Electrónico
               </label>
-              <div className="mt-1">
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <EnvelopeIcon className="h-5 w-5 text-gray-400" />
+                </div>
                 <input
                   id="email"
                   name="email"
                   type="email"
                   autoComplete="email"
                   required
-                  className={`input-field ${errors.email ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
+                  className={`w-full pl-12 pr-4 py-4 border ${errors.email ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 'border-gray-200 focus:border-purple-500 focus:ring-purple-500'} rounded-2xl focus:ring-2 focus:outline-none transition-all duration-200 bg-white text-gray-900 placeholder-gray-400`}
                   placeholder="tu@email.com"
                   value={formData.email}
                   onChange={handleChange}
                 />
-                {errors.email && (
-                  <p className="mt-1 text-sm text-red-600">{errors.email}</p>
-                )}
               </div>
+              {errors.email && (
+                <p className="mt-2 text-sm text-red-600 flex items-center">
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {errors.email}
+                </p>
+              )}
             </div>
 
             {/* Telegram ID */}
             <div>
-              <label htmlFor="telegramId" className="block text-sm font-medium text-gray-700">
+              <label htmlFor="telegramId" className="block text-sm font-semibold text-gray-900 mb-2">
                 ID de Telegram <span className="text-gray-500">(Opcional)</span>
               </label>
-              <div className="mt-1">
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                </div>
                 <input
                   id="telegramId"
                   name="telegramId"
                   type="text"
-                  className={`input-field ${errors.telegramId ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
+                  className={`w-full pl-12 pr-4 py-4 border ${errors.telegramId ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 'border-gray-200 focus:border-purple-500 focus:ring-purple-500'} rounded-2xl focus:ring-2 focus:outline-none transition-all duration-200 bg-white text-gray-900 placeholder-gray-400`}
                   placeholder="123456789"
                   value={formData.telegramId}
                   onChange={handleChange}
                 />
-                {errors.telegramId && (
-                  <p className="mt-1 text-sm text-red-600">{errors.telegramId}</p>
-                )}
-                <p className="mt-1 text-xs text-gray-500">
-                  Puedes encontrar tu ID de Telegram contactando a @userinfobot
+              </div>
+              {errors.telegramId && (
+                <p className="mt-2 text-sm text-red-600 flex items-center">
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {errors.telegramId}
                 </p>
+              )}
+              <p className="mt-1 text-xs text-gray-500">
+                Puedes encontrar tu ID de Telegram contactando a @userinfobot
+              </p>
             </div>
-          </div>
 
-          {/* Password */}
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-              Contraseña
-            </label>
-              <div className="mt-1 relative">
+            {/* Password */}
+            <div>
+              <label htmlFor="password" className="block text-sm font-semibold text-gray-900 mb-2">
+                Contraseña
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <LockClosedIcon className="h-5 w-5 text-gray-400" />
+                </div>
                 <input
                   id="password"
                   name="password"
                   type={showPassword ? 'text' : 'password'}
                   autoComplete="new-password"
                   required
-                  className={`input-field pr-10 ${errors.password ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
+                  className={`w-full pl-12 pr-12 py-4 border ${errors.password ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 'border-gray-200 focus:border-purple-500 focus:ring-purple-500'} rounded-2xl focus:ring-2 focus:outline-none transition-all duration-200 bg-white text-gray-900 placeholder-gray-400`}
                   placeholder="Mínimo 6 caracteres"
                   value={formData.password}
                   onChange={handleChange}
                 />
                 <button
                   type="button"
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                  className="absolute inset-y-0 right-0 pr-4 flex items-center"
                   onClick={() => setShowPassword(!showPassword)}
                 >
                   {showPassword ? (
-                    <EyeSlashIcon className="h-5 w-5 text-gray-400" />
+                    <EyeSlashIcon className="h-5 w-5 text-gray-400 hover:text-gray-600 transition-colors" />
                   ) : (
-                    <EyeIcon className="h-5 w-5 text-gray-400" />
+                    <EyeIcon className="h-5 w-5 text-gray-400 hover:text-gray-600 transition-colors" />
                   )}
                 </button>
-                {errors.password && (
-                  <p className="mt-1 text-sm text-red-600">{errors.password}</p>
-                )}
               </div>
+              {errors.password && (
+                <p className="mt-2 text-sm text-red-600 flex items-center">
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {errors.password}
+                </p>
+              )}
             </div>
 
             {/* Confirm Password */}
             <div>
-              <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">
+              <label htmlFor="confirmPassword" className="block text-sm font-semibold text-gray-900 mb-2">
                 Confirmar Contraseña
               </label>
-              <div className="mt-1 relative">
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <LockClosedIcon className="h-5 w-5 text-gray-400" />
+                </div>
                 <input
                   id="confirmPassword"
                   name="confirmPassword"
                   type={showConfirmPassword ? 'text' : 'password'}
                   autoComplete="new-password"
                   required
-                  className={`input-field pr-10 ${errors.confirmPassword ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
+                  className={`w-full pl-12 pr-12 py-4 border ${errors.confirmPassword ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 'border-gray-200 focus:border-purple-500 focus:ring-purple-500'} rounded-2xl focus:ring-2 focus:outline-none transition-all duration-200 bg-white text-gray-900 placeholder-gray-400`}
                   placeholder="Repite tu contraseña"
                   value={formData.confirmPassword}
                   onChange={handleChange}
                 />
                 <button
                   type="button"
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                  className="absolute inset-y-0 right-0 pr-4 flex items-center"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 >
                   {showConfirmPassword ? (
-                    <EyeSlashIcon className="h-5 w-5 text-gray-400" />
+                    <EyeSlashIcon className="h-5 w-5 text-gray-400 hover:text-gray-600 transition-colors" />
                   ) : (
-                    <EyeIcon className="h-5 w-5 text-gray-400" />
+                    <EyeIcon className="h-5 w-5 text-gray-400 hover:text-gray-600 transition-colors" />
                   )}
                 </button>
-                {errors.confirmPassword && (
-                  <p className="mt-1 text-sm text-red-600">{errors.confirmPassword}</p>
-                )}
               </div>
+              {errors.confirmPassword && (
+                <p className="mt-2 text-sm text-red-600 flex items-center">
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {errors.confirmPassword}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-black hover:bg-gray-800 text-white font-semibold py-4 px-6 rounded-2xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center space-x-2"
+              >
+                {isLoading ? (
+                  <>
+                    <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"></div>
+                    <span>Creando cuenta...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Crear Cuenta</span>
+                    <ArrowRightIcon className="h-5 w-5" />
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="text-center pt-6 border-t border-gray-200">
+              <p className="text-white">
+                ¿Ya tienes una cuenta?{' '}
+                <Link
+                  to="/login"
+                  className="font-semibold text-purple-600 hover:text-purple-500 transition-colors duration-200"
+                >
+                  Inicia sesión aquí
+                </Link>
+              </p>
+            </div>
+
+            <div className="text-center">
+              <p className="text-xs text-white">
+                Al crear una cuenta, aceptas nuestros{' '}
+                <a 
+                  href="https://www.brifyai.com/terminos.html" 
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-purple-600 hover:text-purple-500 transition-colors duration-200"
+                >
+                  Términos de Servicio
+                </a>{' '}
+                y{' '}
+                <a 
+                  href="https://www.brifyai.com/privacidad.html" 
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-purple-600 hover:text-purple-500 transition-colors duration-200"
+                >
+                  Política de Privacidad
+                </a>
+              </p>
+            </div>
+          </form>
+
+          {/* Footer */}
+          <div className="mt-12 text-center">
+            <p className="text-xs text-white">
+              © 2024 Brify AI. Todos los derechos reservados.
+            </p>
+            <div className="mt-2 flex justify-center space-x-4">
+              <a 
+                href="https://www.brifyai.com/privacidad.html" 
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-white hover:text-gray-300 transition-colors"
+              >
+                Privacidad
+              </a>
+              <a 
+                href="https://www.brifyai.com/terminos.html" 
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-white hover:text-gray-300 transition-colors"
+              >
+                Términos
+              </a>
+              <button className="text-xs text-white hover:text-gray-300 transition-colors">
+                Soporte
+              </button>
             </div>
           </div>
-
-          <div>
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
-            >
-              {isLoading ? (
-                <div className="flex items-center">
-                  <div className="animate-spin -ml-1 mr-3 h-5 w-5 text-white">
-                    <svg className="w-full h-full" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                  </div>
-                  Creando cuenta...
-                </div>
-              ) : (
-                'Crear Cuenta'
-              )}
-            </button>
-          </div>
-
-          <div className="text-center">
-            <p className="text-xs text-gray-600">
-              Al crear una cuenta, aceptas nuestros{' '}
-              <a href="#" className="font-medium text-primary-600 hover:text-primary-500">
-                Términos de Servicio
-              </a>{' '}
-              y{' '}
-              <a href="#" className="font-medium text-primary-600 hover:text-primary-500">
-                Política de Privacidad
-              </a>
-            </p>
-          </div>
-        </form>
+        </div>
       </div>
     </div>
   )
