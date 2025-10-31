@@ -369,9 +369,8 @@ const Dashboard = () => {
   }
 
   const checkGoogleDriveConnection = () => {
-    const isConnected = !!(userProfile?.google_refresh_token && userProfile.google_refresh_token.trim() !== '')
+    const isConnected = !!(userProfile?.google_refresh_token)
     setIsGoogleDriveConnected(isConnected)
-    console.log('Dashboard: Google Drive connection status:', isConnected)
   }
 
   const handleConnectGoogleDrive = () => {
