@@ -201,18 +201,47 @@ const Profile = () => {
   }
 
   const handleGoogleDriveDisconnect = async () => {
-    if (window.confirm('¿Estás seguro de que quieres desconectar Google Drive?')) {
+    if (!window.confirm('¿Estás seguro de que quieres desconectar Google Drive?')) {
       return
     }
     
     try {
       setLoading(true)
       
-      // Limpiar tokens de Google Drive
-      await updateUserProfile({
+      // Limpiar tokens de Google Drive del perfil del usuario
+      const updatedProfile = {
+        ...userProfile,
         google_refresh_token: null,
         google_access_token: null
-      })
+      }
+      
+      await updateUserProfile(updatedProfile)
+      
+      // Eliminar completamente el registro de user_credentials asociado al email
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        // Primero intentar eliminar el registro completo
+        const { error: deleteError } = await supabase
+          .from('user_credentials')
+          .delete()
+          .eq('user_id', user.id)
+        
+        if (deleteError) {
+          console.error('Error deleting user_credentials:', deleteError)
+          // Si no se puede eliminar, al menos limpiar los tokens
+          await supabase
+            .from('user_credentials')
+            .update({
+              google_access_token: null,
+              google_refresh_token: null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', user.id)
+        }
+      }
+      
+      // Recargar el perfil del usuario para reflejar los cambios
+      await loadUserProfile()
       
       toast.success('Google Drive desconectado exitosamente')
     } catch (error) {

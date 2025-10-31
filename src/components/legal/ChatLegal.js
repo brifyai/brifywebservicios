@@ -10,6 +10,7 @@ import {
 import { supabase } from '../../lib/supabase'
 import fileExtractor from '../../services/fileContentExtractor'
 import groqService from '../../services/groqService'
+import conversationService from '../../services/conversationService'
 import { useAuth } from '../../contexts/AuthContext'
 
 const ChatLegal = () => {
@@ -475,6 +476,20 @@ ${fileContent.substring(0, 2000)}`
       }
 
       setMessages(prev => [...prev, aiMessage])
+      
+      // Registrar la conversación en la base de datos
+      try {
+        await conversationService.registrarConversacion(
+          user.email,
+          'chat_legal',
+          userMessage,
+          aiResponse
+        )
+        console.log('✅ Conversación legal registrada exitosamente')
+      } catch (error) {
+        console.error('❌ Error al registrar conversación legal:', error)
+        // No mostramos error al usuario para no interrumpir la experiencia
+      }
     } catch (error) {
       const errorMessage = {
         id: Date.now() + 1,

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import embeddingsService from '../../lib/embeddings';
+import conversationService from '../../services/conversationService';
 import LoadingSpinner from '../common/LoadingSpinner';
 import SubtleSpinner from '../common/SubtleSpinner';
 import AIChat from './AIChat';
@@ -36,6 +37,24 @@ const SemanticSearch = () => {
       
       const searchResults = await embeddingsService.searchSimilarContent(query, user.id, 10);
       setResults(searchResults || []);
+      
+      // Registrar la búsqueda semántica en la base de datos
+      try {
+        const resultadosTexto = searchResults && searchResults.length > 0 
+          ? `Se encontraron ${searchResults.length} resultados relevantes: ${searchResults.slice(0, 3).map(r => r.file_name).join(', ')}`
+          : 'No se encontraron resultados para la búsqueda';
+          
+        await conversationService.registrarConversacion(
+          user.email,
+          'busqueda_semantica',
+          query,
+          resultadosTexto
+        );
+        console.log('✅ Búsqueda semántica registrada exitosamente');
+      } catch (error) {
+        console.error('❌ Error al registrar búsqueda semántica:', error);
+        // No mostramos error al usuario para no interrumpir la experiencia
+      }
       
       if (searchResults && searchResults.length > 0) {
         toast.success(`Se encontraron ${searchResults.length} resultados`);

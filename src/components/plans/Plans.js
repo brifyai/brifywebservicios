@@ -21,7 +21,7 @@ import UpgradePlan from './UpgradePlan'
 import TemplateDownload from '../common/TemplateDownload'
 
 const Plans = () => {
-  const { user, userProfile, hasActivePlan, updateUserProfile } = useAuth()
+  const { user, userProfile, hasActivePlan, updateUserProfile, isGoogleDriveConnected } = useAuth()
   const { clearCacheAndRefetch } = useUserExtensions()
   const [plans, setPlans] = useState([])
   const [extensions, setExtensions] = useState([])
@@ -29,7 +29,6 @@ const Plans = () => {
   const [userExtensions, setUserExtensions] = useState([])
   const [loading, setLoading] = useState(true)
   const [processingPayment, setProcessingPayment] = useState(null)
-  const [isGoogleDriveConnected, setIsGoogleDriveConnected] = useState(false)
   const [showUpgradeModal, setShowUpgradeModal] = useState(false)
   const [currentPlanForUpgrade, setCurrentPlanForUpgrade] = useState(null)
   const [ranEnsureOnce, setRanEnsureOnce] = useState(false)
@@ -50,13 +49,6 @@ const Plans = () => {
     }
   }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Efecto para verificar Google Drive cuando userProfile cambie
-  useEffect(() => {
-    if (userProfile) {
-      checkGoogleDriveConnection()
-    }
-  }, [userProfile]) // eslint-disable-line react-hooks/exhaustive-deps
-
   // Reconciliar subcarpetas faltantes al cargar extensiones del usuario (idempotente)
   useEffect(() => {
     const reconcile = async () => {
@@ -69,14 +61,6 @@ const Plans = () => {
     reconcile()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, isGoogleDriveConnected, userExtensions])
-
-  const checkGoogleDriveConnection = () => {
-    // Usar la información ya disponible en userProfile desde AuthContext
-    // que incluye las credenciales de Google Drive
-    const isConnected = !!(userProfile?.google_refresh_token && userProfile.google_refresh_token.trim() !== '')
-    setIsGoogleDriveConnected(isConnected)
-    console.log('Plans: Google Drive connection status:', isConnected)
-  }
 
   const handleConnectGoogleDrive = () => {
     try {

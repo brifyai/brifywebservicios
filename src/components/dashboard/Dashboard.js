@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import googleDriveService from '../../lib/googleDrive'
+import conversationService from '../../services/conversationService'
 import {
   UserIcon,
   CreditCardIcon,
@@ -32,13 +33,44 @@ import {
   ArrowPathIcon
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
+import ConversationModal from '../common/ConversationModal'
+import InsightsIA from './InsightsIA'
 import SyncButton from '../drive/SyncButton'
 import { SyncService } from '../../services/SyncService'
 import toast from 'react-hot-toast'
 
+// Función para formatear bytes de manera estética (máximo GB para evitar números extensos)
+const formatBytes = (bytes) => {
+  if (bytes === 0) return '0 B'
+  
+  const k = 1024
+  const decimals = 1
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  
+  let i = Math.floor(Math.log(bytes) / Math.log(k))
+  
+  // Limitar a GB como máximo
+  i = Math.min(i, sizes.length - 1)
+  
+  const value = bytes / Math.pow(k, i)
+  
+  // Si es MB y el valor es mayor a 1000, convertir a GB
+  if (i === 2 && value >= 1000) {
+    i = 3 // Cambiar a GB
+    const gbValue = bytes / Math.pow(k, 3)
+    return parseFloat(gbValue.toFixed(decimals)) + ' ' + sizes[3]
+  }
+  
+  // Para valores enteros, no mostrar decimales
+  if (value % 1 === 0) {
+    return Math.round(value) + ' ' + sizes[i]
+  }
+  
+  return parseFloat(value.toFixed(decimals)) + ' ' + sizes[i]
+}
+
 const Dashboard = () => {
-  const { user, userProfile, hasActivePlan } = useAuth()
-  const [isGoogleDriveConnected, setIsGoogleDriveConnected] = useState(false)
+  const { user, userProfile, hasActivePlan, isGoogleDriveConnected } = useAuth()
   const [loading, setLoading] = useState(true)
   const [isNewUser, setIsNewUser] = useState(false)
   
@@ -72,6 +104,7 @@ const Dashboard = () => {
   const [recentDocuments, setRecentDocuments] = useState([])
   const [savedSearches, setSavedSearches] = useState([])
   const [recentChats, setRecentChats] = useState([])
+  const [conversaciones, setConversaciones] = useState([])
   
   // Estados para estado del sistema
   const [systemStatus, setSystemStatus] = useState({
@@ -94,6 +127,10 @@ const Dashboard = () => {
     trends: [],
     summaries: []
   })
+
+  // Estado para el modal de conversaciones
+  const [selectedConversation, setSelectedConversation] = useState(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
 
   // Timeout de seguridad para evitar loading infinito
   useEffect(() => {
@@ -127,7 +164,6 @@ const Dashboard = () => {
 
   useEffect(() => {
     if (userProfile) {
-      checkGoogleDriveConnection()
       loadMetrics()
       loadQuickAccessData()
       loadSystemStatus()
@@ -159,7 +195,7 @@ const Dashboard = () => {
       // Cargar uso de tokens real
       const { data: tokenData, error: tokenError } = await supabase
         .from('user_tokens_usage')
-        .select('total_tokens_used')
+        .select('tokens_used')
         .eq('user_id', user.id)
         .single()
 
@@ -179,23 +215,50 @@ const Dashboard = () => {
 
       // Cargar estadísticas reales de documentos con detalles
       const { data: docStats, error: docError } = await supabase
-        .from('documentos_usuario_entrenador')
-        .select('id, file_name, file_size, folder_id, created_at')
-        .eq('user_id', user.id)
+        .from('documentos_administrador')
+        .select('id, name, created_at')
+        .eq('administrador', user.email)
 
-      // Contar carpetas únicas reales
-      const uniqueFolderIds = [...new Set(docStats?.map(doc => doc.folder_id).filter(Boolean) || [])]
+      // Contar carpetas reales desde carpetas_usuario y grupos_drive
       let foldersCount = 0
-      if (uniqueFolderIds.length > 0) {
-        const { data: foldersData } = await supabase
-          .from('sub_carpetas_administrador')
+      
+      try {
+        // Contar carpetas en carpetas_usuario donde el usuario es administrador
+        const { data: carpetasUsuario, error: carpetasError } = await supabase
+          .from('carpetas_usuario')
           .select('id')
-          .in('id', uniqueFolderIds)
-        foldersCount = foldersData?.length || 0
+          .eq('administrador', user.email)
+        
+        if (carpetasError) {
+          console.error('Error consultando carpetas_usuario:', carpetasError)
+        } else {
+          foldersCount += carpetasUsuario?.length || 0
+        }
+        
+        // Contar carpetas en grupos_drive donde el usuario es administrador
+        const { data: gruposDrive, error: gruposError } = await supabase
+          .from('grupos_drive')
+          .select('id')
+          .eq('administrador', user.email)
+        
+        if (gruposError) {
+          console.error('Error consultando grupos_drive:', gruposError)
+        } else {
+          foldersCount += gruposDrive?.length || 0
+        }
+        
+        console.log(`Carpetas encontradas: ${carpetasUsuario?.length || 0} en carpetas_usuario + ${gruposDrive?.length || 0} en grupos_drive = ${foldersCount} total`)
+        
+      } catch (error) {
+        console.error('Error contando carpetas:', error)
+        foldersCount = 0
       }
 
-      // Calcular almacenamiento real
-      const totalStorage = docStats?.reduce((sum, doc) => sum + (doc.file_size || 0), 0) || 0
+      // Calcular almacenamiento basado en el peso estimado de los registros
+      // Cada registro en documentos_administrador ocupa aproximadamente:
+      // - UUID (36 chars) + nombre (promedio 50 chars) + metadatos + índices ≈ 2KB por registro
+      const BYTES_PER_RECORD = 2048 // 2KB por registro estimado
+      const totalStorage = (docStats?.length || 0) * BYTES_PER_RECORD
 
       // Cargar estadísticas de actividad real si existe la tabla user_activity_stats
       let searchesPerformed = 0
@@ -220,13 +283,34 @@ const Dashboard = () => {
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000)
       const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
       
-      // Estado de Carpetas: basado en carpetas creadas recientemente
+      // Estado de Carpetas: basado en carpetas creadas recientemente en ambas tablas
       let foldersStatus = 'Estable'
-      const recentFolders = docStats?.filter(doc =>
-        doc.folder_id && new Date(doc.created_at) > oneDayAgo
-      ).length || 0
-      if (recentFolders > 0) {
-        foldersStatus = 'Activo'
+      try {
+        // Verificar carpetas recientes en carpetas_usuario
+        const { data: recentCarpetasUsuario } = await supabase
+          .from('carpetas_usuario')
+          .select('created_at')
+          .eq('administrador', user.email)
+          .gte('created_at', oneDayAgo.toISOString())
+        
+        // Verificar carpetas recientes en grupos_drive
+        const { data: recentGruposDrive } = await supabase
+          .from('grupos_drive')
+          .select('created_at')
+          .eq('administrador', user.email)
+          .gte('created_at', oneDayAgo.toISOString())
+        
+        const recentFoldersCount = (recentCarpetasUsuario?.length || 0) + (recentGruposDrive?.length || 0)
+        
+        if (recentFoldersCount > 0) {
+          foldersStatus = 'Activo'
+        }
+        
+        console.log(`Carpetas recientes: ${recentFoldersCount} (${recentCarpetasUsuario?.length || 0} + ${recentGruposDrive?.length || 0})`)
+        
+      } catch (error) {
+        console.error('Error calculando estado de carpetas:', error)
+        foldersStatus = 'Estable'
       }
       
       // Estado de Archivos: basado en archivos procesados recientemente
@@ -253,7 +337,7 @@ const Dashboard = () => {
 
       // Métricas reales con estados dinámicos
       const realMetrics = {
-        tokensUsed: tokenData?.total_tokens_used || 0,
+        tokensUsed: tokenData?.tokens_used || 0,
         tokensLimit: tokensLimit,
         documentsProcessed: docStats?.length || 0,
         foldersCount: foldersCount,
@@ -296,13 +380,17 @@ const Dashboard = () => {
     try {
       // Cargar documentos recientes
       const { data: recentDocs } = await supabase
-        .from('documentos_usuario_entrenador')
-        .select('*')
-        .eq('user_id', user.id)
+        .from('documentos_administrador')
+        .select('id, name, file_id, created_at')
+        .eq('administrador', user.email)
         .order('created_at', { ascending: false })
-        .limit(5)
+        .limit(3)
 
       setRecentDocuments(recentDocs || [])
+
+      // Cargar conversaciones recientes
+      const conversacionesRecientes = await conversationService.obtenerConversaciones(user.email)
+      setConversaciones(conversacionesRecientes)
 
       // Simular búsquedas guardadas y chats recientes
       setSavedSearches([
@@ -368,11 +456,6 @@ const Dashboard = () => {
     }
   }
 
-  const checkGoogleDriveConnection = () => {
-    const isConnected = !!(userProfile?.google_refresh_token)
-    setIsGoogleDriveConnected(isConnected)
-  }
-
   const handleConnectGoogleDrive = () => {
     try {
       const authUrl = googleDriveService.generateAuthUrl()
@@ -381,6 +464,57 @@ const Dashboard = () => {
       console.error('Error getting auth URL:', error)
       toast.error('Error al conectar con Google Drive')
     }
+  }
+
+  const openGoogleDriveFile = (fileId) => {
+    if (fileId) {
+      const driveUrl = `https://drive.google.com/file/d/${fileId}/view`
+      window.open(driveUrl, '_blank')
+    }
+  }
+
+  const generarUltimasActividades = () => {
+    const actividades = []
+
+    // Agregar documentos recientes como actividades
+    recentDocuments.forEach(doc => {
+      actividades.push({
+        id: `doc-${doc.id}`,
+        tipo: 'documento',
+        titulo: 'Nuevo documento procesado',
+        descripcion: doc.name || `Documento ${doc.id}`,
+        fecha: new Date(doc.created_at),
+        icono: 'DocumentIcon',
+        color: 'blue'
+      })
+    })
+
+    // Agregar conversaciones como actividades
+    conversaciones.forEach((conv, index) => {
+      const tipoIcono = conv.tipo === 'Chat General' ? 'ChatBubbleLeftRightIcon' : 
+                       conv.tipo === 'Búsqueda Semántica' ? 'MagnifyingGlassIcon' : 
+                       'SparklesIcon'
+      const color = conv.tipo === 'Chat General' ? 'purple' : 
+                   conv.tipo === 'Búsqueda Semántica' ? 'green' : 
+                   'yellow'
+      
+      actividades.push({
+        id: `conv-${index}`,
+        tipo: 'conversacion',
+        titulo: conv.tipo === 'Búsqueda Semántica' ? 'Búsqueda por Texto realizada' : 
+               conv.tipo === 'Chat General' ? 'Nueva conversación con IA' : 
+               'Consulta con Chat IA',
+        descripcion: conv.pregunta.substring(0, 50) + (conv.pregunta.length > 50 ? '...' : ''),
+        fecha: new Date(conv.fecha),
+        icono: tipoIcono,
+        color: color
+      })
+    })
+
+    // Ordenar por fecha más reciente y tomar solo las 3 más recientes
+    return actividades
+      .sort((a, b) => b.fecha - a.fecha)
+      .slice(0, 3)
   }
 
   const toggleWidget = (widgetName) => {
@@ -406,6 +540,17 @@ const Dashboard = () => {
     if (diffHours < 24) return `Hace ${diffHours} h`
     const diffDays = Math.floor(diffHours / 24)
     return `Hace ${diffDays} d`
+  }
+
+  // Funciones para el modal de conversaciones
+  const handleConversationClick = (conversation) => {
+    setSelectedConversation(conversation)
+    setIsModalOpen(true)
+  }
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false)
+    setSelectedConversation(null)
   }
 
   if (loading) {
@@ -1030,12 +1175,7 @@ const Dashboard = () => {
                   </div>
                   <div className="text-center flex-1 flex flex-col justify-center">
                     <h3 className="text-lg font-bold text-gray-900 mb-1">
-                      {metrics.storage > 1024 * 1024
-                        ? `${(metrics.storage / (1024 * 1024)).toFixed(1)} MB`
-                        : metrics.storage > 1024
-                        ? `${(metrics.storage / 1024).toFixed(1)} KB`
-                        : `${metrics.storage} B`
-                      }
+                      {formatBytes(metrics.storage)}
                     </h3>
                     <p className="text-sm text-gray-600 mb-2">Almacenamiento</p>
                   </div>
@@ -1105,7 +1245,13 @@ const Dashboard = () => {
                     </span>
                   </div>
                   
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
+                  <div className={`flex items-center justify-between p-4 rounded-xl ${
+                    systemStatus.services.drive === 'disconnected' 
+                      ? 'bg-yellow-50 hover:bg-yellow-100 cursor-pointer transition-colors' 
+                      : 'bg-gray-50'
+                  }`}
+                  onClick={systemStatus.services.drive === 'disconnected' ? handleConnectGoogleDrive : undefined}
+                  >
                     <div className="flex items-center space-x-3">
                       <div className={`w-3 h-3 rounded-full ${
                         systemStatus.services.drive === 'healthy' ? 'bg-green-500' : 
@@ -1113,16 +1259,23 @@ const Dashboard = () => {
                       }`}></div>
                       <span className="text-sm font-medium text-gray-900">Google Drive</span>
                     </div>
-                    <span className={`text-xs px-2 py-1 rounded-full ${
-                      systemStatus.services.drive === 'healthy' 
-                        ? 'bg-green-100 text-green-700' 
-                        : systemStatus.services.drive === 'disconnected'
-                        ? 'bg-yellow-100 text-yellow-700'
-                        : 'bg-red-100 text-red-700'
-                    }`}>
-                      {systemStatus.services.drive === 'healthy' ? 'Conectado' : 
-                       systemStatus.services.drive === 'disconnected' ? 'Desconectado' : 'Error'}
-                    </span>
+                    <div className="flex items-center space-x-2">
+                      <span className={`text-xs px-2 py-1 rounded-full ${
+                        systemStatus.services.drive === 'healthy' 
+                          ? 'bg-green-100 text-green-700' 
+                          : systemStatus.services.drive === 'disconnected'
+                          ? 'bg-yellow-100 text-yellow-700'
+                          : 'bg-red-100 text-red-700'
+                      }`}>
+                        {systemStatus.services.drive === 'healthy' ? 'Conectado' : 
+                         systemStatus.services.drive === 'disconnected' ? 'Desconectado' : 'Error'}
+                      </span>
+                      {systemStatus.services.drive === 'disconnected' && (
+                        <span className="text-xs text-yellow-600 font-medium">
+                          Clic para conectar
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 
@@ -1246,38 +1399,27 @@ const Dashboard = () => {
               <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Últimas actividades</h3>
                 <div className="space-y-4">
-                  <div className="flex items-center space-x-4 p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors cursor-pointer">
-                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                      <DocumentIcon className="h-5 w-5 text-blue-600" />
+                  {generarUltimasActividades().length > 0 ? (
+                    generarUltimasActividades().map(actividad => (
+                      <div key={actividad.id} className="flex items-center space-x-4 p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors cursor-pointer">
+                        <div className={`w-10 h-10 bg-${actividad.color}-100 rounded-full flex items-center justify-center`}>
+                          {actividad.icono === 'DocumentIcon' && <DocumentIcon className={`h-5 w-5 text-${actividad.color}-600`} />}
+                          {actividad.icono === 'ChatBubbleLeftRightIcon' && <ChatBubbleLeftRightIcon className={`h-5 w-5 text-${actividad.color}-600`} />}
+                          {actividad.icono === 'MagnifyingGlassIcon' && <MagnifyingGlassIcon className={`h-5 w-5 text-${actividad.color}-600`} />}
+                          {actividad.icono === 'SparklesIcon' && <SparklesIcon className={`h-5 w-5 text-${actividad.color}-600`} />}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-gray-900">{actividad.titulo}</p>
+                          <p className="text-xs text-gray-500">{actividad.descripcion}</p>
+                        </div>
+                        <span className="text-xs text-gray-500">{formatTimestamp(actividad.fecha)}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-gray-500">No hay actividades recientes</p>
                     </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900">Nuevo documento procesado</p>
-                      <p className="text-xs text-gray-500">Contrato de servicios.pdf</p>
-                    </div>
-                    <span className="text-xs text-gray-500">Hace 5 min</span>
-                  </div>
-                  
-                  <div className="flex items-center space-x-4 p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors cursor-pointer">
-                    <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
-                      <ChatBubbleLeftRightIcon className="h-5 w-5 text-purple-600" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900">Nueva conversación con IA</p>
-                      <p className="text-xs text-gray-500">Análisis de informe financiero</p>
-                    </div>
-                    <span className="text-xs text-gray-500">Hace 15 min</span>
-                  </div>
-                  
-                  <div className="flex items-center space-x-4 p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors cursor-pointer">
-                    <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                      <MagnifyingGlassIcon className="h-5 w-5 text-green-600" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900">Búsqueda por Texto realizada</p>
-                      <p className="text-xs text-gray-500">"cláusulas de confidencialidad"</p>
-                    </div>
-                    <span className="text-xs text-gray-500">Hace 30 min</span>
-                  </div>
+                  )}
                 </div>
               </div>
 
@@ -1292,16 +1434,22 @@ const Dashboard = () => {
                   <div className="space-y-2">
                     {recentDocuments.length > 0 ? (
                       recentDocuments.slice(0, 3).map(doc => (
-                        <div key={doc.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
+                        <div key={doc.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
                           <div className="flex items-center space-x-2">
                             <div className="w-6 h-6 bg-blue-100 rounded flex items-center justify-center">
                               <DocumentIcon className="h-3 w-3 text-blue-600" />
                             </div>
                             <p className="text-xs font-medium text-gray-900 truncate max-w-32">
-                              {doc.nombre_archivo || `Documento ${doc.id}`}
+                              {doc.name || `Documento ${doc.id}`}
                             </p>
                           </div>
-                          <EyeIcon className="h-3 w-3 text-gray-400 hover:text-gray-600" />
+                          <button
+                            onClick={() => openGoogleDriveFile(doc.file_id)}
+                            className="p-1 hover:bg-gray-200 rounded transition-colors"
+                            title="Ver en Google Drive"
+                          >
+                            <EyeIcon className="h-3 w-3 text-gray-400 hover:text-blue-600" />
+                          </button>
                         </div>
                       ))
                     ) : (
@@ -1319,14 +1467,25 @@ const Dashboard = () => {
                     <ChatBubbleLeftRightIcon className="h-4 w-4 text-gray-400" />
                   </div>
                   <div className="space-y-2">
-                    {recentChats.map(chat => (
-                      <div key={chat.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
-                        <div className="flex-1">
-                          <p className="text-xs font-medium text-gray-900">{chat.title}</p>
+                    {conversaciones.length > 0 ? (
+                      conversaciones.map((conv, index) => (
+                        <div 
+                          key={index} 
+                          className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-200 border border-transparent transition-all cursor-pointer group"
+                          onClick={() => handleConversationClick(conv)}
+                        >
+                          <div className="flex-1">
+                            <p className="text-xs font-medium text-gray-900 group-hover:text-blue-900">{conv.pregunta.substring(0, 40)}...</p>
+                            <p className="text-xs text-gray-500 group-hover:text-blue-600">{conversationService.formatearTipoActividad(conv.tipo)}</p>
+                          </div>
+                          <span className="text-xs text-gray-500 group-hover:text-blue-600">{formatTimestamp(new Date(conv.fecha))}</span>
                         </div>
-                        <span className="text-xs text-gray-500">{formatTimestamp(chat.timestamp)}</span>
+                      ))
+                    ) : (
+                      <div className="text-center py-4">
+                        <p className="text-xs text-gray-500">No hay conversaciones recientes</p>
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
               </div>
@@ -1337,74 +1496,18 @@ const Dashboard = () => {
         {/* INSIGHTS DE IA - PRIORIDAD #4 */}
         {widgets.aiInsights && (
           <div className="mb-8">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-gray-900">Insights de IA</h2>
-              <div className="flex items-center space-x-2 text-sm text-gray-500">
-                <LightBulbIcon className="h-4 w-4" />
-                <span>Recomendaciones personalizadas</span>
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Recomendaciones */}
-              <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Recomendaciones</h3>
-                <div className="space-y-3">
-                  {aiInsights.recommendations.map(rec => (
-                    <div key={rec.id} className="flex items-start space-x-3 p-3 bg-gray-50 rounded-xl">
-                      <div className={`w-2 h-2 rounded-full mt-2 flex-shrink-0 ${
-                        rec.priority === 'high' ? 'bg-red-500' :
-                        rec.priority === 'medium' ? 'bg-yellow-500' :
-                        'bg-green-500'
-                      }`}></div>
-                      <p className="text-sm text-gray-700">{rec.text}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Tendencias */}
-              <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Tendencias</h3>
-                <div className="space-y-3">
-                  {aiInsights.trends.map((trend, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">{trend.metric}</p>
-                        <p className="text-lg font-bold text-gray-900">{trend.value}</p>
-                      </div>
-                      <div className={`flex items-center space-x-1 ${
-                        trend.trend === 'up' ? 'text-green-500' : 'text-red-500'
-                      }`}>
-                        {trend.trend === 'up' ? (
-                          <ArrowTrendingUpIcon className="h-4 w-4" />
-                        ) : (
-                          <ArrowTrendingDownIcon className="h-4 w-4" />
-                        )}
-                        <span className="text-sm font-medium">{trend.change}%</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Resúmenes */}
-              <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Resúmenes Automáticos</h3>
-                <div className="space-y-3">
-                  {aiInsights.summaries.map(summary => (
-                    <div key={summary.id} className="p-3 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl border border-purple-200">
-                      <h4 className="text-sm font-semibold text-purple-900 mb-1">{summary.title}</h4>
-                      <p className="text-xs text-purple-700">{summary.content}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <InsightsIA />
           </div>
         )}
 
       </div>
+
+      {/* Modal de Conversación */}
+      <ConversationModal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        conversation={selectedConversation}
+      />
     </div>
   )
 }

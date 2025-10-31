@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import googleDriveService from '../../lib/googleDrive'
+import insightsService from '../../services/insightsService'
 import * as XLSX from 'xlsx'
 import {
   CloudArrowUpIcon,
@@ -345,6 +346,9 @@ const RoutineUpload = ({ onUploadComplete, onClose }) => {
         console.error('Error registrando en documentos_administrador:', docAdminError)
         // No lanzar error, solo advertir
         toast.error('Rutina guardada pero error en registro de documentos')
+      } else {
+        // Registrar documento procesado en insights
+        await insightsService.trackDocumentActivity(user.email, 'processed')
       }
       
       setUploadProgress(100)

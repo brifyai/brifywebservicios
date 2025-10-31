@@ -1,8 +1,11 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { HelmetProvider } from 'react-helmet-async'
+
+// Servicios
+import { weeklyReportService } from './services/weeklyReportService'
 
 // Componentes
 import Login from './components/auth/Login'
@@ -56,6 +59,14 @@ const AuthenticatedLayout = ({ children }) => {
 }
 
 function App() {
+  // Inicializar sistema de resúmenes semanales automáticos
+  useEffect(() => {
+    // Programar resúmenes semanales automáticos
+    weeklyReportService.scheduleWeeklyReports()
+    
+    console.log('Sistema de insights de IA inicializado')
+  }, [])
+
   return (
     <HelmetProvider>
       <AuthProvider>

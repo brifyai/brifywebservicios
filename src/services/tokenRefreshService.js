@@ -9,6 +9,62 @@ class TokenRefreshService {
   constructor() {
     this.refreshInProgress = new Map() // Para evitar múltiples renovaciones simultáneas
     this.tokenExpirationBuffer = 5 * 60 * 1000 // 5 minutos antes de la expiración
+    this.autoRefreshInterval = null // Intervalo para renovación automática
+    this.isAutoRefreshEnabled = false
+  }
+
+  /**
+   * Inicializar el servicio de renovación automática
+   */
+  async initializeAutoRefresh() {
+    if (this.isAutoRefreshEnabled) return
+
+    try {
+      console.log('🔄 Inicializando servicio de renovación automática de tokens...')
+      
+      // Verificar cada 30 minutos si hay tokens que necesiten renovación
+      this.autoRefreshInterval = setInterval(async () => {
+        await this.checkAndRefreshExpiredTokens()
+      }, 30 * 60 * 1000) // 30 minutos
+
+      this.isAutoRefreshEnabled = true
+      console.log('✅ Servicio de renovación automática iniciado')
+      
+      // Ejecutar una verificación inicial
+      await this.checkAndRefreshExpiredTokens()
+    } catch (error) {
+      console.error('❌ Error inicializando renovación automática:', error)
+    }
+  }
+
+  /**
+   * Detener el servicio de renovación automática
+   */
+  stopAutoRefresh() {
+    if (this.autoRefreshInterval) {
+      clearInterval(this.autoRefreshInterval)
+      this.autoRefreshInterval = null
+      this.isAutoRefreshEnabled = false
+      console.log('🛑 Servicio de renovación automática detenido')
+    }
+  }
+
+  /**
+   * Verificar y renovar tokens expirados de todos los usuarios
+   */
+  async checkAndRefreshExpiredTokens() {
+    try {
+      console.log('🔍 Verificando tokens expirados...')
+      
+      // Obtener usuario actual
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Verificar si el token del usuario actual necesita renovación
+      await this.ensureValidToken(user.id)
+    } catch (error) {
+      console.error('❌ Error verificando tokens expirados:', error)
+    }
   }
 
   /**
@@ -36,6 +92,12 @@ class TokenRefreshService {
       if (!response.ok) {
         const errorData = await response.text()
         console.error('❌ Error renovando token de Google:', response.status, errorData)
+        
+        // Manejar errores específicos
+        if (response.status === 400 && errorData.includes('invalid_grant')) {
+          throw new Error('REFRESH_TOKEN_INVALID')
+        }
+        
         throw new Error(`Error renovando token: ${response.status} - ${errorData}`)
       }
       
@@ -55,30 +117,22 @@ class TokenRefreshService {
   }
 
   /**
-   * Calcular fecha de expiración del token
+   * Calcular fecha de expiración basada en expires_in
    * @param {number} expiresIn - Segundos hasta la expiración
-   * @returns {string} - Fecha ISO de expiración
+   * @returns {Date} - Fecha de expiración
    */
   calculateExpirationDate(expiresIn) {
-    const now = new Date()
-    const expirationDate = new Date(now.getTime() + (expiresIn * 1000))
-    return expirationDate.toISOString()
+    return new Date(Date.now() + (expiresIn * 1000))
   }
 
   /**
-   * Verificar si un token ha expirado o está próximo a expirar
-   * @param {string} expirationDate - Fecha de expiración en formato ISO
-   * @returns {boolean} - True si el token necesita renovación
+   * Verificar si un token necesita renovación
+   * @param {Date} expirationDate - Fecha de expiración del token
+   * @returns {boolean} - True si necesita renovación
    */
   needsRefresh(expirationDate) {
-    if (!expirationDate) return true // Si no hay fecha, asumir que necesita renovación
-    
-    const now = new Date()
-    const expiration = new Date(expirationDate)
-    const timeUntilExpiration = expiration.getTime() - now.getTime()
-    
-    // Renovar si ya expiró o si está dentro del buffer de tiempo
-    return timeUntilExpiration <= this.tokenExpirationBuffer
+    if (!expirationDate) return true
+    return (new Date(expirationDate).getTime() - Date.now()) <= this.tokenExpirationBuffer
   }
 
   /**
@@ -114,28 +168,41 @@ class TokenRefreshService {
         throw new Error('No se encontró refresh_token. Es necesario reconectar Google Drive')
       }
 
-      // Verificar si el token necesita renovación
-      // Como no tenemos fecha de expiración almacenada, intentaremos usar el token
-      // y si falla, lo renovaremos
-      if (credentials.google_access_token) {
-        console.log('✅ Token disponible, intentando usar...')
-        return {
-          access_token: credentials.google_access_token,
-          refresh_token: credentials.google_refresh_token,
-          expires_at: null // No tenemos fecha de expiración almacenada
+      // Si no hay access_token o necesita renovación, renovar
+      if (!credentials.google_access_token) {
+        console.log('🔄 No hay access_token, renovando...')
+        const refreshPromise = this.performTokenRefresh(userId, credentials.google_refresh_token)
+        this.refreshInProgress.set(userId, refreshPromise)
+
+        try {
+          const result = await refreshPromise
+          return result
+        } finally {
+          this.refreshInProgress.delete(userId)
         }
       }
 
-      // Iniciar proceso de renovación
-      console.log('🔄 Token expirado o próximo a expirar, renovando...')
-      const refreshPromise = this.performTokenRefresh(userId, credentials.google_refresh_token)
-      this.refreshInProgress.set(userId, refreshPromise)
+      // Verificar si el token actual es válido haciendo una llamada de prueba
+      const isValid = await this.validateToken(credentials.google_access_token)
+      
+      if (!isValid) {
+        console.log('🔄 Token inválido, renovando...')
+        const refreshPromise = this.performTokenRefresh(userId, credentials.google_refresh_token)
+        this.refreshInProgress.set(userId, refreshPromise)
 
-      try {
-        const result = await refreshPromise
-        return result
-      } finally {
-        this.refreshInProgress.delete(userId)
+        try {
+          const result = await refreshPromise
+          return result
+        } finally {
+          this.refreshInProgress.delete(userId)
+        }
+      }
+
+      console.log('✅ Token válido disponible')
+      return {
+        access_token: credentials.google_access_token,
+        refresh_token: credentials.google_refresh_token,
+        expires_at: null // No tenemos fecha de expiración almacenada
       }
 
     } catch (error) {
@@ -146,7 +213,22 @@ class TokenRefreshService {
   }
 
   /**
-   * Realizar la renovación del token y actualizar la base de datos
+   * Validar un token haciendo una llamada de prueba a la API de Google
+   * @param {string} accessToken - Token de acceso a validar
+   * @returns {boolean} - True si el token es válido
+   */
+  async validateToken(accessToken) {
+    try {
+      const response = await fetch('https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=' + accessToken)
+      return response.ok
+    } catch (error) {
+      console.error('❌ Error validando token:', error)
+      return false
+    }
+  }
+
+  /**
+   * Realizar renovación de token y actualizar en base de datos
    * @param {string} userId - ID del usuario
    * @param {string} refreshToken - Token de renovación
    * @returns {Object} - Nuevos tokens
@@ -184,6 +266,13 @@ class TokenRefreshService {
 
     } catch (error) {
       console.error('❌ Error en performTokenRefresh:', error)
+      
+      // Si el refresh_token es inválido, limpiar credenciales
+      if (error.message === 'REFRESH_TOKEN_INVALID') {
+        await this.cleanupInvalidTokens(userId)
+        throw new Error('El refresh_token ha expirado. Es necesario reconectar Google Drive.')
+      }
+      
       throw error
     }
   }
@@ -241,6 +330,7 @@ class TokenRefreshService {
         .from('user_credentials')
         .update({
           google_access_token: null,
+          google_refresh_token: null,
           updated_at: new Date().toISOString()
         })
         .eq('user_id', userId)
@@ -252,6 +342,48 @@ class TokenRefreshService {
       }
     } catch (error) {
       console.error('❌ Error en cleanupInvalidTokens:', error)
+    }
+  }
+
+  /**
+   * Método para uso en N8N - renovar token específico
+   * @param {string} refreshToken - Refresh token
+   * @returns {Object} - Nuevo access token
+   */
+  async refreshTokenForN8N(refreshToken) {
+    try {
+      console.log('🔄 Renovando token para N8N...')
+      
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
+          client_secret: process.env.REACT_APP_GOOGLE_CLIENT_SECRET,
+          refresh_token: refreshToken,
+          grant_type: 'refresh_token'
+        })
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.text()
+        console.error('❌ Error renovando token para N8N:', response.status, errorData)
+        throw new Error(`Error renovando token: ${response.status}`)
+      }
+      
+      const tokens = await response.json()
+      console.log('✅ Token renovado exitosamente para N8N')
+      
+      return {
+        access_token: tokens.access_token,
+        expires_in: tokens.expires_in,
+        token_type: tokens.token_type
+      }
+    } catch (error) {
+      console.error('❌ Error en refreshTokenForN8N:', error)
+      throw error
     }
   }
 }

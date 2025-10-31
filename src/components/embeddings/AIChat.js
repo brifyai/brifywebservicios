@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import embeddingsService from '../../lib/embeddings'
 import groqService from '../../services/groqService'
+import conversationService from '../../services/conversationService'
 import LoadingSpinner from '../common/LoadingSpinner'
 import SubtleSpinner from '../common/SubtleSpinner'
 import {
@@ -136,6 +137,20 @@ const AIChat = () => {
       }
       
       setMessages(prev => [...prev, aiMessage])
+      
+      // Registrar la conversación en la base de datos
+      try {
+        await conversationService.registrarConversacion(
+          user.email,
+          'chat_ia',
+          userMessage,
+          groqResult.response
+        )
+        console.log('✅ Conversación registrada exitosamente')
+      } catch (error) {
+        console.error('❌ Error al registrar conversación:', error)
+        // No mostramos error al usuario para no interrumpir la experiencia
+      }
       
       if (context.length > 0) {
         toast.success(`Respuesta generada usando ${context.length} documentos relevantes (${groqResult.tokensUsed} tokens)`)

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react'
 import { auth, db, supabase } from '../lib/supabase'
+import tokenRefreshService from '../services/tokenRefreshService'
 import toast from 'react-hot-toast'
 
 const AuthContext = createContext({})
@@ -17,6 +18,7 @@ export const AuthProvider = ({ children }) => {
   const [userProfile, setUserProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isGoogleDriveConnected, setIsGoogleDriveConnected] = useState(false)
   const registrationProcessed = useRef(new Set())
   const profileLoadProcessed = useRef(new Set())
   const userProfileRef = useRef(null)
@@ -76,7 +78,8 @@ export const AuthProvider = ({ children }) => {
             tokens_used: 0
           }
           setUserProfile(basicProfile)
-          return basicProfile
+        setIsGoogleDriveConnected(false)
+        return basicProfile
         }
         
         // Crear registro inicial en user_tokens_usage usando upsert
@@ -111,7 +114,8 @@ export const AuthProvider = ({ children }) => {
             offline: true
           }
           setUserProfile(basicProfile)
-          return basicProfile
+        setIsGoogleDriveConnected(false)
+        return basicProfile
         }
         
         // Para otros errores, establecer perfil básico
@@ -125,6 +129,7 @@ export const AuthProvider = ({ children }) => {
           tokens_used: 0
         }
         setUserProfile(basicProfile)
+        setIsGoogleDriveConnected(false)
         return basicProfile
       }
       
@@ -134,6 +139,10 @@ export const AuthProvider = ({ children }) => {
         google_refresh_token: googleCredentials?.google_refresh_token || null,
         google_access_token: googleCredentials?.google_access_token || null
       }
+      
+      // Actualizar estado de conexión de Google Drive
+      const driveConnected = !!(profileWithCredentials.google_refresh_token && profileWithCredentials.google_refresh_token.trim() !== '')
+      setIsGoogleDriveConnected(driveConnected)
       
       setUserProfile(profileWithCredentials)
       return profileWithCredentials
@@ -272,6 +281,9 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true)
       
+      // Detener el servicio de renovación automática
+      tokenRefreshService.stopAutoRefresh()
+      
       const { error } = await auth.signOut()
       
       if (error) {
@@ -282,6 +294,7 @@ export const AuthProvider = ({ children }) => {
       setUser(null)
       setUserProfile(null)
       setIsAuthenticated(false)
+      setIsGoogleDriveConnected(false)
       // Limpiar registros de procesamiento
       registrationProcessed.current.clear()
       profileLoadProcessed.current.clear()
@@ -359,6 +372,9 @@ export const AuthProvider = ({ children }) => {
           // Cargar perfil inmediatamente
           try {
             await loadUserProfile(session.user.id)
+            
+            // Inicializar servicio de renovación automática de tokens
+            await tokenRefreshService.initializeAutoRefresh()
           } catch (error) {
             console.error('Error loading profile in initialization:', error)
           }
@@ -414,6 +430,7 @@ export const AuthProvider = ({ children }) => {
         setUser(null)
         setUserProfile(null)
         setIsAuthenticated(false)
+        setIsGoogleDriveConnected(false)
         // Limpiar el registro cuando el usuario se desloguea
         profileLoadProcessed.current.clear()
       }
@@ -453,6 +470,7 @@ export const AuthProvider = ({ children }) => {
     userProfile,
     loading,
     isAuthenticated,
+    isGoogleDriveConnected,
     signUp,
     signIn,
     signOut,

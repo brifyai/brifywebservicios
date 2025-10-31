@@ -593,46 +593,55 @@ export const db = {
     }
   },
 
-  // Documentos de usuario para entrenador (archivos subidos)
+  // Documentos de administrador (archivos subidos)
   userTrainerDocuments: {
     create: async (documentData) => {
       const { data, error } = await supabase
-        .from('documentos_usuario_entrenador')
+        .from('documentos_administrador')
         .insert([documentData])
         .select()
       return { data, error }
     },
     
     getByUser: async (userId) => {
-      // Obtener el telegram_id del usuario
+      // Obtener el email del usuario
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('telegram_id')
+        .select('email')
         .eq('id', userId)
         .single()
       
       if (userError) return { data: null, error: userError }
       
       const { data, error } = await supabase
-        .from('documentos_usuario_entrenador')
+        .from('documentos_administrador')
         .select('*')
-        .eq('telegram_id', userData.telegram_id)
+        .eq('cliente', userData.email)
         .order('created_at', { ascending: false })
       return { data, error }
     },
     
     getByTelegramId: async (telegramId) => {
-      const { data, error } = await supabase
-        .from('documentos_usuario_entrenador')
-        .select('*')
+      // Obtener el email del usuario por telegram_id
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('email')
         .eq('telegram_id', telegramId)
+        .single()
+      
+      if (userError) return { data: null, error: userError }
+      
+      const { data, error } = await supabase
+        .from('documentos_administrador')
+        .select('*')
+        .eq('cliente', userData.email)
         .order('created_at', { ascending: false })
       return { data, error }
     },
     
     update: async (id, updates) => {
       const { data, error } = await supabase
-        .from('documentos_usuario_entrenador')
+        .from('documentos_administrador')
         .update(updates)
         .eq('id', id)
         .select()
@@ -641,7 +650,7 @@ export const db = {
     
     delete: async (id) => {
       const { data, error } = await supabase
-        .from('documentos_usuario_entrenador')
+        .from('documentos_administrador')
         .delete()
         .eq('id', id)
       return { data, error }
@@ -649,7 +658,7 @@ export const db = {
     
     deleteByFileId: async (fileId) => {
       const { data, error } = await supabase
-        .from('documentos_usuario_entrenador')
+        .from('documentos_administrador')
         .delete()
         .eq('file_id', fileId)
       return { data, error }
