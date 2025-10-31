@@ -135,7 +135,7 @@ const SemanticSearch = () => {
         </div>
 
         {/* Content */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 min-h-[calc(100vh-280px)] flex flex-col">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 min-h-[calc(100vh-280px)] flex flex-col scroll-to-top-mobile">
           <div className="flex-1 overflow-auto">
             {activeTab === 'search' ? (
               <div>

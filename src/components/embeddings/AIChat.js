@@ -46,6 +46,23 @@ const AIChat = () => {
     }
   }, [isTyping])
 
+  // Forzar scroll a arriba en móvil cuando el componente se monta
+  useEffect(() => {
+    if (window.innerWidth < 768) {
+      // Forzar scroll a la parte superior en móvil
+      window.scrollTo(0, 0)
+      // También prevenir scroll futuro
+      document.body.style.scrollBehavior = 'auto'
+      document.documentElement.style.scrollBehavior = 'auto'
+      
+      // Restaurar scroll behavior después de un breve tiempo
+      setTimeout(() => {
+        document.body.style.scrollBehavior = ''
+        document.documentElement.style.scrollBehavior = ''
+      }, 100)
+    }
+  }, []) // Solo se ejecuta al montar el componente
+
   const handleSendMessage = async (e) => {
     e.preventDefault()
     
