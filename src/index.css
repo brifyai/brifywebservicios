@@ -42,3 +42,28 @@
     }
   }
 }
+
+/* Asegurar scroll al inicio en móvil para páginas específicas */
+@layer utilities {
+  .scroll-to-top-mobile {
+    @apply scroll-mt-0;
+  }
+  
+  @media (max-width: 767px) {
+    .scroll-to-top-mobile {
+      scroll-behavior: smooth;
+      scroll-padding-top: 0;
+    }
+    
+    /* Forzar scroll al inicio para body en móvil */
+    body {
+      scroll-behavior: smooth;
+      scroll-padding-top: 0;
+    }
+    
+    /* Asegurar que el contenedor principal no tenga scroll inicial */
+    .min-h-screen {
+      scroll-snap-type: y start;
+    }
+  }
+}

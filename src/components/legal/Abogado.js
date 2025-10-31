@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { 
   MagnifyingGlassIcon, 
   ChatBubbleLeftRightIcon,
@@ -9,6 +9,14 @@ import ChatLegal from './ChatLegal'
 
 const Abogado = () => {
   const [activeTab, setActiveTab] = useState('busqueda')
+
+  // Efecto para asegurar scroll al top en móvil al cargar la página
+  useEffect(() => {
+    // Forzar scroll al inicio en versión móvil
+    if (window.innerWidth < 768) {
+      window.scrollTo(0, 0)
+    }
+  }, [])
 
   const tabs = [
     {
@@ -28,7 +36,7 @@ const Abogado = () => {
   const ActiveComponent = tabs.find(tab => tab.id === activeTab)?.component
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 scroll-to-top-mobile">
       {/* Header Principal */}
       <div className="bg-white border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-6 py-8">

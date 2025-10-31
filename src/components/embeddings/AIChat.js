@@ -25,20 +25,23 @@ const AIChat = () => {
   const inputRef = useRef(null)
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    // Solo hacer scroll en versión desktop para evitar el scroll automático en móvil
+    if (window.innerWidth >= 768) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }
 
   useEffect(() => {
-    // Solo hacer scroll si hay mensajes Y no es el primer montaje (evitar scroll al cambiar de pestaña)
-    if (messages.length > 0) {
+    // Solo hacer scroll si hay mensajes Y es versión desktop (evitar scroll al cambiar de pestaña en móvil)
+    if (messages.length > 0 && window.innerWidth >= 768) {
       // Pequeño delay para asegurar que el DOM está listo
       setTimeout(() => scrollToBottom(), 50)
     }
   }, [messages]) // Solo reaccionar a cambios en mensajes, no en isTyping
 
   useEffect(() => {
-    // Scroll adicional cuando termina de escribir (para asegurar que se vea la respuesta completa)
-    if (!isTyping && messages.length > 0) {
+    // Scroll adicional cuando termina de escribir solo en versión desktop
+    if (!isTyping && messages.length > 0 && window.innerWidth >= 768) {
       setTimeout(() => scrollToBottom(), 100)
     }
   }, [isTyping])

@@ -35,6 +35,14 @@ const Folders = () => {
   const [selectedSubFolder, setSelectedSubFolder] = useState(null) // Para filtrar por subcarpeta
   const [ranEnsureOnce, setRanEnsureOnce] = useState(false)
 
+  // Efecto para asegurar scroll al top en móvil al cargar la página
+  useEffect(() => {
+    // Forzar scroll al inicio en versión móvil
+    if (window.innerWidth < 768) {
+      window.scrollTo(0, 0)
+    }
+  }, [])
+
   useEffect(() => {
     if (hasActivePlan) {
       loadAdminFolderByDefault()
@@ -1062,7 +1070,7 @@ const Folders = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 scroll-to-top-mobile">
       {/* Header Principal */}
       <div className="bg-white border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-6 py-8">

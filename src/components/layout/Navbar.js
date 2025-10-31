@@ -281,25 +281,6 @@ const Navbar = () => {
       {isMobileMenuOpen && (
         <div className="lg:hidden bg-white border-b border-gray-100 shadow-sm">
           <div className="px-4 pt-4 pb-3">
-            {/* Logo en móvil */}
-            <div className="flex items-center mb-4 pb-4 border-b border-gray-100">
-              <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center mr-3">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-lg font-semibold text-gray-900">
-                  Brify AI
-                </span>
-                <span className="text-xs font-bold text-red-500 bg-red-50 px-2 py-0.5 rounded-md text-center">
-                  BETA
-                </span>
-              </div>
-            </div>
-
             {/* Navegación móvil */}
             <div className="space-y-2">
               {navigation.map((item) => {

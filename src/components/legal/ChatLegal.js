@@ -21,6 +21,14 @@ const ChatLegal = () => {
   const [tokensUsed, setTokensUsed] = useState(0)
   const fileInputRef = useRef(null)
 
+  // Efecto para asegurar scroll al top en móvil al cargar el componente
+  useEffect(() => {
+    // Forzar scroll al inicio en versión móvil
+    if (window.innerWidth < 768) {
+      window.scrollTo(0, 0)
+    }
+  }, [])
+
   // Cargar uso actual de tokens al inicializar
   useEffect(() => {
     const loadTokenUsage = async () => {
@@ -492,7 +500,7 @@ ${fileContent.substring(0, 2000)}`
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full scroll-to-top-mobile">
       {/* Chat Header */}
       <div className="bg-blue-50 p-4 border-b border-blue-200">
         <div className="flex items-center justify-between">
