@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import embeddingsService from '../../lib/embeddings';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -110,7 +110,15 @@ const SemanticSearch = () => {
                 Búsqueda Semántica
               </button>
               <button
-                onClick={() => setActiveTab('chat')}
+                onClick={() => {
+                  setActiveTab('chat');
+                  // Prevenir scroll automático en móvil
+                  if (window.innerWidth < 768) {
+                    setTimeout(() => {
+                      window.scrollTo(0, 0);
+                    }, 0);
+                  }
+                }}
                 className={`group inline-flex items-center py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
                   activeTab === 'chat'
                     ? 'border-blue-500 text-blue-600'
