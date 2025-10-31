@@ -416,50 +416,46 @@ const Dashboard = () => {
     <div className="min-h-screen bg-gray-50">
       {/* Header Principal */}
       <div className="bg-white border-b border-gray-100">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 lg:py-8">
+          {/* Versión Desktop - Layout horizontal */}
+          <div className="hidden lg:flex lg:items-center lg:justify-between gap-6">
             {/* Sección izquierda - Logo y título */}
-            <div className="flex items-center space-x-3 sm:space-x-4">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 bg-black rounded-2xl shadow-lg flex items-center justify-center flex-shrink-0">
-                <svg width="24" height="24" className="sm:w-7 sm:h-7" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <div className="flex items-center space-x-4">
+              <div className="w-12 h-12 bg-black rounded-2xl shadow-lg flex items-center justify-center flex-shrink-0">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                   <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                   <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </div>
               <div className="min-w-0 flex-1">
-                <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 leading-tight">
+                <h1 className="text-3xl font-bold text-gray-900 leading-tight">
                   Bienvenido a Brify AI
                 </h1>
-                <p className="text-sm sm:text-base text-gray-600 mt-1 hidden sm:block">
+                <p className="text-base text-gray-600 mt-1">
                   Tu asistente inteligente para gestionar documentos y automatizar procesos
-                </p>
-                {/* Versión mobile del subtítulo */}
-                <p className="text-xs sm:text-sm text-gray-600 mt-1 sm:hidden">
-                  Gestiona documentos con IA
                 </p>
               </div>
             </div>
             
             {/* Sección derecha - Estado y botones */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 lg:gap-3">
+            <div className="flex items-center gap-3">
               {/* Estado general del sistema */}
-              <div className={`flex items-center space-x-2 px-3 py-1.5 sm:px-4 sm:py-2 rounded-full text-xs sm:text-sm font-medium ${
+              <div className={`flex items-center space-x-2 px-4 py-2 rounded-full text-sm font-medium ${
                 systemStatus.services.embeddings === 'healthy' &&
                 systemStatus.services.groq === 'healthy' &&
                 systemStatus.services.drive === 'healthy'
                   ? 'bg-green-100 text-green-700'
                   : 'bg-yellow-100 text-yellow-700'
               }`}>
-                <div className={`w-2 h-2 rounded-full mr-1 sm:mr-2 ${
+                <div className={`w-2 h-2 rounded-full mr-2 ${
                   systemStatus.services.embeddings === 'healthy' &&
                   systemStatus.services.groq === 'healthy' &&
                   systemStatus.services.drive === 'healthy'
                     ? 'bg-green-500'
                     : 'bg-yellow-500'
                 }`}></div>
-                <span className="hidden sm:inline">Sistema operativo</span>
-                <span className="sm:hidden">Operativo</span>
+                <span>Sistema operativo</span>
               </div>
               
               {/* Menu de personalización */}
@@ -504,13 +500,201 @@ const Dashboard = () => {
                 href="https://t.me/brifybeta_bot"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center px-3 py-2 sm:px-4 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm sm:text-base"
+                className="inline-flex items-center px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-base"
               >
-                <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1 sm:mr-2" viewBox="0 0 24 24" fill="currentColor">
+                <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
                 </svg>
-                <span className="hidden sm:inline">Ir a Telegram</span>
-                <span className="sm:hidden">Telegram</span>
+                <span>Ir a Telegram</span>
+              </a>
+            </div>
+          </div>
+
+          {/* Versión Mobile - Layout vertical mejorado */}
+          <div className="lg:hidden space-y-4">
+            {/* Fila superior: Logo y título */}
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 bg-black rounded-2xl shadow-lg flex items-center justify-center flex-shrink-0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <h1 className="text-xl font-bold text-gray-900 leading-tight">
+                  Bienvenido a Brify AI
+                </h1>
+                <p className="text-xs text-gray-600 mt-1">
+                  Gestiona documentos con IA
+                </p>
+              </div>
+            </div>
+            
+            {/* Fila inferior: Estado y botones */}
+            <div className="flex items-center justify-between gap-2">
+              {/* Estado general del sistema */}
+              <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium flex-shrink-0 ${
+                systemStatus.services.embeddings === 'healthy' &&
+                systemStatus.services.groq === 'healthy' &&
+                systemStatus.services.drive === 'healthy'
+                  ? 'bg-green-100 text-green-700'
+                  : 'bg-yellow-100 text-yellow-700'
+              }`}>
+                <div className={`w-2 h-2 rounded-full mr-1 ${
+                  systemStatus.services.embeddings === 'healthy' &&
+                  systemStatus.services.groq === 'healthy' &&
+                  systemStatus.services.drive === 'healthy'
+                    ? 'bg-green-500'
+                    : 'bg-yellow-500'
+                }`}></div>
+                <span>Operativo</span>
+              </div>
+              
+              {/* Contenedor de botones */}
+              <div className="flex items-center gap-2">
+                {/* Menu de personalización */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowWidgetMenu(!showWidgetMenu)}
+                    className="p-2 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
+                  >
+                    <CogIcon className="h-4 w-4 text-gray-600" />
+                  </button>
+                  
+                  {showWidgetMenu && (
+                    <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-200 z-50">
+                      <div className="p-4">
+                        <h3 className="font-semibold text-gray-900 mb-3">Personalizar Dashboard</h3>
+                        <div className="space-y-2">
+                          {Object.entries(widgets).map(([key, value]) => (
+                            <label key={key} className="flex items-center justify-between cursor-pointer">
+                              <span className="text-sm text-gray-700">
+                                {key === 'quickActions' ? 'Acciones Rápidas' :
+                                 key === 'metrics' ? 'Métricas' :
+                                 key === 'recentActivity' ? 'Actividad Reciente' :
+                                 key === 'systemStatus' ? 'Estado del Sistema' :
+                                 'Insights de IA'}
+                              </span>
+                              <input
+                                type="checkbox"
+                                checked={value}
+                                onChange={() => toggleWidget(key)}
+                                className="rounded text-blue-500 focus:ring-blue-500"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Botón Telegram */}
+                <a
+                  href="https://t.me/brifybeta_bot"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-xs"
+                >
+                  <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+                  </svg>
+                  <span>Telegram</span>
+                </a>
+              </div>
+            </div>
+          </div>
+
+          {/* Versión Tablet - Layout intermedio */}
+          <div className="hidden sm:flex lg:hidden flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mt-4">
+            {/* Sección izquierda - Logo y título */}
+            <div className="flex items-center space-x-4">
+              <div className="w-12 h-12 bg-black rounded-2xl shadow-lg flex items-center justify-center flex-shrink-0">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <h1 className="text-2xl font-bold text-gray-900 leading-tight">
+                  Bienvenido a Brify AI
+                </h1>
+                <p className="text-sm text-gray-600 mt-1">
+                  Tu asistente inteligente para gestionar documentos y automatizar procesos
+                </p>
+              </div>
+            </div>
+            
+            {/* Sección derecha - Estado y botones */}
+            <div className="flex items-center gap-3">
+              {/* Estado general del sistema */}
+              <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium ${
+                systemStatus.services.embeddings === 'healthy' &&
+                systemStatus.services.groq === 'healthy' &&
+                systemStatus.services.drive === 'healthy'
+                  ? 'bg-green-100 text-green-700'
+                  : 'bg-yellow-100 text-yellow-700'
+              }`}>
+                <div className={`w-2 h-2 rounded-full mr-1 ${
+                  systemStatus.services.embeddings === 'healthy' &&
+                  systemStatus.services.groq === 'healthy' &&
+                  systemStatus.services.drive === 'healthy'
+                    ? 'bg-green-500'
+                    : 'bg-yellow-500'
+                }`}></div>
+                <span>Sistema operativo</span>
+              </div>
+              
+              {/* Menu de personalización */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowWidgetMenu(!showWidgetMenu)}
+                  className="p-2 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
+                >
+                  <CogIcon className="h-5 w-5 text-gray-600" />
+                </button>
+                
+                {showWidgetMenu && (
+                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-200 z-50">
+                    <div className="p-4">
+                      <h3 className="font-semibold text-gray-900 mb-3">Personalizar Dashboard</h3>
+                      <div className="space-y-2">
+                        {Object.entries(widgets).map(([key, value]) => (
+                          <label key={key} className="flex items-center justify-between cursor-pointer">
+                            <span className="text-sm text-gray-700">
+                              {key === 'quickActions' ? 'Acciones Rápidas' :
+                               key === 'metrics' ? 'Métricas' :
+                               key === 'recentActivity' ? 'Actividad Reciente' :
+                               key === 'systemStatus' ? 'Estado del Sistema' :
+                               'Insights de IA'}
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={value}
+                              onChange={() => toggleWidget(key)}
+                              className="rounded text-blue-500 focus:ring-blue-500"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Botón Telegram */}
+              <a
+                href="https://t.me/brifybeta_bot"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm"
+              >
+                <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+                </svg>
+                <span>Ir a Telegram</span>
               </a>
             </div>
           </div>
