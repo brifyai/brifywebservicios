@@ -195,7 +195,7 @@ const Register = () => {
           <form className="space-y-6" onSubmit={handleSubmit}>
             {/* Name */}
             <div>
-              <label htmlFor="name" className="block text-sm font-semibold text-gray-900 mb-2">
+              <label htmlFor="name" className="block text-sm font-semibold text-white mb-2">
                 Nombre Completo
               </label>
               <div className="relative">
@@ -226,7 +226,7 @@ const Register = () => {
 
             {/* Email */}
             <div>
-              <label htmlFor="email" className="block text-sm font-semibold text-gray-900 mb-2">
+              <label htmlFor="email" className="block text-sm font-semibold text-white mb-2">
                 Correo Electrónico
               </label>
               <div className="relative">
@@ -257,8 +257,8 @@ const Register = () => {
 
             {/* Telegram ID */}
             <div>
-              <label htmlFor="telegramId" className="block text-sm font-semibold text-gray-900 mb-2">
-                ID de Telegram <span className="text-gray-500">(Opcional)</span>
+              <label htmlFor="telegramId" className="block text-sm font-semibold text-white mb-2">
+                ID de Telegram <span className="text-gray-300">(Opcional)</span>
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -291,7 +291,7 @@ const Register = () => {
 
             {/* Password */}
             <div>
-              <label htmlFor="password" className="block text-sm font-semibold text-gray-900 mb-2">
+              <label htmlFor="password" className="block text-sm font-semibold text-white mb-2">
                 Contraseña
               </label>
               <div className="relative">
@@ -333,7 +333,7 @@ const Register = () => {
 
             {/* Confirm Password */}
             <div>
-              <label htmlFor="confirmPassword" className="block text-sm font-semibold text-gray-900 mb-2">
+              <label htmlFor="confirmPassword" className="block text-sm font-semibold text-white mb-2">
                 Confirmar Contraseña
               </label>
               <div className="relative">
@@ -432,7 +432,7 @@ const Register = () => {
           {/* Footer */}
           <div className="mt-12 text-center">
             <p className="text-xs text-white">
-              © 2024 Brify AI. Todos los derechos reservados.
+              © 2025 Brify AI. Todos los derechos reservados.
             </p>
             <div className="mt-2 flex justify-center space-x-4">
               <a 

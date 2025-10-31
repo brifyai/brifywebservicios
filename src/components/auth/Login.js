@@ -297,7 +297,7 @@ const Login = () => {
           {/* Footer */}
           <div className="mt-12 text-center">
             <p className="text-xs text-white">
-              © 2024 Brify AI. Todos los derechos reservados.
+              © 2025 Brify AI. Todos los derechos reservados.
             </p>
             <div className="mt-2 flex justify-center space-x-4">
               <a
