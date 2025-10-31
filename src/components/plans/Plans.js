@@ -917,54 +917,6 @@ const Plans = () => {
         </div>
       )}
 
-      {/* Plantilla de Rutina - Promoción Principal */}
-      <div className="mb-12 bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl p-8 text-white shadow-2xl">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
-          <div>
-            <div className="flex items-center mb-4">
-              <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mr-4">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold">📋 Plantilla de Rutinas</h2>
-                <p className="text-blue-100">Personaliza tu entrenamiento y dieta</p>
-              </div>
-            </div>
-            
-            <h3 className="text-xl font-semibold mb-3">Transforma tu rutina diaria</h3>
-            <ul className="space-y-2 mb-6">
-              <li className="flex items-center">
-                <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
-                <span>Planificación semanal de ejercicios personalizados</span>
-              </li>
-              <li className="flex items-center">
-                <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
-                <span>Registro detallado de dieta y nutrición</span>
-              </li>
-              <li className="flex items-center">
-                <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
-                <span>Recordatorios automáticos todas las mañanas</span>
-              </li>
-              <li className="flex items-center">
-                <CheckIcon className="h-5 w-5 mr-3 text-green-300" />
-                <span>Consultas específicas con nuestra IA</span>
-              </li>
-            </ul>
-            
-            <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
-              <p className="text-sm text-blue-100 mb-2">
-                🚀 Disponible para todos los usuarios. ¡Descarga y comienza hoy mismo!
-              </p>
-            </div>
-          </div>
-          
-          <div className="bg-white rounded-2xl p-6 shadow-xl">
-            <TemplateDownload />
-          </div>
-        </div>
-      </div>
 
       {/* Planes */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
@@ -1193,7 +1145,115 @@ const Plans = () => {
             </div>
           )
         })}
+        
+        {/* Plan Plantilla Entrenador - Solo se muestra si tiene la extensión */}
+        {userExtensions.some(ue => {
+          const ext = ue.extensiones || {}
+          return (ext.name_es === 'Entrenador' || ext.name === 'Entrenador')
+        }) && (
+          <div className="relative bg-white rounded-2xl shadow-lg border-2 border-gray-200 transition-all duration-300 hover:shadow-xl hover:border-primary-300">
+            <div className="p-8">
+
+              {/* Extensión Entrenador */}
+              <div className="mb-6">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-medium text-green-700">
+                      Entrenador
+                    </span>
+                    <span className="text-sm font-bold text-green-600">
+                      ✓ COMPRADA
+                    </span>
+                  </div>
+                  <p className="text-sm text-green-800 mb-3">
+                    Agregado de rutinas de forma independiente para cada uno de tus clientes.
+                  </p>
+                  <div className="bg-green-100 rounded p-3 mb-3">
+                    <p className="font-semibold text-sm text-green-800 mb-2 text-center">¿Cómo usarlo?</p>
+                    <ul className="list-disc list-inside space-y-1 text-sm text-green-700 text-center">
+                      <li>Descarga la plantilla Excel</li>
+                      <li>Llena los datos de tus clientes y rutinas</li>
+                      <li>Sube el archivo a tu carpeta de Entrenador</li>
+                      <li>El sistema procesará y organizará automáticamente</li>
+                    </ul>
+                  </div>
+                  <p className="text-sm text-green-600 font-medium">
+                    ✓ Extensión activa
+                  </p>
+                </div>
+              </div>
+
+              {/* Descarga de Plantilla Excel */}
+              <div className="mb-6">
+                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                  <CloudIcon className="h-4 w-4 mr-2" />
+                  Plantilla para Entrenadores
+                </h4>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p className="text-xs text-blue-800 mb-3">
+                    Descarga la plantilla Excel para comenzar a organizar las rutinas de tus clientes:
+                  </p>
+                  <a
+                    href="/rutinap.xlsx"
+                    download="rutinap.xlsx"
+                    className="inline-flex items-center justify-center w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors duration-200"
+                  >
+                    <CloudIcon className="h-4 w-4 mr-2" />
+                    Descargar Plantilla Excel
+                  </a>
+                  <p className="text-xs text-blue-600 mt-2 text-center">
+                    Formato: .xlsx | Tamaño: ~15KB
+                  </p>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* Plan Plantilla Abogados - Solo se muestra si tiene la extensión */}
+        {userExtensions.some(ue => {
+          const ext = ue.extensiones || {}
+          return (ext.name_es === 'Abogados' || ext.name === 'Abogados')
+        }) && (
+          <div className="relative bg-white rounded-2xl shadow-lg border-2 border-gray-200 transition-all duration-300 hover:shadow-xl hover:border-primary-300">
+            <div className="p-8">
+
+              {/* Extensión Abogados */}
+              <div className="mb-6">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-medium text-green-700">
+                      Abogados
+                    </span>
+                    <span className="text-sm font-bold text-green-600">
+                      ✓ COMPRADA
+                    </span>
+                  </div>
+                  <p className="text-sm text-green-800 mb-3">
+                    Acceso al banco de leyes actualizado para consultas legales rápidas.
+                  </p>
+                  <div className="bg-green-100 rounded p-3 mb-3">
+                    <p className="font-semibold text-sm text-green-800 mb-2 text-center">¿Cómo usarlo?</p>
+                    <ul className="list-disc list-inside space-y-1 text-sm text-green-700 text-center">
+                      <li>Accede al buscador de leyes desde tu panel</li>
+                      <li>Busca por palabras clave o número de ley</li>
+                      <li>Consulta las actualizaciones legislativas</li>
+                      <li>Exporta los resultados para tus informes</li>
+                    </ul>
+                  </div>
+                  <p className="text-sm text-green-600 font-medium">
+                    ✓ Extensión activa
+                  </p>
+                </div>
+              </div>
+
+
+            </div>
+          </div>
+        )}
       </div>
+
 
       {/* Información adicional */}
       <div className="bg-gray-50 rounded-lg p-6 max-w-4xl mx-auto">
