@@ -269,16 +269,20 @@ const Profile = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Mi Perfil</h1>
-        <p className="text-gray-600 mt-1">
-          Gestiona tu información personal y configuración de cuenta
-        </p>
+      <div className="bg-white border-b border-gray-100">
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <h1 className="text-2xl font-bold text-gray-900">Mi Perfil</h1>
+          <p className="text-gray-600 mt-1">
+            Gestiona tu información personal y configuración de cuenta
+          </p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Información Personal */}
         <div className="lg:col-span-2 space-y-6">
           {/* Datos del Usuario */}
@@ -633,7 +637,9 @@ const Profile = () => {
               Cerrar Sesión
             </button>
           </div>
+          </div>
         </div>
+      </div>
       </div>
     </div>
   )

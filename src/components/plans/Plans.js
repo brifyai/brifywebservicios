@@ -863,17 +863,26 @@ const Plans = () => {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="text-center">
-        <h1 className="text-3xl font-bold text-gray-900 mb-4">
-          Elige tu Plan
-        </h1>
-        <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-          Selecciona el plan que mejor se adapte a tus necesidades. 
-          Todos los planes incluyen acceso completo a la plataforma.
-        </p>
+    <div className="min-h-screen bg-gray-50">
+      {/* Header Principal */}
+      <div className="bg-white border-b border-gray-100">
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <div className="flex items-center space-x-4">
+            <div className="w-12 h-12 bg-black rounded-2xl shadow-lg flex items-center justify-center">
+              <CreditCardIcon className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Elige tu Plan</h1>
+              <p className="text-gray-600 mt-1">
+                Selecciona el plan que mejor se adapte a tus necesidades.
+                Todos los planes incluyen acceso completo a la plataforma.
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
+
+      <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
 
       {/* Plan actual */}
       {hasActivePlan() && (
@@ -1288,6 +1297,7 @@ const Plans = () => {
         userExtensions={userExtensions}
         onUpgradeComplete={handleUpgradeComplete}
       />
+      </div>
     </div>
   )
 }

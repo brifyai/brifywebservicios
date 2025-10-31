@@ -28,49 +28,57 @@ const Abogado = () => {
   const ActiveComponent = tabs.find(tab => tab.id === activeTab)?.component
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <div className="flex items-center mb-4">
-          <ScaleIcon className="h-8 w-8 text-blue-600 mr-3" />
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Servicios Legales</h1>
-            <p className="text-gray-600 mt-1">
-              Herramientas especializadas para consultas y verificación de documentos legales
-            </p>
+    <div className="min-h-screen bg-gray-50">
+      {/* Header Principal */}
+      <div className="bg-white border-b border-gray-100">
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <div className="flex items-center space-x-4">
+            <div className="w-12 h-12 bg-black rounded-2xl shadow-lg flex items-center justify-center">
+              <ScaleIcon className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Servicios Legales</h1>
+              <p className="text-gray-600 mt-1">
+                Herramientas especializadas para consultas y verificación de documentos legales
+              </p>
+            </div>
           </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8">
-            {tabs.map((tab) => {
-              const Icon = tab.icon
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`group inline-flex items-center py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
-                    activeTab === tab.id
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  <Icon className={`mr-2 h-5 w-5 ${
-                    activeTab === tab.id ? 'text-blue-500' : 'text-gray-400 group-hover:text-gray-500'
-                  }`} />
-                  {tab.name}
-                </button>
-              )
-            })}
-          </nav>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="bg-white rounded-lg shadow-md p-6 min-h-[calc(100vh-220px)] flex flex-col">
-        <div className="flex-1 overflow-auto">
-          {ActiveComponent && <ActiveComponent />}
+      <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
+        {/* Tabs */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8 px-6">
+              {tabs.map((tab) => {
+                const Icon = tab.icon
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`group inline-flex items-center py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+                      activeTab === tab.id
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <Icon className={`mr-2 h-5 w-5 ${
+                      activeTab === tab.id ? 'text-blue-500' : 'text-gray-400 group-hover:text-gray-500'
+                    }`} />
+                    {tab.name}
+                  </button>
+                )
+              })}
+            </nav>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 min-h-[calc(100vh-280px)] flex flex-col">
+          <div className="flex-1 overflow-auto p-6">
+            {ActiveComponent && <ActiveComponent />}
+          </div>
         </div>
       </div>
     </div>

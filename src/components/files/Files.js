@@ -943,45 +943,60 @@ const Files = () => {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Gestión de Archivos</h1>
-          <p className="text-gray-600 mt-1">
-            Sube y organiza tus documentos
-          </p>
-        </div>
-        
-        <div className="flex space-x-3 mt-4 sm:mt-0">
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors flex items-center"
-          >
-            <CloudArrowUpIcon className="h-5 w-5 mr-2" />
-            Subir Archivos
-          </button>
+    <div className="min-h-screen bg-gray-50">
+      {/* Header Principal */}
+      <div className="bg-white border-b border-gray-100">
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="w-12 h-12 bg-black rounded-2xl shadow-lg flex items-center justify-center">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold text-gray-900">Gestión de Archivos</h1>
+                <p className="text-gray-600 mt-1">
+                  Sube y organiza tus documentos
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex space-x-3">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="bg-primary-600 text-white px-6 py-3 rounded-xl hover:bg-primary-700 transition-colors flex items-center shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+              >
+                <CloudArrowUpIcon className="h-5 w-5 mr-2" />
+                Subir Archivos
+              </button>
+              
+              {hasExtension('Entrenador') && (
+                <button
+                  onClick={() => setShowRoutineUpload(true)}
+                  className="bg-green-600 text-white px-6 py-3 rounded-xl hover:bg-green-700 transition-colors flex items-center shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                >
+                  <DocumentTextIcon className="h-5 w-5 mr-2" />
+                  Subir Rutina
+                </button>
+              )}
+            </div>
+          </div>
           
-          {hasExtension('Entrenador') && (
-            <button
-              onClick={() => setShowRoutineUpload(true)}
-              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center"
-            >
-              <DocumentTextIcon className="h-5 w-5 mr-2" />
-              Subir Rutina
-            </button>
-          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
         </div>
-        
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain"
-          onChange={handleFileSelect}
-          className="hidden"
-        />
       </div>
+
+      <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
 
       {/* Filters */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -1319,6 +1334,7 @@ const Files = () => {
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }
