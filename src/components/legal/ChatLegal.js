@@ -432,49 +432,58 @@ ${fileContent.substring(0, 2000)}`
       }
     }
     
-    if (uniqueLaws.length > 0) {
-      // fijar contexto si hay número de ley en la consulta
+    // Preparar contexto y generar respuesta con IA
+    const contextDocs = []
+    if (fileContent && !fileContent.startsWith('Error al extraer')) {
+      contextDocs.push({ content: fileContent })
+    }
+    if (currentLaw) {
+      const focused = extractRelevantContent(userMessage, currentLaw.Contenido || '')
+      contextDocs.push({ content: focused || (currentLaw.Contenido || '') })
+    } else if (uniqueLaws.length > 0) {
+      const topLaw = uniqueLaws[0]
+      const focused = extractRelevantContent(userMessage, topLaw.Contenido || '')
+      contextDocs.push({ content: focused || (topLaw.Contenido || '') })
       if (lawNumberMatch) {
-        setCurrentLaw(uniqueLaws[0])
+        setCurrentLaw(topLaw)
       }
-      response += `Leyes encontradas:\n\n`
+    }
+
+    const chatHistoryForModel = messages.map(m => ({
+      role: m.type === 'user' ? 'user' : 'assistant',
+      content: m.content
+    }))
+
+    try {
+      const ai = await groqService.generateChatResponse(
+        userMessage,
+        contextDocs,
+        chatHistoryForModel,
+        user?.id || null
+      )
+      response += ai.response + '\n\n'
+      if (ai.tokensUsed) {
+        setTokensUsed(prev => prev + ai.tokensUsed)
+      }
+    } catch (err) {
+      console.error('Error generando respuesta IA con contexto:', err)
+      response += 'No se pudo generar una respuesta basada en el contexto. Intenta reformular tu pregunta.'
+    }
+
+    // Referencias de leyes sin incluir contenido completo
+    if (uniqueLaws.length > 0) {
+      response += 'Fuentes relacionadas:\n'
       uniqueLaws.slice(0, 3).forEach((law, index) => {
         const titulo = law['Título de la Norma'] || 'Título no disponible'
         const numero = law['Número'] || law['Norma Número'] || 'No disponible'
-        const fechaPub = law['Fecha de Publicación'] || law['Fecha'] || 'No especificada'
-        const tipo = law['Tipo de Norma'] || 'No especificado'
         const url = law['Url'] || null
-        const fragmento = extractRelevantContent(userMessage, law.Contenido || '')
-        response += `${index + 1}. ${titulo}\n`
-        response += `Número: ${numero}\n`
-        response += `Publicación: ${fechaPub}\n`
-        response += `Tipo: ${tipo}\n`
-        if (fragmento) {
-          response += `Fragmento relevante:\n${fragmento}\n\n`
-        }
-        const full = (law.Contenido || '').trim()
-        if (full) {
-          response += `Contenido completo:\n${full}\n\n`
-        }
-        if (url) {
-          response += `Fuente oficial: ${url}\n\n`
-        }
+        response += `${index + 1}. ${titulo} — Ley ${numero}${url ? `\nFuente: ${url}` : ''}\n\n`
       })
-    } else if (!fileContent && currentLaw) {
-      // usar contexto previo si existe y la consulta es de seguimiento
+    } else if (currentLaw) {
       const titulo = currentLaw['Título de la Norma'] || 'Título no disponible'
       const numero = currentLaw['Número'] || currentLaw['Norma Número'] || 'No disponible'
-      const fechaPub = currentLaw['Fecha de Publicación'] || currentLaw['Fecha'] || 'No especificada'
       const url = currentLaw['Url'] || null
-      response += `Ley seleccionada como contexto: ${titulo} (Ley ${numero})\n`
-      response += `Publicación: ${fechaPub}\n`
-      if (url) {
-        response += `Fuente oficial: ${url}\n\n`
-      }
-      const full = (currentLaw.Contenido || '').trim()
-      if (full) {
-        response += `Contenido completo:\n${full}\n`
-      }
+      response += `Fuente de contexto: ${titulo} — Ley ${numero}${url ? `\nFuente: ${url}` : ''}\n\n`
     }
     
     // Recomendaciones específicas por tipo de documento
@@ -497,7 +506,7 @@ ${fileContent.substring(0, 2000)}`
       response += `- Revisa la fuente oficial si tienes dudas\n`
     }
     
-    return { text: response, laws: uniqueLaws.slice(0, 3) }
+    return { text: response, laws: uniqueLaws.slice(0, 3), tokensUsed: 0 }
   }
 
   const handleSendMessage = async () => {
@@ -594,22 +603,6 @@ ${fileContent.substring(0, 2000)}`
             <div className="text-sm font-bold text-blue-800">{tokensUsed.toLocaleString()}</div>
           </div>
         </div>
-        {currentLaw && (
-          <div className="mt-3 p-2 bg-blue-100 border border-blue-200 rounded flex items-center justify-between">
-            <div className="text-xs text-blue-900">
-              <span className="font-semibold">Contexto activo:</span> {currentLaw['Título de la Norma'] || 'Ley seleccionada'}
-              { (currentLaw['Número'] || currentLaw['Norma Número']) && (
-                <span> (Ley {currentLaw['Número'] || currentLaw['Norma Número']})</span>
-              ) }
-            </div>
-            <button
-              className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-              onClick={() => setCurrentLaw(null)}
-            >
-              Quitar contexto
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Messages Area */}
@@ -693,6 +686,23 @@ ${fileContent.substring(0, 2000)}`
 
       {/* Input Area */}
       <div className="border-t border-gray-200 p-4 bg-white">
+        {/* Contexto activo (ubicado abajo para mayor visibilidad) */}
+        {currentLaw && (
+          <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded flex items-center justify-between">
+            <div className="text-xs text-blue-900">
+              <span className="font-semibold">Contexto activo:</span> {currentLaw['Título de la Norma'] || 'Ley seleccionada'}
+              { (currentLaw['Número'] || currentLaw['Norma Número']) && (
+                <span> (Ley {currentLaw['Número'] || currentLaw['Norma Número']})</span>
+              ) }
+            </div>
+            <button
+              className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+              onClick={() => setCurrentLaw(null)}
+            >
+              Quitar contexto
+            </button>
+          </div>
+        )}
         {/* File Upload */}
         {uploadedFile && (
           <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
