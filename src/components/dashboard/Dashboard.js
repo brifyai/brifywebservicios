@@ -645,6 +645,12 @@ const Dashboard = () => {
                 href="https://t.me/brifybeta_bot"
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={(e) => {
+                  if (!hasActivePlan()) {
+                    e.preventDefault()
+                    toast.error('Debes comprar un plan activo para usar Telegram')
+                  }
+                }}
                 className="inline-flex items-center px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-base"
               >
                 <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
@@ -740,6 +746,12 @@ const Dashboard = () => {
                   href="https://t.me/brifybeta_bot"
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={(e) => {
+                    if (!hasActivePlan()) {
+                      e.preventDefault()
+                      toast.error('Debes comprar un plan activo para usar Telegram')
+                    }
+                  }}
                   className="inline-flex items-center px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-xs"
                 >
                   <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
@@ -834,6 +846,12 @@ const Dashboard = () => {
                 href="https://t.me/brifybeta_bot"
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={(e) => {
+                  if (!hasActivePlan()) {
+                    e.preventDefault()
+                    toast.error('Debes comprar un plan activo para usar Telegram')
+                  }
+                }}
                 className="inline-flex items-center px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm"
               >
                 <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
@@ -915,12 +933,24 @@ const Dashboard = () => {
                   <div className="flex space-x-2">
                     <Link
                       to="/search"
+                      onClick={(e) => {
+                        if (!hasActivePlan()) {
+                          e.preventDefault()
+                          toast.error('Debes comprar el plan para acceder al Chat General')
+                        }
+                      }}
                       className="flex-1 bg-white/10 text-white font-medium py-2 px-3 rounded-lg hover:bg-white/20 transition-colors duration-200 text-center text-sm"
                     >
                       Chat General
                     </Link>
                     <Link
                       to="/folders"
+                      onClick={(e) => {
+                        if (!hasActivePlan()) {
+                          e.preventDefault()
+                          toast.error('Debes comprar el plan para gestionar archivos')
+                        }
+                      }}
                       className="flex-1 bg-white/10 text-white font-medium py-2 px-3 rounded-lg hover:bg-white/20 transition-colors duration-200 text-center text-sm"
                     >
                       Archivos
@@ -947,6 +977,12 @@ const Dashboard = () => {
               {/* Chat IA - La acción más importante */}
               <Link
                 to="/search"
+                onClick={(e) => {
+                  if (!hasActivePlan()) {
+                    e.preventDefault()
+                    toast.error('Debes comprar el plan para acceder al Chat General')
+                  }
+                }}
                 className="group bg-gradient-to-br from-purple-600 to-purple-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white"
               >
                 <div className="flex items-center justify-between mb-4">
@@ -971,6 +1007,12 @@ const Dashboard = () => {
               {/* Gestionar Archivos */}
               <Link
                 to="/folders"
+                onClick={(e) => {
+                  if (!hasActivePlan()) {
+                    e.preventDefault()
+                    toast.error('Debes comprar el plan para gestionar archivos')
+                  }
+                }}
                 className="group bg-gradient-to-br from-blue-600 to-blue-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white"
               >
                 <div className="flex items-center justify-between mb-4">
