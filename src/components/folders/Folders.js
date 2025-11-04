@@ -1082,8 +1082,10 @@ const Folders = () => {
           matchesSubFolder = folder.id === selectedSubFolder.id
         } else if (folder.type === 'user' || folder.type === 'group') {
           // Para carpetas de usuario y grupos, usar el campo 'extension'
-          // que indica a qué subcarpeta pertenecen (brify, abogados, entrenador)
-          matchesSubFolder = folder.extension === selectedSubFolder.tipo_extension
+          // Comparación insensible a mayúsculas para evitar discrepancias
+          const folderExt = (folder.extension || '').toLowerCase()
+          const subExt = (selectedSubFolder.tipo_extension || '').toLowerCase()
+          matchesSubFolder = folderExt === subExt
         } else {
           // Para otros tipos de carpetas, no mostrar cuando hay filtro activo
           matchesSubFolder = false
