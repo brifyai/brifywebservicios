@@ -20,6 +20,7 @@ const ChatLegal = () => {
   const [uploadedFile, setUploadedFile] = useState(null)
   const [loading, setLoading] = useState(false)
   const [tokensUsed, setTokensUsed] = useState(0)
+  const [currentLaw, setCurrentLaw] = useState(null)
   const fileInputRef = useRef(null)
 
   // Efecto para asegurar scroll al top en móvil al cargar el componente
@@ -262,30 +263,50 @@ const ChatLegal = () => {
 
   const searchLaws = async (query) => {
     try {
+      const LAWS_BASE = 'https://bfpbyxmvombqarfnjmus.supabase.co'
       // Detectar si la consulta incluye un número de ley específico
       const lawNumberMatch = query.match(/ley\s*(\d+)/i)
       let searchQuery = ''
       
+      // Primero, si hay número de ley, intentar coincidencia exacta
       if (lawNumberMatch) {
-        // Si se detecta un número de ley, buscar en los campos de número específicos
+        const lawNumber = lawNumberMatch[1]
+        const exactUrlNum = `${LAWS_BASE}/rest/v1/leyes_con_contenido?select=*&${encodeURIComponent('Número')}=eq.${encodeURIComponent(lawNumber)}&limit=1`
+        const exactUrlNorma = `${LAWS_BASE}/rest/v1/leyes_con_contenido?select=*&${encodeURIComponent('Norma Número')}=eq.${encodeURIComponent(lawNumber)}&limit=1`
+        const headers = {
+          'apikey': process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY,
+          'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY}`,
+          'Content-Type': 'application/json'
+        }
+        const exactRespNum = await fetch(exactUrlNum, { headers })
+        if (exactRespNum.ok) {
+          const exactDataNum = await exactRespNum.json()
+          if (exactDataNum && exactDataNum.length > 0) return exactDataNum
+        }
+        const exactRespNorma = await fetch(exactUrlNorma, { headers })
+        if (exactRespNorma.ok) {
+          const exactDataNorma = await exactRespNorma.json()
+          if (exactDataNorma && exactDataNorma.length > 0) return exactDataNorma
+        }
+      }
+
+      // Si no hay coincidencia exacta o no hay número, usar búsqueda amplia
+      if (lawNumberMatch) {
         const lawNumber = lawNumberMatch[1]
         searchQuery = `or=(${encodeURIComponent('Título de la Norma')}.ilike.*${encodeURIComponent(query)}*,${encodeURIComponent('Contenido')}.ilike.*${encodeURIComponent(query)}*,${encodeURIComponent('Número')}.ilike.*${encodeURIComponent(lawNumber)}*,${encodeURIComponent('Norma Número')}.ilike.*${encodeURIComponent(lawNumber)}*)`
       } else {
-        // Búsqueda normal en título y contenido
         searchQuery = `or=(${encodeURIComponent('Título de la Norma')}.ilike.*${encodeURIComponent(query)}*,${encodeURIComponent('Contenido')}.ilike.*${encodeURIComponent(query)}*)`
       }
-      
-      const response = await fetch(
-        `${process.env.REACT_APP_SUPABASE_LAWS_URL}/rest/v1/leyes_con_contenido?select=*&${searchQuery}&limit=3`,
-        {
-          headers: {
-            'apikey': process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY,
-            'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY}`,
-            'Content-Type': 'application/json'
-          }
+
+      const wideUrl = `${LAWS_BASE}/rest/v1/leyes_con_contenido?select=*&${searchQuery}&limit=5`
+      const response = await fetch(wideUrl, {
+        headers: {
+          'apikey': process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY,
+          'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY}`,
+          'Content-Type': 'application/json'
         }
-      )
-      
+      })
+
       if (response.ok) {
         return await response.json()
       }
@@ -295,11 +316,38 @@ const ChatLegal = () => {
     return []
   }
 
+  // Extraer contenido relevante según consulta del usuario
+  const extractRelevantContent = (question, contenido) => {
+    if (!contenido) return ''
+    const normalize = (s) => s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+    const tokens = normalize(question)
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(t => t.length > 2 && !['que','dice','de','la','el','las','los','ley','norma','articulo','articulos','sobre'].includes(t))
+    const paras = contenido.split(/\n\n+/)
+
+    const scored = paras.map(p => {
+      const np = normalize(p)
+      const score = tokens.reduce((acc, tk) => acc + (np.includes(tk) ? 1 : 0), 0)
+      // bonificar artículos y títulos
+      const bonus = /titulo\s|articulo\s?\d+|articulo\s?[ivx]+/i.test(np) ? 1 : 0
+      return { p, s: score + bonus }
+    })
+    scored.sort((a,b) => b.s - a.s)
+    const best = scored.slice(0, 3).map(x => x.p.trim()).filter(Boolean)
+    const joined = best.join('\n\n').substring(0, 1200)
+    return joined || contenido.substring(0, 600)
+  }
+
   const generateResponse = async (userMessage, fileContent = null) => {
     let relevantLaws = []
     let documentAnalysis = ''
     let legalTermsFound = []
     let documentType = 'Documento general'
+    const lawNumberMatch = userMessage.match(/ley\s*(\d+)/i)
     
     // Si hay contenido de archivo, analizarlo primero
     if (fileContent && !fileContent.startsWith('Error al extraer')) {
@@ -353,7 +401,7 @@ ${fileContent.substring(0, 2000)}`
       index === self.findIndex(l => l.id === law.id)
     )
     
-    let response = `**🔍 Consulta Legal: "${userMessage}"**\n\n`
+    let response = `Consulta Legal: "${userMessage}"\n\n`
     
     if (fileContent && !fileContent.startsWith('Error al extraer')) {
       response += `**📄 Análisis del Documento Subido**\n`
@@ -385,21 +433,48 @@ ${fileContent.substring(0, 2000)}`
     }
     
     if (uniqueLaws.length > 0) {
-      response += `**📚 Leyes Aplicables para Verificación:**\n\n`
-      
+      // fijar contexto si hay número de ley en la consulta
+      if (lawNumberMatch) {
+        setCurrentLaw(uniqueLaws[0])
+      }
+      response += `Leyes encontradas:\n\n`
       uniqueLaws.slice(0, 3).forEach((law, index) => {
-        response += `**${index + 1}. ${law['Título de la Norma']}**\n`
-        
-        // Mostrar número de ley si está disponible
-        if (law['Número'] || law['Norma Número']) {
-          const lawNumber = law['Número'] || law['Norma Número']
-          response += `🔢 **Número:** ${lawNumber}\n`
+        const titulo = law['Título de la Norma'] || 'Título no disponible'
+        const numero = law['Número'] || law['Norma Número'] || 'No disponible'
+        const fechaPub = law['Fecha de Publicación'] || law['Fecha'] || 'No especificada'
+        const tipo = law['Tipo de Norma'] || 'No especificado'
+        const url = law['Url'] || null
+        const fragmento = extractRelevantContent(userMessage, law.Contenido || '')
+        response += `${index + 1}. ${titulo}\n`
+        response += `Número: ${numero}\n`
+        response += `Publicación: ${fechaPub}\n`
+        response += `Tipo: ${tipo}\n`
+        if (fragmento) {
+          response += `Fragmento relevante:\n${fragmento}\n\n`
         }
-        
-        response += `📅 **Fecha:** ${law.Fecha || 'No especificada'}\n`
-        response += `📋 **Tipo:** ${law['Tipo de Norma'] || 'No especificado'}\n`
-        response += `📄 **Resumen:** ${law.Contenido ? law.Contenido.substring(0, 200) + '...' : 'No disponible'}\n\n`
+        const full = (law.Contenido || '').trim()
+        if (full) {
+          response += `Contenido completo:\n${full}\n\n`
+        }
+        if (url) {
+          response += `Fuente oficial: ${url}\n\n`
+        }
       })
+    } else if (!fileContent && currentLaw) {
+      // usar contexto previo si existe y la consulta es de seguimiento
+      const titulo = currentLaw['Título de la Norma'] || 'Título no disponible'
+      const numero = currentLaw['Número'] || currentLaw['Norma Número'] || 'No disponible'
+      const fechaPub = currentLaw['Fecha de Publicación'] || currentLaw['Fecha'] || 'No especificada'
+      const url = currentLaw['Url'] || null
+      response += `Ley seleccionada como contexto: ${titulo} (Ley ${numero})\n`
+      response += `Publicación: ${fechaPub}\n`
+      if (url) {
+        response += `Fuente oficial: ${url}\n\n`
+      }
+      const full = (currentLaw.Contenido || '').trim()
+      if (full) {
+        response += `Contenido completo:\n${full}\n`
+      }
     }
     
     // Recomendaciones específicas por tipo de documento
@@ -412,30 +487,17 @@ ${fileContent.substring(0, 2000)}`
       response += `\n`
     }
     
-    response += `**⚖️ Próximos Pasos Recomendados:**\n`
-    if (fileContent && !fileContent.startsWith('Error al extraer')) {
-      response += `1. 📋 Revisar cada ley identificada en detalle\n`
-      response += `2. ✅ Verificar cumplimiento punto por punto\n`
-      response += `3. 📝 Documentar cualquier ajuste necesario\n`
-      response += `4. 👨‍💼 Validar con abogado especializado antes de firmar/presentar\n\n`
-    } else {
-      response += `1. 📄 Subir documento para análisis detallado\n`
-      response += `2. 🔍 Reformular consulta con términos más específicos\n`
-      response += `3. 🌐 Consultar directamente en bcn.cl\n`
-      response += `4. 👨‍💼 Buscar asesoría legal profesional\n\n`
+    // Se elimina bloque de próximos pasos con símbolos para evitar ruido visual
+    
+    if (uniqueLaws.length === 0 && !fileContent && !currentLaw) {
+      response = `No se encontraron leyes específicas para: "${userMessage}"\n\n`
+      response += `Sugerencias:\n`
+      response += `- Usa términos legales más específicos\n`
+      response += `- Indica número de ley cuando lo conozcas\n`
+      response += `- Revisa la fuente oficial si tienes dudas\n`
     }
     
-    if (uniqueLaws.length === 0 && !fileContent) {
-      response = `❌ **No se encontraron leyes específicas para: "${userMessage}"**\n\n`
-      response += `**💡 Sugerencias para mejorar tu búsqueda:**\n`
-      response += `• 📄 Sube un documento para análisis automático\n`
-      response += `• 🔍 Usa términos legales más específicos\n`
-      response += `• 📚 Consulta directamente en bcn.cl\n`
-      response += `• 👨‍💼 Considera asesoría legal profesional\n\n`
-      response += `**🏷️ Ejemplos de términos efectivos:** contrato, nacionalidad, arrendamiento, laboral, matrimonio\n`
-    }
-    
-    return response
+    return { text: response, laws: uniqueLaws.slice(0, 3) }
   }
 
   const handleSendMessage = async () => {
@@ -467,11 +529,12 @@ ${fileContent.substring(0, 2000)}`
       }
 
       const aiResponse = await generateResponse(userMessage, fileContent)
-      
+
       const aiMessage = {
         id: Date.now() + 1,
         type: 'ai',
-        content: aiResponse,
+        content: aiResponse.text,
+        laws: aiResponse.laws,
         timestamp: new Date()
       }
 
@@ -483,7 +546,7 @@ ${fileContent.substring(0, 2000)}`
           user.email,
           'chat_legal',
           userMessage,
-          aiResponse
+          aiResponse.text
         )
         console.log('✅ Conversación legal registrada exitosamente')
       } catch (error) {
@@ -531,6 +594,22 @@ ${fileContent.substring(0, 2000)}`
             <div className="text-sm font-bold text-blue-800">{tokensUsed.toLocaleString()}</div>
           </div>
         </div>
+        {currentLaw && (
+          <div className="mt-3 p-2 bg-blue-100 border border-blue-200 rounded flex items-center justify-between">
+            <div className="text-xs text-blue-900">
+              <span className="font-semibold">Contexto activo:</span> {currentLaw['Título de la Norma'] || 'Ley seleccionada'}
+              { (currentLaw['Número'] || currentLaw['Norma Número']) && (
+                <span> (Ley {currentLaw['Número'] || currentLaw['Norma Número']})</span>
+              ) }
+            </div>
+            <button
+              className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+              onClick={() => setCurrentLaw(null)}
+            >
+              Quitar contexto
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Messages Area */}
@@ -544,7 +623,7 @@ ${fileContent.substring(0, 2000)}`
         
         {messages.map((message) => (
           <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+            <div className={`max-w-3xl px-4 py-2 rounded-lg ${
               message.type === 'user' 
                 ? 'bg-blue-600 text-white' 
                 : 'bg-white text-gray-800 border border-gray-200'
@@ -564,6 +643,36 @@ ${fileContent.substring(0, 2000)}`
                       {message.file.name} ({Math.round(message.file.size / 1024)} KB)
                     </div>
                   )}
+                  {message.type === 'ai' && message.laws && message.laws.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {message.laws.map((law, idx) => (
+                        <div key={idx} className="p-2 bg-blue-50 border border-blue-200 rounded">
+                          <div className="text-xs text-blue-900">
+                            <span className="font-medium">{law['Título de la Norma'] || 'Título no disponible'}</span>
+                            { (law['Número'] || law['Norma Número']) && (
+                              <span> — Ley {law['Número'] || law['Norma Número']}</span>
+                            )}
+                          </div>
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                              onClick={() => setCurrentLaw(law)}
+                            >
+                              Utilizar como contexto
+                            </button>
+                            <a
+                              className="text-xs px-2 py-1 bg-white text-blue-700 border border-blue-300 rounded hover:bg-blue-100"
+                              href={law['Url'] || '#'}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Ver fuente
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -572,7 +681,7 @@ ${fileContent.substring(0, 2000)}`
         
         {loading && (
           <div className="flex justify-start">
-            <div className="bg-white text-gray-800 border border-gray-200 max-w-xs lg:max-w-md px-4 py-2 rounded-lg">
+            <div className="bg-white text-gray-800 border border-gray-200 max-w-3xl px-4 py-2 rounded-lg">
               <div className="flex items-center">
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
                 <span className="text-sm">Analizando...</span>

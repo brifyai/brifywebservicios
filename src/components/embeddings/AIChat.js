@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
-import embeddingsService from '../../lib/embeddings'
 import groqService from '../../services/groqService'
 import conversationService from '../../services/conversationService'
 import LoadingSpinner from '../common/LoadingSpinner'
@@ -101,15 +100,8 @@ const AIChat = () => {
     setMessages(prev => [...prev, newUserMessage])
 
     try {
-      // Buscar contenido relevante usando embeddings
-      const searchResults = await embeddingsService.searchSimilarContent(userMessage, user.id, 5)
-      
-      // Preparar contexto de documentos
-      const context = searchResults?.map(result => ({
-        content: result.content,
-        file_name: result.file_name,
-        similarity: result.similarity
-      })) || []
+      // Chat general: no usar matching de documentos ni contexto embebido
+      const context = []
 
       // Preparar historial de chat (últimos 6 mensajes para contexto)
       const chatHistory = messages.slice(-6).map(msg => ({
@@ -122,7 +114,7 @@ const AIChat = () => {
         userMessage,
         context,
         chatHistory,
-        user.id // Pasar userId para tracking de tokens
+        user.id
       )
 
       // Agregar respuesta de la IA
@@ -131,8 +123,8 @@ const AIChat = () => {
         role: 'assistant',
         content: groqResult.response,
         timestamp: new Date(),
-        context: context.length > 0 ? context : null,
-        searchResults: searchResults?.length || 0,
+        context: null,
+        searchResults: 0,
         tokensUsed: groqResult.tokensUsed
       }
       
@@ -152,11 +144,7 @@ const AIChat = () => {
         // No mostramos error al usuario para no interrumpir la experiencia
       }
       
-      if (context.length > 0) {
-        toast.success(`Respuesta generada usando ${context.length} documentos relevantes (${groqResult.tokensUsed} tokens)`)
-      } else {
-        toast.success(`Respuesta generada (${groqResult.tokensUsed} tokens utilizados)`)
-      }
+      toast.success(`Respuesta generada (${groqResult.tokensUsed} tokens utilizados)`) 
     } catch (error) {
       console.error('Error in AI chat:', error)
       toast.error('Error al generar respuesta: ' + error.message)
@@ -200,7 +188,7 @@ const AIChat = () => {
             </div>
             <div>
               <h2 className="text-2xl font-bold text-gray-900">Chat IA</h2>
-              <p className="text-gray-600">Conversa con tus documentos usando inteligencia artificial</p>
+              <p className="text-gray-600">Haz preguntas libremente; la IA responde según su conocimiento</p>
             </div>
           </div>
           {messages.length > 0 && (
@@ -221,12 +209,8 @@ const AIChat = () => {
             <div className="p-4 bg-blue-50 rounded-full mb-4">
               <SparklesIcon className="h-8 w-8 text-blue-600" />
             </div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              ¡Hola! Soy tu asistente IA
-            </h3>
-            <p className="text-gray-600 max-w-md">
-              Puedes hacerme preguntas sobre tus documentos. Buscaré información relevante y te daré respuestas precisas.
-            </p>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">¡Hola! Soy tu asistente IA</h3>
+            <p className="text-gray-600 max-w-md">Puedes hacerme preguntas de cualquier tema. Responderé según mi conocimiento y el contexto de la conversación.</p>
             <div className="mt-4 text-sm text-gray-500">
               <p>💡 Ejemplos de preguntas:</p>
               <ul className="mt-2 space-y-1">
@@ -359,9 +343,9 @@ const AIChat = () => {
           <div className="text-sm text-blue-800">
             <p className="font-medium mb-1">¿Cómo funciona el Chat IA?</p>
             <ul className="space-y-1 text-blue-700">
-              <li>• Busca automáticamente en tus documentos información relevante</li>
+              <li>• Responde según su conocimiento general</li>
               <li>• Mantiene el contexto de la conversación para respuestas coherentes</li>
-              <li>• Te indica qué documentos usó para generar cada respuesta</li>
+              <li>• Puede estructurar y citar cuando sea útil</li>
             </ul>
           </div>
         </div>

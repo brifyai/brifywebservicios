@@ -1,6 +1,6 @@
 -- Crear tabla conversaciones_usuario para almacenar conversaciones por usuario
 -- Estructura: Un registro único por usuario con conversaciones en formato JSONB
--- Máximo 3 conversaciones, se elimina la más antigua automáticamente
+-- Máximo 5 conversaciones, se elimina la más antigua automáticamente
 
 CREATE TABLE IF NOT EXISTS conversaciones_usuario (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -34,7 +34,7 @@ CREATE TRIGGER trigger_update_conversaciones_usuario_updated_at
 
 -- Comentarios para documentar la estructura del JSONB
 COMMENT ON COLUMN conversaciones_usuario.conversaciones IS 
-'Array JSONB que contiene hasta 3 conversaciones. Estructura:
+'Array JSONB que contiene hasta 5 conversaciones. Estructura:
 [
   {
     "id": "uuid_unico",
@@ -44,4 +44,4 @@ COMMENT ON COLUMN conversaciones_usuario.conversaciones IS
     "fecha": "2024-01-01T12:00:00Z"
   }
 ]
-Se mantienen máximo 3 conversaciones, eliminando la más antigua automáticamente.';
+Se mantienen máximo 5 conversaciones, eliminando la más antigua automáticamente.';

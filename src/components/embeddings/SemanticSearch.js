@@ -35,7 +35,12 @@ const SemanticSearch = () => {
       setLoading(true);
       setHasSearched(true);
       
-      const searchResults = await embeddingsService.searchSimilarContent(query, user.id, 10);
+      const searchResults = await embeddingsService.searchSimilarContent(
+        query,
+        user.email,
+        10,
+        'abogados'
+      );
       setResults(searchResults || []);
       
       // Registrar la búsqueda semántica en la base de datos

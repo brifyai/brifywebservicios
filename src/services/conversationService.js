@@ -37,9 +37,9 @@ class ConversationService {
       // Agregar nueva conversación al inicio
       conversacionesActuales.unshift(nuevaConversacion)
 
-      // Mantener solo las 3 más recientes
-      if (conversacionesActuales.length > 3) {
-        conversacionesActuales = conversacionesActuales.slice(0, 3)
+      // Mantener solo las 5 más recientes
+      if (conversacionesActuales.length > 5) {
+        conversacionesActuales = conversacionesActuales.slice(0, 5)
       }
 
       // Actualizar o insertar registro

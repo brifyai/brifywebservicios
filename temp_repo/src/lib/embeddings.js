@@ -113,18 +113,19 @@ class EmbeddingsService {
     return chunks.filter(chunk => chunk.length > 0);
   }
 
-  // Buscar contenido similar usando embeddings (solo en documentos_entrenador)
-  async searchSimilarContent(query, userId, limit = 10) {
+  // Buscar contenido similar usando embeddings en documentos_administrador
+  async searchSimilarContent(query, administradorEmail, limit = 10, servicio = 'abogados') {
     try {
       // Generar embedding para la consulta
-      const queryEmbedding = await this.generateEmbedding(query, userId);
+      const queryEmbedding = await this.generateEmbedding(query, administradorEmail);
 
-      // Buscar en documentos_entrenador (incluye documentos principales y chunks)
+      // Buscar en documentos_administrador filtrando por administrador y servicio
       const { data: documents, error: searchError } = await supabase
-        .rpc('match_documentos_entrenador', {
-          filter: {},
+        .rpc('match_documentos_administrador', {
           match_count: limit,
-          query_embedding: queryEmbedding.embedding
+          query_embedding: queryEmbedding.embedding,
+          administrador: administradorEmail,
+          servicio: servicio
         });
 
       if (searchError) {
