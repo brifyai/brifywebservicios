@@ -30,6 +30,10 @@ const Folders = () => {
   const [folderType, setFolderType] = useState('Alumno') // Para extensión Entrenador
   const [selectedParentFolder, setSelectedParentFolder] = useState(null)
   const [availableSubFolders, setAvailableSubFolders] = useState([])
+  const [showShareModal, setShowShareModal] = useState(false)
+  const [shareTargetFolder, setShareTargetFolder] = useState(null)
+  const [shareEmails, setShareEmails] = useState('')
+  const [isSharing, setIsSharing] = useState(false)
 
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedSubFolder, setSelectedSubFolder] = useState(null) // Para filtrar por subcarpeta
@@ -954,6 +958,82 @@ const Folders = () => {
     }
   }
 
+  // Abrir modal de compartir carpeta (solo grupos)
+  const openShareModal = (folder) => {
+    const restrictedNames = ['abogados', 'brify', 'entrenador']
+    const name = (folder?.folder_name || folder?.group_name || folder?.name || '').toLowerCase()
+
+    if (folder?.type !== 'group') {
+      toast.error('Solo se pueden compartir carpetas de grupo')
+      return
+    }
+    if (restrictedNames.includes(name)) {
+      toast.error('Las subcarpetas administrador (Brify/Abogados/Entrenador) no se pueden compartir')
+      return
+    }
+    setShareTargetFolder(folder)
+    setShareEmails('')
+    setShowShareModal(true)
+  }
+
+  // Confirmar compartir: registrar en grupos_carpetas
+  const handleConfirmShare = async () => {
+    if (!shareTargetFolder || shareTargetFolder.type !== 'group') {
+      toast.error('Carpeta inválida para compartir')
+      return
+    }
+    const raw = (shareEmails || '').trim()
+    if (!raw) {
+      toast.error('Ingresa uno o más correos')
+      return
+    }
+    const emails = raw
+      .split(/[;,\s]+/)
+      .map(e => e.trim())
+      .filter(e => e.length > 0)
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    const invalids = emails.filter(e => !emailRegex.test(e))
+    if (invalids.length) {
+      toast.error(`Correos inválidos: ${invalids.join(', ')}`)
+      return
+    }
+
+    try {
+      setIsSharing(true)
+      const carpetaId = shareTargetFolder.google_folder_id || shareTargetFolder.folder_id
+      if (!carpetaId) {
+        toast.error('ID de carpeta no disponible')
+        setIsSharing(false)
+        return
+      }
+
+      await Promise.all(
+        emails.map(async (correo) => {
+          const payload = {
+            user_id: user.id,
+            role: 'lector',
+            carpeta_id: carpetaId,
+            administrador: user.email,
+            usuario_lector: correo
+          }
+          const { error } = await db.gruposCarpetas.create(payload)
+          if (error) throw error
+        })
+      )
+
+      toast.success(`Carpeta compartida con ${emails.length} usuario(s)`) 
+      setShowShareModal(false)
+      setShareTargetFolder(null)
+      setShareEmails('')
+    } catch (error) {
+      console.error('Error compartiendo carpeta:', error)
+      toast.error('Error registrando el compartido en grupos_carpetas')
+    } finally {
+      setIsSharing(false)
+    }
+  }
+
 
 
   const handleBreadcrumbClick = (index) => {
@@ -1301,6 +1381,22 @@ const Folders = () => {
                 Ver archivos
               </button>
 
+              {(() => {
+                const restricted = ['abogados', 'brify', 'entrenador']
+                const name = (folder.folder_name || folder.group_name || folder.name || '').toLowerCase()
+                const canShare = folder.type === 'group' && !restricted.includes(name)
+                return canShare
+              })() && (
+                <button
+                  onClick={() => openShareModal(folder)}
+                  className="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 py-2 px-4 rounded-lg transition-colors flex items-center justify-center mt-2"
+                  title="Compartir carpeta"
+                >
+                  <PlusIcon className="h-4 w-4 mr-2" />
+                  Compartir carpeta
+                </button>
+              )}
+
             </div>
             )
           })}
@@ -1507,6 +1603,54 @@ const Folders = () => {
               >
                 {creating ? 'Creando...' : 'Crear Carpeta'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share Folder Modal */}
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              Compartir carpeta
+            </h3>
+            <div className="space-y-4">
+              <div className="text-sm text-gray-600">
+                <div className="font-medium text-gray-800">Carpeta</div>
+                <div>{shareTargetFolder?.folder_name || shareTargetFolder?.group_name || '—'}</div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Correos de usuarios (separados por coma)
+                </label>
+                <input
+                  type="text"
+                  value={shareEmails}
+                  onChange={(e) => setShareEmails(e.target.value)}
+                  placeholder="usuario1@correo.com, usuario2@correo.com"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Nota: No disponible para carpetas de usuario (carpetas_usuario) ni subcarpetas administrador.
+                </p>
+              </div>
+              <div className="flex justify-end space-x-2 pt-2">
+                <button
+                  onClick={() => { setShowShareModal(false); setShareTargetFolder(null); setShareEmails('') }}
+                  className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                  disabled={isSharing}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleConfirmShare}
+                  className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  disabled={isSharing}
+                >
+                  {isSharing ? 'Compartiendo…' : 'Compartir'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
