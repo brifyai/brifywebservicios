@@ -22,6 +22,7 @@ import Abogado from './components/legal/Abogado'
 import LoadingSpinner from './components/common/LoadingSpinner'
 import Navbar from './components/layout/Navbar'
 import GoogleAuthCallback from './components/auth/GoogleAuthCallback'
+import Entrenador from './components/trainer/Entrenador'
 
 
 // Componente para rutas protegidas
@@ -198,6 +199,16 @@ function App() {
                   <ProtectedRoute>
                     <AuthenticatedLayout>
                       <Abogado />
+                    </AuthenticatedLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/entrenador"
+                element={
+                  <ProtectedRoute>
+                    <AuthenticatedLayout>
+                      <Entrenador />
                     </AuthenticatedLayout>
                   </ProtectedRoute>
                 }

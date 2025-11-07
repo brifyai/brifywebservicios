@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import { supabase } from '../../lib/supabase'
+import { supabase, db } from '../../lib/supabase'
 import googleDriveService from '../../lib/googleDrive'
 import conversationService from '../../services/conversationService'
 import {
@@ -17,7 +17,6 @@ import {
   ClockIcon,
   FireIcon,
   BellIcon,
-  CogIcon,
   EyeIcon,
   MagnifyingGlassIcon,
   ChatBubbleLeftRightIcon,
@@ -32,12 +31,14 @@ import {
   CpuChipIcon,
   ArrowPathIcon
 } from '@heroicons/react/24/outline'
+import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
 import ConversationModal from '../common/ConversationModal'
 import InsightsIA from './InsightsIA'
 import SyncButton from '../drive/SyncButton'
 import { SyncService } from '../../services/SyncService'
 import toast from 'react-hot-toast'
+import { useUserExtensions } from '../../hooks/useUserExtensions'
 
 // Función para formatear bytes de manera estética (máximo GB para evitar números extensos)
 const formatBytes = (bytes) => {
@@ -71,6 +72,18 @@ const formatBytes = (bytes) => {
 
 const Dashboard = () => {
   const { user, userProfile, hasActivePlan, isGoogleDriveConnected } = useAuth()
+  const { hasExtension, loading: extensionsLoading } = useUserExtensions()
+  // Soporte para distintos nombres posibles de extensiones
+  const hasLegalExtension = (
+    hasExtension('Chat Legal') ||
+    hasExtension('Abogados') ||
+    hasExtension('Abogado') ||
+    hasExtension('Legal')
+  )
+  const hasTrainerExtension = (
+    hasExtension('Entrenador') ||
+    hasExtension('Trainer')
+  )
   const [loading, setLoading] = useState(true)
   const [isNewUser, setIsNewUser] = useState(false)
   
@@ -83,7 +96,15 @@ const Dashboard = () => {
     systemStatus: true,
     aiInsights: true
   })
-  const [showWidgetMenu, setShowWidgetMenu] = useState(false)
+  // Eliminado: menú de personalización del dashboard (engranaje oculto)
+  const quickActionsRef = useRef(null)
+
+  const scrollQuickActions = (direction) => {
+    const el = quickActionsRef.current
+    if (!el) return
+    const amount = Math.max(300, Math.floor(el.clientWidth * 0.9))
+    el.scrollBy({ left: direction === 'left' ? -amount : amount, behavior: 'smooth' })
+  }
   
   // Estados para métricas en tiempo real
   const [metrics, setMetrics] = useState({
@@ -128,9 +149,119 @@ const Dashboard = () => {
     summaries: []
   })
 
+
   // Estado para el modal de conversaciones
   const [selectedConversation, setSelectedConversation] = useState(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // Onboarding progresivo: Drive, Plan, Chat, Archivos
+  const [onboardingProgress, setOnboardingProgress] = useState({
+    drive: false,
+    plan: false,
+    chat: false,
+    folders: false,
+    status: 'pending'
+  })
+
+  // Normaliza el campo completando_primera que puede venir como string, objeto o 'completado'
+  const normalizeCompletandoPrimera = (raw) => {
+    if (!raw) return null
+    if (typeof raw === 'string') {
+      const s = raw.trim()
+      if (s === 'completado') {
+        return { drive: true, plan: true, chat: true, folders: true, status: 'completado' }
+      }
+      try {
+        const parsed = JSON.parse(s)
+        if (parsed && typeof parsed === 'object') return parsed
+      } catch (e) {
+        // Si no es JSON válido, no cambiamos nada
+      }
+      return null
+    }
+    if (typeof raw === 'object') {
+      // Supabase puede devolver JSONB como objeto
+      return raw
+    }
+    return null
+  }
+
+  const initializeOnboardingProgress = () => {
+    if (!userProfile) return
+    try {
+      // Partimos desde el estado actual para evitar resetear pasos ya completados
+      let progress = { ...onboardingProgress }
+      const normalized = normalizeCompletandoPrimera(userProfile?.completando_primera)
+      if (normalized) {
+        progress = { ...progress, ...normalized }
+      }
+      // Baseline según estado real del sistema
+      progress.drive = !!(progress.drive || isGoogleDriveConnected)
+      progress.plan = !!(progress.plan || hasActivePlan())
+      const allDone = progress.drive && progress.plan && progress.chat && progress.folders
+      progress.status = allDone ? 'completado' : (progress.status || 'pending')
+      setOnboardingProgress(progress)
+      setIsNewUser(progress.status !== 'completado')
+    } catch (error) {
+      console.error('Error initializing onboarding progress:', error)
+    }
+  }
+
+  // Refrescar desde servidor al ingresar al Dashboard
+  const refreshOnboardingFromServer = async () => {
+    try {
+      if (!user?.id) return
+      const { data } = await db.users.getById(user.id)
+      const normalized = normalizeCompletandoPrimera(data?.completando_primera)
+
+      let progress = { ...onboardingProgress }
+      if (normalized) {
+        progress = { ...progress, ...normalized }
+      }
+
+      // Aplicar baseline contra estado real
+      progress.drive = !!(progress.drive || isGoogleDriveConnected)
+      progress.plan = !!(progress.plan || hasActivePlan())
+      const allDone = progress.drive && progress.plan && progress.chat && progress.folders
+      progress.status = allDone ? 'completado' : (progress.status || 'pending')
+
+      setOnboardingProgress(progress)
+      setIsNewUser(progress.status !== 'completado')
+    } catch (error) {
+      console.error('Error refreshing onboarding from server:', error)
+    }
+  }
+
+  const persistOnboardingProgress = async (progress) => {
+    try {
+      await db.users.update(user.id, { completando_primera: JSON.stringify(progress) })
+    } catch (error) {
+      console.error('Error updating completando_primera:', error)
+    }
+  }
+
+  const updateOnboardingProgress = async (partial) => {
+    // Tomar el estado más reciente desde DB y memoria para evitar regresiones
+    let base = { drive: false, plan: false, chat: false, folders: false, status: 'pending' }
+    try {
+      const normalized = normalizeCompletandoPrimera(userProfile?.completando_primera)
+      if (normalized) {
+        base = { ...base, ...normalized }
+      }
+    } catch (err) {
+      console.warn('No se pudo leer completando_primera, se usará estado en memoria')
+    }
+
+    const merged = { ...base, ...onboardingProgress, ...partial }
+    const driveDone = !!(merged.drive || isGoogleDriveConnected)
+    const planDone = !!(merged.plan || hasActivePlan())
+    const allDone = driveDone && planDone && !!merged.chat && !!merged.folders
+    const next = { ...merged, status: allDone ? 'completado' : 'pending' }
+
+    setOnboardingProgress(next)
+    setIsNewUser(next.status !== 'completado')
+    await persistOnboardingProgress(next)
+  }
 
   // Timeout de seguridad para evitar loading infinito
   useEffect(() => {
@@ -168,8 +299,15 @@ const Dashboard = () => {
       loadQuickAccessData()
       loadSystemStatus()
       loadAIInsights()
+      // Inicializar progreso de onboarding
+      initializeOnboardingProgress()
+      // Refrescar el progreso desde DB al entrar
+      refreshOnboardingFromServer()
     }
   }, [userProfile])
+
+  // No actualizar automáticamente completando_primera por cambios en Drive/Plan.
+  // El progreso se persiste sólo al interactuar con botones de Chat y Archivos.
 
   const loadDashboardData = async () => {
     if (!user || !userProfile) return
@@ -178,8 +316,9 @@ const Dashboard = () => {
 
     try {
       setLoading(true)
-      const isNew = !hasActivePlan() && !isGoogleDriveConnected
-      setIsNewUser(isNew)
+      // No modificar isNewUser aquí. Su valor se gestiona
+      // mediante initializeOnboardingProgress/updateOnboardingProgress
+      // usando el estado real y el campo completando_primera.
       console.log('Dashboard: Data loading completed successfully')
     } catch (error) {
       console.error('Error loading dashboard data:', error)
@@ -375,6 +514,7 @@ const Dashboard = () => {
       })
     }
   }
+
 
   const loadQuickAccessData = async () => {
     try {
@@ -603,42 +743,7 @@ const Dashboard = () => {
                 <span>Sistema operativo</span>
               </div>
               
-              {/* Menu de personalización */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowWidgetMenu(!showWidgetMenu)}
-                  className="p-2 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
-                >
-                  <CogIcon className="h-5 w-5 text-gray-600" />
-                </button>
-                
-                {showWidgetMenu && (
-                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-200 z-50">
-                    <div className="p-4">
-                      <h3 className="font-semibold text-gray-900 mb-3">Personalizar Dashboard</h3>
-                      <div className="space-y-2">
-                        {Object.entries(widgets).map(([key, value]) => (
-                          <label key={key} className="flex items-center justify-between cursor-pointer">
-                            <span className="text-sm text-gray-700">
-                              {key === 'quickActions' ? 'Acciones Rápidas' :
-                               key === 'metrics' ? 'Métricas' :
-                               key === 'recentActivity' ? 'Actividad Reciente' :
-                               key === 'systemStatus' ? 'Estado del Sistema' :
-                               'Insights de IA'}
-                            </span>
-                            <input
-                              type="checkbox"
-                              checked={value}
-                              onChange={() => toggleWidget(key)}
-                              className="rounded text-blue-500 focus:ring-blue-500"
-                            />
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+              {/* Menú de personalización oculto */}
               
               {/* Botón Telegram */}
               <a
@@ -704,42 +809,7 @@ const Dashboard = () => {
               
               {/* Contenedor de botones */}
               <div className="flex items-center gap-2">
-                {/* Menu de personalización */}
-                <div className="relative">
-                  <button
-                    onClick={() => setShowWidgetMenu(!showWidgetMenu)}
-                    className="p-2 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
-                  >
-                    <CogIcon className="h-4 w-4 text-gray-600" />
-                  </button>
-                  
-                  {showWidgetMenu && (
-                    <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-200 z-50">
-                      <div className="p-4">
-                        <h3 className="font-semibold text-gray-900 mb-3">Personalizar Dashboard</h3>
-                        <div className="space-y-2">
-                          {Object.entries(widgets).map(([key, value]) => (
-                            <label key={key} className="flex items-center justify-between cursor-pointer">
-                              <span className="text-sm text-gray-700">
-                                {key === 'quickActions' ? 'Acciones Rápidas' :
-                                 key === 'metrics' ? 'Métricas' :
-                                 key === 'recentActivity' ? 'Actividad Reciente' :
-                                 key === 'systemStatus' ? 'Estado del Sistema' :
-                                 'Insights de IA'}
-                              </span>
-                              <input
-                                type="checkbox"
-                                checked={value}
-                                onChange={() => toggleWidget(key)}
-                                className="rounded text-blue-500 focus:ring-blue-500"
-                              />
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                {/* Menú de personalización oculto en móvil */}
                 
                 {/* Botón Telegram */}
                 <a
@@ -804,42 +874,7 @@ const Dashboard = () => {
                 <span>Sistema operativo</span>
               </div>
               
-              {/* Menu de personalización */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowWidgetMenu(!showWidgetMenu)}
-                  className="p-2 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
-                >
-                  <CogIcon className="h-5 w-5 text-gray-600" />
-                </button>
-                
-                {showWidgetMenu && (
-                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-200 z-50">
-                    <div className="p-4">
-                      <h3 className="font-semibold text-gray-900 mb-3">Personalizar Dashboard</h3>
-                      <div className="space-y-2">
-                        {Object.entries(widgets).map(([key, value]) => (
-                          <label key={key} className="flex items-center justify-between cursor-pointer">
-                            <span className="text-sm text-gray-700">
-                              {key === 'quickActions' ? 'Acciones Rápidas' :
-                               key === 'metrics' ? 'Métricas' :
-                               key === 'recentActivity' ? 'Actividad Reciente' :
-                               key === 'systemStatus' ? 'Estado del Sistema' :
-                               'Insights de IA'}
-                            </span>
-                            <input
-                              type="checkbox"
-                              checked={value}
-                              onChange={() => toggleWidget(key)}
-                              className="rounded text-blue-500 focus:ring-blue-500"
-                            />
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+              {/* Menú de personalización oculto en tablet */}
               
               {/* Botón Telegram */}
               <a
@@ -895,10 +930,15 @@ const Dashboard = () => {
                     Vincula tu cuenta de Google Drive para acceder a tus documentos y archivos.
                   </p>
                   <button
-                    onClick={handleConnectGoogleDrive}
-                    className="w-full bg-white text-black font-medium py-2 px-4 rounded-xl hover:bg-gray-100 transition-colors duration-200"
+                    onClick={onboardingProgress.drive ? undefined : handleConnectGoogleDrive}
+                    disabled={onboardingProgress.drive}
+                    className={`w-full font-medium py-2 px-4 rounded-xl transition-colors duration-200 ${onboardingProgress.drive ? 'bg-green-600 text-white cursor-not-allowed' : 'bg-white text-black hover:bg-gray-100'}`}
                   >
-                    Conectar Drive
+                    {onboardingProgress.drive ? (
+                      <span className="inline-flex items-center"><CheckCircleIcon className="h-5 w-5 mr-2" /> Conectado</span>
+                    ) : (
+                      'Conectar Drive'
+                    )}
                   </button>
                 </div>
 
@@ -912,12 +952,18 @@ const Dashboard = () => {
                   <p className="text-gray-400 text-sm mb-4">
                     Selecciona el plan que mejor se adapte a tus necesidades y comienza a usar IA.
                   </p>
-                  <Link
-                    to="/plans"
-                    className="w-full bg-white text-black font-medium py-2 px-4 rounded-xl hover:bg-gray-100 transition-colors duration-200 inline-block text-center"
-                  >
-                    Ver Planes
-                  </Link>
+                  {onboardingProgress.plan || hasActivePlan() ? (
+                    <div className="w-full bg-green-600 text-white font-medium py-2 px-4 rounded-xl inline-block text-center cursor-not-allowed">
+                      <span className="inline-flex items-center"><CheckCircleIcon className="h-5 w-5 mr-2" /> Plan activo</span>
+                    </div>
+                  ) : (
+                    <Link
+                      to="/plans"
+                      className="w-full bg-white text-black font-medium py-2 px-4 rounded-xl hover:bg-gray-100 transition-colors duration-200 inline-block text-center"
+                    >
+                      Ver Planes
+                    </Link>
+                  )}
                 </div>
 
                 <div className="bg-white/5 rounded-2xl p-6 border border-white/10">
@@ -931,36 +977,54 @@ const Dashboard = () => {
                     Una vez configurado, explora el chat IA, gestión de archivos y más herramientas.
                   </p>
                   <div className="flex space-x-2">
-                    <Link
-                      to="/search"
-                      onClick={(e) => {
-                        if (!hasActivePlan()) {
-                          e.preventDefault()
-                          toast.error('Debes comprar el plan para acceder al Chat General')
-                        }
-                      }}
-                      className="flex-1 bg-white/10 text-white font-medium py-2 px-3 rounded-lg hover:bg-white/20 transition-colors duration-200 text-center text-sm"
-                    >
-                      Chat General
-                    </Link>
-                    <Link
-                      to="/folders"
-                      onClick={(e) => {
-                        if (!hasActivePlan()) {
-                          e.preventDefault()
-                          toast.error('Debes comprar el plan para gestionar archivos')
-                        }
-                      }}
-                      className="flex-1 bg-white/10 text-white font-medium py-2 px-3 rounded-lg hover:bg-white/20 transition-colors duration-200 text-center text-sm"
-                    >
-                      Archivos
-                    </Link>
+                    {onboardingProgress.chat ? (
+                      <div className="flex-1 bg-green-600 text-white font-medium py-2 px-3 rounded-lg text-center text-sm cursor-not-allowed">
+                        <span className="inline-flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2" /> Chat General</span>
+                      </div>
+                    ) : (
+                      <Link
+                        to="/search"
+                        onClick={(e) => {
+                          if (!hasActivePlan()) {
+                            e.preventDefault()
+                            toast.error('Debes comprar el plan para acceder al Chat General')
+                            return
+                          }
+                          updateOnboardingProgress({ chat: true })
+                        }}
+                        className="flex-1 bg-white/10 text-white font-medium py-2 px-3 rounded-lg hover:bg-white/20 transition-colors duration-200 text-center text-sm"
+                      >
+                        Chat General
+                      </Link>
+                    )}
+                    {onboardingProgress.folders ? (
+                      <div className="flex-1 bg-green-600 text-white font-medium py-2 px-3 rounded-lg text-center text-sm cursor-not-allowed">
+                        <span className="inline-flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2" /> Archivos</span>
+                      </div>
+                    ) : (
+                      <Link
+                        to="/folders"
+                        onClick={(e) => {
+                          if (!hasActivePlan()) {
+                            e.preventDefault()
+                            toast.error('Debes comprar el plan para gestionar archivos')
+                            return
+                          }
+                          updateOnboardingProgress({ folders: true })
+                        }}
+                        className="flex-1 bg-white/10 text-white font-medium py-2 px-3 rounded-lg hover:bg-white/20 transition-colors duration-200 text-center text-sm"
+                      >
+                        Archivos
+                      </Link>
+                    )}
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-        )}
+        </div>
+      </div>
+    )}
+
+        
 
         {/* ACCIONES RÁPIDAS - PRIORIDAD #1 */}
         {widgets.quickActions && (
@@ -973,7 +1037,26 @@ const Dashboard = () => {
               </div>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="relative px-6">
+              {/* Flechas de navegación */}
+              <button
+                type="button"
+                aria-label="Anterior"
+                onClick={() => scrollQuickActions('left')}
+                className="hidden md:flex items-center justify-center absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 backdrop-blur-sm border border-gray-200 shadow-sm rounded-full p-2 hover:bg-white"
+              >
+                <ChevronLeftIcon className="h-5 w-5 text-gray-700" />
+              </button>
+              <button
+                type="button"
+                aria-label="Siguiente"
+                onClick={() => scrollQuickActions('right')}
+                className="hidden md:flex items-center justify-center absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 backdrop-blur-sm border border-gray-200 shadow-sm rounded-full p-2 hover:bg-white"
+              >
+                <ChevronRightIcon className="h-5 w-5 text-gray-700" />
+              </button>
+
+              <div ref={quickActionsRef} className="flex gap-6 overflow-x-auto no-scrollbar scroll-smooth snap-x snap-mandatory py-1">
               {/* Chat IA - La acción más importante */}
               <Link
                 to="/search"
@@ -981,9 +1064,12 @@ const Dashboard = () => {
                   if (!hasActivePlan()) {
                     e.preventDefault()
                     toast.error('Debes comprar el plan para acceder al Chat General')
+                  } else {
+                    // Marcar progreso de onboarding al acceder por Acciones Rápidas
+                    updateOnboardingProgress({ chat: true })
                   }
                 }}
-                className="group bg-gradient-to-br from-purple-600 to-purple-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white"
+                className="group bg-gradient-to-br from-purple-600 to-purple-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white min-w-[280px] max-w-[280px] snap-start flex-shrink-0"
               >
                 <div className="flex items-center justify-between mb-4">
                   <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
@@ -1011,9 +1097,12 @@ const Dashboard = () => {
                   if (!hasActivePlan()) {
                     e.preventDefault()
                     toast.error('Debes comprar el plan para gestionar archivos')
+                  } else {
+                    // Marcar progreso de onboarding al acceder por Acciones Rápidas
+                    updateOnboardingProgress({ folders: true })
                   }
                 }}
-                className="group bg-gradient-to-br from-blue-600 to-blue-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white"
+                className="group bg-gradient-to-br from-blue-600 to-blue-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white min-w-[280px] max-w-[280px] snap-start flex-shrink-0"
               >
                 <div className="flex items-center justify-between mb-4">
                   <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
@@ -1031,31 +1120,62 @@ const Dashboard = () => {
                 </div>
               </Link>
 
-              {/* Búsqueda Legal */}
-              <Link
-                to="/abogado"
-                className="group bg-gradient-to-br from-green-600 to-green-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
-                    <MagnifyingGlassIcon className="h-8 w-8 text-white" />
+              {/* Búsqueda Legal - visible solo si el usuario tiene la extensión (y evitar ocultar durante carga) */}
+              {!extensionsLoading && hasLegalExtension && (
+                <Link
+                  to="/abogado"
+                  onClick={(e) => {
+                    if (!hasActivePlan()) {
+                      e.preventDefault()
+                      toast.error('Debes comprar el plan para acceder al Chat Legal')
+                    }
+                  }}
+                  className="group bg-gradient-to-br from-green-600 to-green-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white min-w-[280px] max-w-[280px] snap-start flex-shrink-0"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
+                      <MagnifyingGlassIcon className="h-8 w-8 text-white" />
+                    </div>
+                    <ArrowRightIcon className="h-6 w-6 text-white/70 group-hover:text-white transition-colors" />
                   </div>
-                  <ArrowRightIcon className="h-6 w-6 text-white/70 group-hover:text-white transition-colors" />
-                </div>
-                <h3 className="text-xl font-bold mb-2">Chat Legal</h3>
-                <p className="text-green-100 text-sm mb-4">
-                  Accede a la base de datos de leyes chilenas
-                </p>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-green-200">Consultar leyes</span>
-                  <span className="text-xs text-green-300">Base actualizada</span>
-                </div>
-              </Link>
+                  <h3 className="text-xl font-bold mb-2">Chat Legal</h3>
+                  <p className="text-green-100 text-sm mb-4">
+                    Accede a la base de datos de leyes chilenas
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-green-200">Consultar leyes</span>
+                    <span className="text-xs text-green-300">Base actualizada</span>
+                  </div>
+                </Link>
+              )}
+
+              {/* Entrenador - visible solo si el usuario tiene la extensión (y evitar ocultar durante carga) */}
+              {!extensionsLoading && hasTrainerExtension && (
+                <Link
+                  to="/entrenador"
+                  className="group bg-gradient-to-br from-teal-600 to-teal-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white min-w-[280px] max-w-[280px] snap-start flex-shrink-0"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
+                      <DocumentTextIcon className="h-8 w-8 text-white" />
+                    </div>
+                    <ArrowRightIcon className="h-6 w-6 text-white/70 group-hover:text-white transition-colors" />
+                  </div>
+                  <h3 className="text-xl font-bold mb-2">Entrenador</h3>
+                  <p className="text-teal-100 text-sm mb-[35px]">
+                    Gestiona rutinas y carpetas de alumnos en una vista dedicada.
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-teal-200">Abrir Entrenador</span>
+                    <span className="text-xs text-teal-300">Plantilla y rutinas</span>
+                  </div>
+                </Link>
+              )}
 
               {/* Ver Plan */}
               <Link
                 to="/plans"
-                className="group bg-gradient-to-br from-orange-600 to-orange-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white"
+                className="group bg-gradient-to-br from-orange-600 to-orange-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white min-w-[280px] max-w-[280px] snap-start flex-shrink-0"
               >
                 <div className="flex items-center justify-between mb-4">
                   <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
@@ -1074,7 +1194,7 @@ const Dashboard = () => {
                   </span>
                 </div>
               </Link>
-
+              </div>
             </div>
           </div>
         )}
