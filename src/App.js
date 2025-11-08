@@ -21,6 +21,8 @@ import SemanticSearch from './components/embeddings/SemanticSearch'
 import Abogado from './components/legal/Abogado'
 import LoadingSpinner from './components/common/LoadingSpinner'
 import Navbar from './components/layout/Navbar'
+import Footer from './components/layout/Footer'
+import TermsOfService from './components/common/TermsOfService'
 import GoogleAuthCallback from './components/auth/GoogleAuthCallback'
 import Entrenador from './components/trainer/Entrenador'
 
@@ -52,7 +54,7 @@ const AuthenticatedLayout = ({ children }) => {
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
-      <main className="container mx-auto px-4 py-8">
+      <main className="container mx-auto px-4 py-8 pb-16">
         {children}
       </main>
     </div>
@@ -127,6 +129,12 @@ function App() {
               element={
                 <ResetPassword />
               } 
+            />
+
+            {/* Página pública de Condiciones */}
+            <Route 
+              path="/condiciones" 
+              element={<TermsOfService />} 
             />
             
             {/* Callback de Google Auth */}
@@ -237,6 +245,9 @@ function App() {
               } 
             />
           </Routes>
+
+          {/* Footer global al final de la página */}
+          <Footer />
           </div>
         </Router>
       </AuthProvider>
