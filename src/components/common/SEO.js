@@ -14,7 +14,7 @@ const SEO = ({
 }) => {
   // URL base del sitio
   const baseUrl = 'https://brifyai.com'
-  const fullUrl = canonicalUrl || (typeof window !== 'undefined' ? `${baseUrl}${window.location.pathname}` : baseUrl)
+  const fullUrl = canonicalUrl || `${baseUrl}${window.location.pathname}`
   
   // Meta tags por defecto
   const defaultTitle = 'Brify AI - Tu Asistente Inteligente de Documentos'

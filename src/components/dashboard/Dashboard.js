@@ -1037,13 +1037,13 @@ const Dashboard = () => {
               </div>
             </div>
             
-            <div className="relative px-6">
+            <div className="relative">
               {/* Flechas de navegación */}
               <button
                 type="button"
                 aria-label="Anterior"
                 onClick={() => scrollQuickActions('left')}
-                className="hidden md:flex items-center justify-center absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 backdrop-blur-sm border border-gray-200 shadow-sm rounded-full p-2 hover:bg-white"
+                className="hidden md:flex items-center justify-center absolute -left-2 top-1/2 -translate-y-1/2 z-10 bg-white/90 backdrop-blur-sm border border-gray-200 shadow-sm rounded-full p-2 hover:bg-white"
               >
                 <ChevronLeftIcon className="h-5 w-5 text-gray-700" />
               </button>
@@ -1051,7 +1051,7 @@ const Dashboard = () => {
                 type="button"
                 aria-label="Siguiente"
                 onClick={() => scrollQuickActions('right')}
-                className="hidden md:flex items-center justify-center absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 backdrop-blur-sm border border-gray-200 shadow-sm rounded-full p-2 hover:bg-white"
+                className="hidden md:flex items-center justify-center absolute -right-2 top-1/2 -translate-y-1/2 z-10 bg-white/90 backdrop-blur-sm border border-gray-200 shadow-sm rounded-full p-2 hover:bg-white"
               >
                 <ChevronRightIcon className="h-5 w-5 text-gray-700" />
               </button>
