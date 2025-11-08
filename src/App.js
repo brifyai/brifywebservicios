@@ -21,6 +21,8 @@ import SemanticSearch from './components/embeddings/SemanticSearch'
 import Abogado from './components/legal/Abogado'
 import LoadingSpinner from './components/common/LoadingSpinner'
 import Navbar from './components/layout/Navbar'
+import Footer from './components/layout/Footer'
+import Condiciones from './components/legal/Condiciones'
 import GoogleAuthCallback from './components/auth/GoogleAuthCallback'
 import Entrenador from './components/trainer/Entrenador'
 
@@ -55,6 +57,7 @@ const AuthenticatedLayout = ({ children }) => {
       <main className="container mx-auto px-4 py-8">
         {children}
       </main>
+      <Footer />
     </div>
   )
 }
@@ -98,6 +101,10 @@ function App() {
           
           <Routes>
             {/* Rutas públicas */}
+            <Route 
+              path="/condiciones" 
+              element={<Condiciones />} 
+            />
             <Route 
               path="/login" 
               element={
