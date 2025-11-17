@@ -979,7 +979,7 @@ const Plans = () => {
                     <span className="text-gray-600 ml-2">/{plan.duration_days} días</span>
                   </div>
                   <p className="text-gray-600">
-                    {plan.service_type === 'entrenador' ? 'Plan Entrenador' : plan.service_type}
+                    {plan.service_type === 'entrenador' ? 'Plan General' : plan.service_type}
                   </p>
                 </div>
 
