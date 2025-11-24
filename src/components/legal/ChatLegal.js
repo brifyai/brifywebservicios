@@ -222,96 +222,53 @@ const ChatLegal = () => {
     if (legalTerms.length === 0) return []
     
     try {
-      // Separar términos normales de números de ley
-      const normalTerms = legalTerms.filter(term => !term.startsWith('ley '))
-      const lawNumbers = legalTerms.filter(term => term.startsWith('ley ')).map(term => term.replace('ley ', ''))
-      
-      // Crear condiciones OR para términos normales
-      const normalConditions = normalTerms.slice(0, 3).map(term => 
-        `${encodeURIComponent('Título de la Norma')}.ilike.%${term}%,${encodeURIComponent('Contenido')}.ilike.%${term}%`
-      )
-      
-      // Crear condiciones OR para números de ley específicos
-      const numberConditions = lawNumbers.slice(0, 2).map(number => 
-        `${encodeURIComponent('Número')}.ilike.%${number}%,${encodeURIComponent('Norma Número')}.ilike.%${number}%`
-      )
-      
-      // Combinar todas las condiciones
-      const allConditions = [...normalConditions, ...numberConditions].join(',')
-      
-      if (allConditions) {
-        const { data, error } = await supabase
-          .from('leyes_chile')
-          .select('*')
-          .or(`(${allConditions})`)
-          .limit(5)
-        
-        if (error) {
-          console.error('Error buscando leyes por contenido:', error)
-          return []
+      const query = legalTerms.slice(0, 6).join(' ')
+      const response = await fetch(
+        `${process.env.REACT_APP_SUPABASE_LAWS_URL}/rest/v1/rpc/buscar_leyes`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY,
+            'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            termino_busqueda: query,
+            limite_resultados: 5
+          })
         }
-        
-        return data || []
-      }
-      
-      return []
+      )
+      if (!response.ok) return []
+      const data = await response.json()
+      return data || []
     } catch (error) {
-      console.error('Error en búsqueda por contenido:', error)
+      console.error('Error en búsqueda por contenido (RPC):', error)
       return []
     }
   }
 
   const searchLaws = async (query) => {
     try {
-      const LAWS_BASE = 'https://bfpbyxmvombqarfnjmus.supabase.co'
-      // Detectar si la consulta incluye un número de ley específico
-      const lawNumberMatch = query.match(/ley\s*(\d+)/i)
-      let searchQuery = ''
-      
-      // Primero, si hay número de ley, intentar coincidencia exacta
-      if (lawNumberMatch) {
-        const lawNumber = lawNumberMatch[1]
-        const exactUrlNum = `${LAWS_BASE}/rest/v1/leyes_con_contenido?select=*&${encodeURIComponent('Número')}=eq.${encodeURIComponent(lawNumber)}&limit=1`
-        const exactUrlNorma = `${LAWS_BASE}/rest/v1/leyes_con_contenido?select=*&${encodeURIComponent('Norma Número')}=eq.${encodeURIComponent(lawNumber)}&limit=1`
-        const headers = {
-          'apikey': process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY,
-          'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY}`,
-          'Content-Type': 'application/json'
+      const response = await fetch(
+        `${process.env.REACT_APP_SUPABASE_LAWS_URL}/rest/v1/rpc/buscar_leyes`,
+        {
+          method: 'POST',
+          headers: {
+            'apikey': process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY,
+            'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            termino_busqueda: query,
+            limite_resultados: 5
+          })
         }
-        const exactRespNum = await fetch(exactUrlNum, { headers })
-        if (exactRespNum.ok) {
-          const exactDataNum = await exactRespNum.json()
-          if (exactDataNum && exactDataNum.length > 0) return exactDataNum
-        }
-        const exactRespNorma = await fetch(exactUrlNorma, { headers })
-        if (exactRespNorma.ok) {
-          const exactDataNorma = await exactRespNorma.json()
-          if (exactDataNorma && exactDataNorma.length > 0) return exactDataNorma
-        }
-      }
-
-      // Si no hay coincidencia exacta o no hay número, usar búsqueda amplia
-      if (lawNumberMatch) {
-        const lawNumber = lawNumberMatch[1]
-        searchQuery = `or=(${encodeURIComponent('Título de la Norma')}.ilike.*${encodeURIComponent(query)}*,${encodeURIComponent('Contenido')}.ilike.*${encodeURIComponent(query)}*,${encodeURIComponent('Número')}.ilike.*${encodeURIComponent(lawNumber)}*,${encodeURIComponent('Norma Número')}.ilike.*${encodeURIComponent(lawNumber)}*)`
-      } else {
-        searchQuery = `or=(${encodeURIComponent('Título de la Norma')}.ilike.*${encodeURIComponent(query)}*,${encodeURIComponent('Contenido')}.ilike.*${encodeURIComponent(query)}*)`
-      }
-
-      const wideUrl = `${LAWS_BASE}/rest/v1/leyes_con_contenido?select=*&${searchQuery}&limit=5`
-      const response = await fetch(wideUrl, {
-        headers: {
-          'apikey': process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY,
-          'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      })
-
+      )
       if (response.ok) {
         return await response.json()
       }
     } catch (error) {
-      console.error('Error searching laws:', error)
+      console.error('Error searching laws (RPC):', error)
     }
     return []
   }
