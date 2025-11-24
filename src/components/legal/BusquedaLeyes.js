@@ -19,13 +19,18 @@ const BusquedaLeyes = () => {
     
     try {
       const response = await fetch(
-        `${process.env.REACT_APP_SUPABASE_LAWS_URL}/rest/v1/leyes_con_contenido?select=*&or=(${encodeURIComponent('Título de la Norma')}.ilike.*${encodeURIComponent(searchTerm)}*,${encodeURIComponent('Contenido')}.ilike.*${encodeURIComponent(searchTerm)}*)`,
+        `${process.env.REACT_APP_SUPABASE_LAWS_URL}/rest/v1/rpc/buscar_leyes`,
         {
+          method: 'POST',
           headers: {
             'apikey': process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY,
             'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY}`,
             'Content-Type': 'application/json'
-          }
+          },
+          body: JSON.stringify({
+            termino_busqueda: searchTerm,
+            limite_resultados: 50
+          })
         }
       )
 
