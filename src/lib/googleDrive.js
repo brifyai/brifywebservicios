@@ -49,7 +49,7 @@ class GoogleDriveService {
     const params = new URLSearchParams({
       client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
       redirect_uri: process.env.REACT_APP_GOOGLE_REDIRECT_URI || `${window.location.origin}/auth/google/callback`,
-      scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.send',
+      scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email',
       response_type: 'code',
       access_type: 'offline',
       prompt: 'consent'
