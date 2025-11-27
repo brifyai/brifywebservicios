@@ -6,6 +6,7 @@
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+.asdsaadad{padding:10px;}
 .no-scrollbar {
   -ms-overflow-style: none; /* IE and Edge */
   scrollbar-width: none; /* Firefox */
