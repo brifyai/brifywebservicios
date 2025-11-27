@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, auth, db } from './supabase'
 import tokenRefreshService from '../services/tokenRefreshService'
 import googleDriveMiddleware from './googleDriveMiddleware'
 
@@ -208,9 +208,14 @@ class GoogleDriveService {
   // Listar archivos y carpetas - Ahora usa el middleware con renovación automática
   async listFiles(parentId = null, pageSize = 100) {
     try {
+      let targetParentId = parentId
+      if (!targetParentId) {
+        targetParentId = await this.ensureAppFolder()
+      }
+
       let query = `trashed=false and mimeType!='application/vnd.google-apps.shortcut'`
-      if (parentId) {
-        query += ` and '${parentId}' in parents`
+      if (targetParentId) {
+        query += ` and '${targetParentId}' in parents`
       }
 
       const params = new URLSearchParams({
@@ -233,6 +238,35 @@ class GoogleDriveService {
     } catch (error) {
       console.error('Error listing files:', error)
       throw error
+    }
+  }
+  
+  async ensureAppFolder() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return null
+
+      const existing = await db.adminFolders.getByUser(user.id)
+      const existingFolderId = existing?.data?.[0]?.id_drive_carpeta
+      if (existingFolderId) {
+        return existingFolderId
+      }
+
+      const appFolder = await this.createFolder('Master - Brify')
+      const newFolderId = appFolder?.id
+
+      if (newFolderId) {
+        await db.adminFolders.create({
+          user_id: user.id,
+          correo: user.email,
+          id_drive_carpeta: newFolderId
+        })
+      }
+
+      return newFolderId
+    } catch (error) {
+      console.error('Error ensuring app folder:', error)
+      return null
     }
   }
   // Manejar renovación automática de tokens - Ahora delegado al tokenRefreshService
