@@ -124,9 +124,10 @@ const GoogleAuthCallback = () => {
           refresh_token: tokens.refresh_token
         })
         
-        // Verificar que la conexión funciona listando archivos
+        // Asegurar carpeta de la app y verificar listando dentro
         try {
-          await googleDriveService.listFiles(null, 1)
+          const appFolderId = await googleDriveService.ensureAppFolder()
+          await googleDriveService.listFiles(appFolderId, 1)
           setStatus('success')
           setMessage('¡Google Drive conectado exitosamente!')
           toast.success('Google Drive conectado exitosamente')
