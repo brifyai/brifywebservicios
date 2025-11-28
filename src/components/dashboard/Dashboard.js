@@ -1161,7 +1161,7 @@ const Dashboard = () => {
                     </div>
                     <ArrowRightIcon className="h-6 w-6 text-white/70 group-hover:text-white transition-colors" />
                   </div>
-                  <h3 className="text-xl font-bold mb-2">Entrenador</h3>
+                  <h3 className="text-xl font-bold mb-2">Couch Deportivo</h3>
                   <p className="text-teal-100 text-sm mb-[35px]">
                     Gestiona rutinas y carpetas de alumnos en una vista dedicada.
                   </p>
