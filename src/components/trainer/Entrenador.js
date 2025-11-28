@@ -90,7 +90,7 @@ const Entrenador = () => {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Entrenador</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Couh Deportivo</h1>
           <p className="text-sm text-gray-600">Gestiona carpetas de alumnos, grupos y rutinas</p>
         </div>
         <a
