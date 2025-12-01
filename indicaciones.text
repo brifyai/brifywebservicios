@@ -1,0 +1,8 @@
+Tabla: sub_carpetas_administrador
+Campos: id (autoincrementable), administrador_email, file_id_master (Este id es el de la carpeta raiz administradora), file_id_subcarpeta (Este corresponde al id drive de la carpeta en cuestion), nombre_subcarpeta, tipo_extension (brify, abogados o entrenador).
+
+Tabla: grupos_drive
+Campos: id (autoincrementable), owner_id (clave foranea de users ->id), folder_id, administrador, extension, nombre_grupo_low (nombre de la carpeta en minusculas)
+
+Tabla: carpetas_usuario
+Campos: id (autoincrementable), telegram_id (opcional), correo (correo alumno), id_carpeta_drive, administrador, extension, nombre_carpeta (correo alumno), wssp (opcional)
