@@ -651,9 +651,21 @@ const Plans = () => {
       // Flujo normal con Mercado Pago (precio > 0)
       toast.loading('Iniciando proceso de pago con Mercado Pago...')
       
-      const apiUrl = window.location.hostname === 'localhost' 
-        ? 'http://localhost:3001/api/create_preference'
-        : '/api/create_preference'
+      // Determinar URL de la API: 
+      // 1. Usar variable de entorno si existe
+      // 2. Si es localhost, usar puerto 3001
+      // 3. Si es producción, usar ruta relativa /api/... (asumiendo que se sirve desde el mismo origen)
+      let baseUrl;
+      if (process.env.REACT_APP_API_URL) {
+        baseUrl = process.env.REACT_APP_API_URL;
+      } else if (window.location.hostname === 'localhost') {
+        baseUrl = 'http://localhost:3001';
+      } else {
+        baseUrl = ''; // Ruta relativa
+      }
+      
+      const apiUrl = `${baseUrl}/api/create_preference`;
+      console.log('🔗 API URL para pago:', apiUrl);
 
       const items = [
         {
