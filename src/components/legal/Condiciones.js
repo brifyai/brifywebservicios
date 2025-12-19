@@ -94,7 +94,7 @@ const Condiciones = () => {
             <h2 className="text-lg font-semibold">6. Política de Privacidad</h2>
             <p className="text-gray-700 mt-2">
               El uso que hacemos de su información personal se rige por nuestra Política de Privacidad, disponible en
-              <a href="https://www.brifyai.com/politica-de-privacidad." target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline"> https://www.brifyai.com/politica-de-privacidad.</a> Al usar el Servicio, usted acepta los términos de nuestra Política de Privacidad.
+              <a href="https://www.brifyai.com/privacidad.html" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline"> https://www.brifyai.com/politica-de-privacidad.</a> Al usar el Servicio, usted acepta los términos de nuestra Política de Privacidad.
             </p>
           </div>
 

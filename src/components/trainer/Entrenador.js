@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useUserExtensions } from '../../hooks/useUserExtensions'
 import { supabase } from '../../lib/supabase'
 import {
   ArrowDownTrayIcon,
@@ -22,13 +23,28 @@ const formatDate = (iso) => {
 }
 
 const Entrenador = () => {
-  const { user } = useAuth()
+  const { user, hasFreeExtensionAccess } = useAuth()
+  const { hasExtension, loading: extensionsLoading } = useUserExtensions()
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [alumnoFolders, setAlumnoFolders] = useState([])
   const [groupFolders, setGroupFolders] = useState([])
   const [sharedByFolderId, setSharedByFolderId] = useState({})
   const [routines, setRoutines] = useState([])
+
+  // Verificación de acceso
+  useEffect(() => {
+    if (!extensionsLoading) {
+      const hasAccess = hasFreeExtensionAccess() || 
+        hasExtension('Entrenador') || 
+        hasExtension('Trainer')
+        
+      if (!hasAccess) {
+        navigate('/dashboard')
+      }
+    }
+  }, [extensionsLoading, hasExtension, hasFreeExtensionAccess, navigate])
 
   useEffect(() => {
     const loadData = async () => {

@@ -145,6 +145,29 @@ export const AuthProvider = ({ children }) => {
       setIsGoogleDriveConnected(driveConnected)
       
       setUserProfile(profileWithCredentials)
+
+      // Verificar y limpiar extensiones gratuitas expiradas
+      if (profileWithCredentials.plan_gratis && profileWithCredentials.limite_extension_gratis) {
+        const expirationDate = new Date(profileWithCredentials.limite_extension_gratis)
+        const now = new Date()
+
+        if (now > expirationDate) {
+          console.log('Plan gratuito expirado, limpiando registros de extensiones...')
+          // Eliminar extensiones de plan gratuito de la tabla plan_extensiones
+          // Esto cumple con el requisito de "retirar el registro" tras 15 días
+          const { error: deleteError } = await supabase
+            .from('plan_extensiones')
+            .delete()
+            .eq('user_id', userId)
+            
+          if (deleteError) {
+            console.error('Error al limpiar extensiones expiradas:', deleteError)
+          } else {
+            console.log('Extensiones expiradas eliminadas correctamente')
+          }
+        }
+      }
+
       return profileWithCredentials
     } catch (error) {
       console.error('Error loading user profile:', error)
@@ -191,6 +214,7 @@ export const AuthProvider = ({ children }) => {
           name: userData.name || '',
           telegram_id: userData.telegram_id || null,
           wssp: userData.wssp || null,
+          plan_gratis: false,
           is_active: true,
           current_plan_id: null,
           plan_expiration: null,
@@ -347,6 +371,24 @@ export const AuthProvider = ({ children }) => {
     return expirationDate > now
   }
 
+  // Verificar si el usuario tiene acceso gratuito a extensiones (Plan Gratis < 15 días)
+  const hasFreeExtensionAccess = () => {
+    if (!userProfile) return false
+    
+    // Solo aplica para usuarios con plan_gratis = true
+    if (userProfile.plan_gratis) {
+      // Si no tiene fecha límite definida, asumimos que no tiene acceso o no se ha configurado
+      if (!userProfile.limite_extension_gratis) return false
+      
+      const limitDate = new Date(userProfile.limite_extension_gratis)
+      const now = new Date()
+      
+      return limitDate > now
+    }
+    
+    return false
+  }
+
   // Obtener días restantes del plan
   const getDaysRemaining = () => {
     if (!userProfile || !userProfile.plan_expiration) return 0
@@ -477,6 +519,7 @@ export const AuthProvider = ({ children }) => {
     updateUserProfile,
     loadUserProfile,
     hasActivePlan,
+    hasFreeExtensionAccess,
     getDaysRemaining
   }
 

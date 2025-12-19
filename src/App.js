@@ -25,6 +25,7 @@ import Footer from './components/layout/Footer'
 import Condiciones from './components/legal/Condiciones'
 import GoogleAuthCallback from './components/auth/GoogleAuthCallback'
 import Entrenador from './components/trainer/Entrenador'
+import PaymentResult from './components/plans/PaymentResult'
 
 
 // Componente para rutas protegidas
@@ -150,19 +151,19 @@ function App() {
                 </ProtectedRoute>
               } 
             />
-            <Route 
-              path="/plans" 
-              element={
+            <Route path="/plans" element={
                 <ProtectedRoute>
                   <AuthenticatedLayout>
                     <Plans />
                   </AuthenticatedLayout>
                 </ProtectedRoute>
-              } 
-            />
-            <Route 
-              path="/folders" 
-              element={
+              } />
+              <Route path="/payment/result" element={
+                <ProtectedRoute>
+                  <PaymentResult />
+                </ProtectedRoute>
+              } />
+              <Route path="/folders" element={
                 <ProtectedRoute>
                   <AuthenticatedLayout>
                     <Folders />

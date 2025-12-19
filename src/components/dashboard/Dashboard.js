@@ -71,16 +71,19 @@ const formatBytes = (bytes) => {
 }
 
 const Dashboard = () => {
-  const { user, userProfile, hasActivePlan, isGoogleDriveConnected } = useAuth()
+  const { user, userProfile, hasActivePlan, hasFreeExtensionAccess, isGoogleDriveConnected } = useAuth()
   const { hasExtension, loading: extensionsLoading } = useUserExtensions()
+  
+  const hasFreeAccess = hasFreeExtensionAccess()
+
   // Soporte para distintos nombres posibles de extensiones
-  const hasLegalExtension = (
+  const hasLegalExtension = hasFreeAccess || (
     hasExtension('Chat Legal') ||
     hasExtension('Abogados') ||
     hasExtension('Abogado') ||
     hasExtension('Legal')
   )
-  const hasTrainerExtension = (
+  const hasTrainerExtension = hasFreeAccess || (
     hasExtension('Entrenador') ||
     hasExtension('Trainer')
   )
@@ -763,6 +766,23 @@ const Dashboard = () => {
                 </svg>
                 <span>Ir a Telegram</span>
               </a>
+              <a
+                href={`https://wa.me/56939558133?text=${encodeURIComponent('Hola agente brify!')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  if (!hasActivePlan()) {
+                    e.preventDefault()
+                    toast.error('Debes comprar un plan activo para usar WhatsApp')
+                  }
+                }}
+                className="inline-flex items-center px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-base"
+              >
+                <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12.001 2.002c-5.523 0-9.999 4.476-9.999 9.999 0 1.763.47 3.418 1.289 4.871L2 22l5.253-1.274c1.41.771 3.018 1.214 4.748 1.214 5.523 0 9.999-4.476 9.999-9.999s-4.476-9.999-9.999-9.999zm0 2c4.411 0 8 3.589 8 8 0 4.411-3.589 8-8 8-1.507 0-2.919-.43-4.122-1.17l-.295-.18-3.09.75.792-3.022-.193-.311C3.62 14.996 3 13.558 3 12.002c0-4.411 3.589-8 8.001-8zm4.916 10.22c-.206-.103-1.215-.598-1.403-.665-.188-.068-.325-.103-.463.103-.137.206-.531.664-.651.802-.12.137-.24.154-.446.051-.206-.103-.871-.321-1.659-1.024-.613-.546-1.027-1.221-1.147-1.427-.12-.206-.013-.317.09-.42.094-.094.206-.24.309-.36.103-.12.137-.206.206-.343.068-.137.034-.257-.017-.36-.051-.103-.463-1.116-.634-1.529-.166-.398-.336-.344-.463-.35-.12-.006-.257-.006-.394-.006-.137 0-.36.051-.55.257-.188.206-.719.703-.719 1.712s.737 1.986.84 2.12c.103.137 1.452 2.218 3.515 3.104.492.212.875.339 1.173.434.492.157.94.135 1.294.082.395-.058 1.215-.497 1.387-.978.171-.48.171-.891.12-.978-.051-.086-.188-.137-.394-.24z"/>
+                </svg>
+                <span>WhatsApp</span>
+              </a>
             </div>
           </div>
 
@@ -829,6 +849,23 @@ const Dashboard = () => {
                   </svg>
                   <span>Telegram</span>
                 </a>
+                <a
+                  href={`https://wa.me/56939558133?text=${encodeURIComponent('Hola agente brify!')}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => {
+                    if (!hasActivePlan()) {
+                      e.preventDefault()
+                      toast.error('Debes comprar un plan activo para usar WhatsApp')
+                    }
+                  }}
+                  className="inline-flex items-center px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-xs"
+                >
+                  <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12.001 2.002c-5.523 0-9.999 4.476-9.999 9.999 0 1.763.47 3.418 1.289 4.871L2 22l5.253-1.274c1.41.771 3.018 1.214 4.748 1.214 5.523 0 9.999-4.476 9.999-9.999s-4.476-9.999-9.999-9.999zm0 2c4.411 0 8 3.589 8 8 0 4.411-3.589 8-8 8-1.507 0-2.919-.43-4.122-1.17l-.295-.18-3.09.75.792-3.022-.193-.311C3.62 14.996 3 13.558 3 12.002c0-4.411 3.589-8 8.001-8zm4.916 10.22c-.206-.103-1.215-.598-1.403-.665-.188-.068-.325-.103-.463.103-.137.206-.531.664-.651.802-.12.137-.24.154-.446.051-.206-.103-.871-.321-1.659-1.024-.613-.546-1.027-1.221-1.147-1.427-.12-.206-.013-.317.09-.42.094-.094.206-.24.309-.36.103-.12.137-.206.206-.343.068-.137.034-.257-.017-.36-.051-.103-.463-1.116-.634-1.529-.166-.398-.336-.344-.463-.35-.12-.006-.257-.006-.394-.006-.137 0-.36.051-.55.257-.188.206-.719.703-.719 1.712s.737 1.986.84 2.12c.103.137 1.452 2.218 3.515 3.104.492.212.875.339 1.173.434.492.157.94.135 1.294.082.395-.058 1.215-.497 1.387-.978.171-.48.171-.891.12-.978-.051-.086-.188-.137-.394-.24z"/>
+                  </svg>
+                  <span>WhatsApp</span>
+                </a>
               </div>
             </div>
           </div>
@@ -893,6 +930,23 @@ const Dashboard = () => {
                   <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
                 </svg>
                 <span>Ir a Telegram</span>
+              </a>
+              <a
+                href={`https://wa.me/56939558133?text=${encodeURIComponent('Hola agente brify!')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  if (!hasActivePlan()) {
+                    e.preventDefault()
+                    toast.error('Debes comprar un plan activo para usar WhatsApp')
+                  }
+                }}
+                className="inline-flex items-center px-3 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm"
+              >
+                <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12.001 2.002c-5.523 0-9.999 4.476-9.999 9.999 0 1.763.47 3.418 1.289 4.871L2 22l5.253-1.274c1.41.771 3.018 1.214 4.748 1.214 5.523 0 9.999-4.476 9.999-9.999s-4.476-9.999-9.999-9.999zm0 2c4.411 0 8 3.589 8 8 0 4.411-3.589 8-8 8-1.507 0-2.919-.43-4.122-1.17l-.295-.18-3.09.75.792-3.022-.193-.311C3.62 14.996 3 13.558 3 12.002c0-4.411 3.589-8 8.001-8zm4.916 10.22c-.206-.103-1.215-.598-1.403-.665-.188-.068-.325-.103-.463.103-.137.206-.531.664-.651.802-.12.137-.24.154-.446.051-.206-.103-.871-.321-1.659-1.024-.613-.546-1.027-1.221-1.147-1.427-.12-.206-.013-.317.09-.42.094-.094.206-.24.309-.36.103-.12.137-.206.206-.343.068-.137.034-.257-.017-.36-.051-.103-.463-1.116-.634-1.529-.166-.398-.336-.344-.463-.35-.12-.006-.257-.006-.394-.006-.137 0-.36.051-.55.257-.188.206-.719.703-.719 1.712s.737 1.986.84 2.12c.103.137 1.452 2.218 3.515 3.104.492.212.875.339 1.173.434.492.157.94.135 1.294.082.395-.058 1.215-.497 1.387-.978.171-.48.171-.891.12-.978-.051-.086-.188-.137-.394-.24z"/>
+                </svg>
+                <span>WhatsApp</span>
               </a>
             </div>
           </div>

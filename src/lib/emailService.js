@@ -227,6 +227,70 @@ class EmailService {
     }
   }
 
+  // Enviar correo de contacto para Plan Empresarial
+  async sendContactEmail(userEmail, userName, needs, phone = '') {
+    try {
+      const initialized = await this.init()
+      if (!initialized) {
+        throw new Error('No se pudo inicializar Gmail API')
+      }
+
+      if (this.accessToken) {
+        window.gapi.client.setToken({
+          access_token: this.accessToken
+        })
+      } else {
+        throw new Error('No se encontró un token de acceso válido')
+      }
+
+      const subject = `Solicitud Plan Empresarial - ${userName}`
+      const htmlContent = `
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+          <h2 style="color: #667eea;">Nueva Solicitud de Plan Empresarial</h2>
+          <p><strong>Usuario:</strong> ${userName}</p>
+          <p><strong>Email:</strong> ${userEmail}</p>
+          ${phone ? `<p><strong>Teléfono:</strong> ${phone}</p>` : ''}
+          <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin-top: 15px;">
+            <h3 style="margin-top: 0;">Necesidades del Cliente:</h3>
+            <p style="white-space: pre-wrap;">${needs}</p>
+          </div>
+        </div>
+      `
+
+      // Codificar asunto
+      const subjectUtf8Bytes = new TextEncoder().encode(subject)
+      const subjectBase64 = btoa(String.fromCharCode(...subjectUtf8Bytes))
+      const encodedSubject = `=?UTF-8?B?${subjectBase64}?=`
+
+      const email = [
+        `To: brifyaimaster@gmail.com`,
+        `Subject: ${encodedSubject}`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/html; charset=utf-8',
+        '',
+        htmlContent
+      ].join('\n')
+
+      const utf8Bytes = new TextEncoder().encode(email)
+      const base64String = btoa(String.fromCharCode(...utf8Bytes))
+      const encodedMessage = base64String
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '')
+
+      const response = await window.gapi.client.gmail.users.messages.send({
+        userId: 'me',
+        resource: { raw: encodedMessage }
+      })
+
+      console.log('Email de contacto enviado exitosamente:', response)
+      return { success: true, messageId: response.result.id }
+    } catch (error) {
+      console.error('Error enviando email de contacto:', error)
+      return { success: false, error: error.message }
+    }
+  }
+
   // Generar mensaje de bienvenida personalizado
   getWelcomeMessage(clientName) {
     return `

@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../../contexts/AuthContext'
+import { useUserExtensions } from '../../hooks/useUserExtensions'
 import { 
   MagnifyingGlassIcon, 
   ChatBubbleLeftRightIcon,
@@ -8,7 +11,25 @@ import BusquedaLeyes from './BusquedaLeyes'
 import ChatLegal from './ChatLegal'
 
 const Abogado = () => {
+  const { hasFreeExtensionAccess } = useAuth()
+  const { hasExtension, loading: extensionsLoading } = useUserExtensions()
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('busqueda')
+
+  // Verificación de acceso
+  useEffect(() => {
+    if (!extensionsLoading) {
+      const hasAccess = hasFreeExtensionAccess() || 
+        hasExtension('Chat Legal') || 
+        hasExtension('Abogados') || 
+        hasExtension('Abogado') || 
+        hasExtension('Legal')
+        
+      if (!hasAccess) {
+        navigate('/dashboard')
+      }
+    }
+  }, [extensionsLoading, hasExtension, hasFreeExtensionAccess, navigate])
 
   // Efecto para asegurar scroll al top en móvil al cargar la página
   useEffect(() => {

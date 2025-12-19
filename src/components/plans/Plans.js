@@ -14,14 +14,17 @@ import {
   CloudIcon,
   StarIcon,
   PlusIcon,
-  ArrowUpIcon
+  ArrowUpIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
 import UpgradePlan from './UpgradePlan'
+import RenewalModal from './RenewalModal'
 import TemplateDownload from '../common/TemplateDownload'
+import ContactModal from './ContactModal'
 
 const Plans = () => {
-  const { user, userProfile, hasActivePlan, updateUserProfile, isGoogleDriveConnected } = useAuth()
+  const { user, userProfile, hasActivePlan, updateUserProfile, isGoogleDriveConnected, hasFreeExtensionAccess } = useAuth()
   const { clearCacheAndRefetch } = useUserExtensions()
   const [plans, setPlans] = useState([])
   const [extensions, setExtensions] = useState([])
@@ -30,8 +33,24 @@ const Plans = () => {
   const [loading, setLoading] = useState(true)
   const [processingPayment, setProcessingPayment] = useState(null)
   const [showUpgradeModal, setShowUpgradeModal] = useState(false)
+  const [showRenewalModal, setShowRenewalModal] = useState(false)
+  const [showContactModal, setShowContactModal] = useState(false)
   const [currentPlanForUpgrade, setCurrentPlanForUpgrade] = useState(null)
   const [ranEnsureOnce, setRanEnsureOnce] = useState(false)
+
+  // Efecto para pre-seleccionar extensiones si es plan básico y usuario no ha usado prueba gratis
+  useEffect(() => {
+    if (!userProfile || !plans.length || !extensions.length) return
+
+    const basicPlan = plans.find(p => parseInt(p.price) === 0)
+    if (basicPlan && !userProfile.plan_gratis) {
+      const availableExtensions = extensions.filter(e => e.disponible).map(e => e.id)
+      setSelectedExtensions(prev => ({
+        ...prev,
+        [basicPlan.id]: availableExtensions
+      }))
+    }
+  }, [userProfile, plans, extensions])
 
   // Efecto para asegurar scroll al top en móvil al cargar la página
   useEffect(() => {
@@ -328,26 +347,43 @@ const Plans = () => {
       }
       const existingTipos = new Set((existingSubFolders || []).map(sf => sf.tipo_extension))
 
-      // Construir lista deseada a partir de extensiones del usuario
-      const desired = []
-      // Siempre asegurar Brify
-      if (!existingTipos.has('brify')) {
-        desired.push({ nombre: 'Brify', tipo: 'brify' })
+      // Construir lista deseada a partir de extensiones del usuario y acceso gratuito
+      const desiredTypes = new Set()
+      
+      // 1. Siempre Brify
+      desiredTypes.add('brify')
+      
+      // 2. Extensiones por acceso gratuito (15 días)
+      if (hasFreeExtensionAccess()) {
+        desiredTypes.add('abogados')
+        desiredTypes.add('entrenador')
       }
-      // Extensiones del usuario
+      
+      // 3. Extensiones compradas
       const userExts = userExtensions || []
       for (const ue of userExts) {
         const ext = ue.extensiones || {}
         const name = (ext.name_es || ext.name || '').toLowerCase()
         const type = (ext.type || '').toLowerCase()
-        // Abogados
-        if ((name === 'abogados' || type === 'abogados' || type === 'lawyers') && !existingTipos.has('abogados')) {
-          desired.push({ nombre: 'Abogados', tipo: 'abogados' })
+        
+        if (name === 'abogados' || type === 'abogados' || type === 'lawyers') {
+          desiredTypes.add('abogados')
         }
-        // Entrenador
-        if ((name === 'entrenador' || type === 'entrenador' || type === 'trainer') && !existingTipos.has('entrenador')) {
-          desired.push({ nombre: 'Entrenador', tipo: 'entrenador' })
+        if (name === 'entrenador' || type === 'entrenador' || type === 'trainer') {
+          desiredTypes.add('entrenador')
         }
+      }
+
+      // Construir lista de carpetas a crear
+      const desired = []
+      if (desiredTypes.has('brify') && !existingTipos.has('brify')) {
+        desired.push({ nombre: 'Brify', tipo: 'brify' })
+      }
+      if (desiredTypes.has('abogados') && !existingTipos.has('abogados')) {
+        desired.push({ nombre: 'Abogados', tipo: 'abogados' })
+      }
+      if (desiredTypes.has('entrenador') && !existingTipos.has('entrenador')) {
+        desired.push({ nombre: 'Entrenador', tipo: 'entrenador' })
       }
 
       // Crear las faltantes
@@ -463,7 +499,6 @@ const Plans = () => {
     }
   }
 
-  /* 
   const handlePurchasePlan = async (plan) => {
     if (!user) {
       toast.error('Debes iniciar sesión para comprar un plan')
@@ -475,138 +510,229 @@ const Plans = () => {
       return
     }
 
-    // Permitir comprar planes incluso si ya tiene uno activo
-    // if (hasActivePlan()) {
-    //   toast.error('Ya tienes un plan activo')
-    //   return
-    // }
-
     setProcessingPayment(plan.id)
     
     try {
-      // Aquí se integraría con Mercado Pago
-      // Por ahora simulamos el proceso de pago
+      const isBasicPlan = parseInt(plan.price) === 0 && !plan.isStatic
+      const isFreeTrialEligible = isBasicPlan && !userProfile?.plan_gratis
       
-      toast.success('Redirigiendo a Mercado Pago...')
-      
-      // Simular redirección a Mercado Pago
-      // En una implementación real, aquí se crearía la preferencia de pago
-      const paymentData = {
-        user_id: user.id,
-        plan_id: plan.id,
-        amount_usd: calculateTotalPrice(plan),
-        payment_status: 'pending',
-        payment_provider: 'mercadopago',
-        payment_ref: `mp_${Date.now()}`,
-        paid_at: null
-      }
-      
-      const { error } = await db.payments.create(paymentData)
-      
-      if (error) {
-        console.error('Error creating payment record:', error)
-        toast.error('Error procesando el pago')
-        return
-      }
-      
-      // Crear o actualizar registro en user_tokens_usage con el límite del plan
-      try {
-        const { error: tokenError } = await db.userTokensUsage.upsert({
+      // Si es elegible para prueba gratis, el precio es 0
+      const totalPrice = isFreeTrialEligible ? 0 : calculateTotalPrice(plan)
+
+      // Si el precio total es 0, activar directamente sin Mercado Pago
+      if (totalPrice === 0) {
+        toast.loading('Activando plan gratuito...')
+        
+        // 1. Crear registro de pago (gratis)
+          const paymentData = {
+            user_id: user.id,
+            plan_id: plan.id,
+            amount_usd: 0,
+            payment_status: 'paid', // Cambiado de 'completed' a 'paid' para consistencia
+            payment_provider: 'free_tier',
+            payment_ref: `free_${Date.now()}`,
+            paid_at: new Date().toISOString(),
+            description: 'Activación Plan Gratuito' // Agregado campo descripción
+          }
+          
+          const { error: paymentError } = await db.payments.create(paymentData)
+          
+          if (paymentError) {
+            console.error('Error detallado al registrar pago:', paymentError)
+            throw new Error(`Error registrando activación del plan: ${paymentError.message}`)
+          }
+
+        // 2. Calcular fecha de expiración
+        const planExpiration = new Date()
+        // Si el plan tiene duración definida, usarla. Si es 0 o null, por defecto 30 días o indefinido?
+        // Asumimos que el plan básico tiene una duración (ej. 30 días) para renovación cíclica aunque sea gratis
+        const duration = plan.duration_days || 30
+        planExpiration.setDate(planExpiration.getDate() + duration)
+
+        // 3. Preparar actualización de perfil
+        const updateData = {
+          current_plan_id: plan.id,
+          plan_expiration: planExpiration.toISOString(),
+          is_active: true,
+          plan_gratis: true, // Marcar como usado
+          admin: true // El usuario es dueño de un plan (aunque sea gratis)
+        }
+
+        // Si es la primera vez (isFreeTrialEligible), establecer límite de extensiones gratis
+        if (isFreeTrialEligible) {
+          const extensionLimitDate = new Date()
+          extensionLimitDate.setDate(extensionLimitDate.getDate() + 15) // 15 días de extensiones gratis
+          updateData.limite_extension_gratis = extensionLimitDate.toISOString()
+        }
+
+        const updateResult = await updateUserProfile(updateData)
+        
+        if (updateResult.error) {
+          throw new Error('Error actualizando perfil de usuario')
+        }
+
+        // 4. Guardar extensiones
+        let extensionsToSave = []
+        
+        if (isFreeTrialEligible) {
+          // Para plan gratis, insertar automáticamente extensiones de prueba (Abogados y Entrenador)
+          // Esto es necesario para flujos externos (n8n)
+          const freeExtensions = extensions.filter(ext => {
+             const name = (ext.name_es || ext.name || '').toLowerCase()
+             const type = (ext.type || '').toLowerCase()
+             return name.includes('abogado') || type === 'abogados' || type === 'lawyers' ||
+                    name.includes('entrenador') || type === 'entrenador' || type === 'trainer'
+          })
+          
+          extensionsToSave = freeExtensions.map(ext => ({
+            user_id: user.id,
+            plan_id: plan.id,
+            extension_id: ext.id,
+            created_at: new Date().toISOString()
+          }))
+        } else {
+          // Para planes pagos, guardar las seleccionadas
+          const selectedExtensionIds = selectedExtensions[plan.id] || []
+          extensionsToSave = selectedExtensionIds.map(extensionId => ({
+            user_id: user.id,
+            plan_id: plan.id,
+            extension_id: extensionId,
+            created_at: new Date().toISOString()
+          }))
+        }
+
+        if (extensionsToSave.length > 0) {
+          const { error: extensionsError } = await supabase
+            .from('plan_extensiones')
+            .insert(extensionsToSave)
+            
+          if (extensionsError) {
+            console.error('Error guardando extensiones:', extensionsError)
+          }
+        }
+
+        // 5. Actualizar uso de tokens
+        await db.userTokensUsage.upsert({
           user_id: user.id,
           total_tokens: plan.token_limit_usage || 0,
           last_updated_at: new Date().toISOString()
         })
-        
-        if (tokenError) {
-          console.error('Error creating token usage record:', tokenError)
-        }
-      } catch (tokenError) {
-        console.error('Error with token usage setup:', tokenError)
-      }
-      
-      // Simular proceso de pago exitoso después de 2 segundos
-      setTimeout(async () => {
+
+        // 6. Crear carpetas en Drive
         try {
-          // Activar plan después del pago exitoso
-          const planExpiration = new Date()
-          planExpiration.setDate(planExpiration.getDate() + plan.duration_days)
-          
-          const updateResult = await updateUserProfile({
-            current_plan_id: plan.id,
-            plan_expiration: planExpiration.toISOString(),
-            is_active: true,
-            admin: true
-          })
-          
-          if (updateResult.error) {
-            console.error('Error activating plan:', updateResult.error)
-            toast.error('Pago procesado pero error activando el plan')
-          } else {
-            // Guardar extensiones seleccionadas en plan_extensiones
-            try {
-              const selectedExtensionIds = selectedExtensions[plan.id] || []
-              
-              if (selectedExtensionIds.length > 0) {
-                const extensionsToInsert = selectedExtensionIds.map(extensionId => ({
-                  user_id: user.id,
-                  plan_id: plan.id,
-                  extension_id: extensionId,
-                  created_at: new Date().toISOString()
-                }))
-                
-                const { error: extensionsError } = await supabase
-                  .from('plan_extensiones')
-                  .insert(extensionsToInsert)
-                
-                if (extensionsError) {
-                  console.error('Error guardando extensiones:', extensionsError)
-                } else {
-                  console.log(`Guardadas ${selectedExtensionIds.length} extensiones para el plan`)
-                }
-              }
-            } catch (extensionError) {
-              console.error('Error guardando extensiones:', extensionError)
-              // No mostrar error al usuario ya que el plan se activó correctamente
-            }
-            
-            toast.success('¡Pago procesado exitosamente! Tu plan se ha activado.')
-            
-            // Recargar datos del usuario para actualizar la UI
-            window.location.reload()
-            
-            // Enviar correo de bienvenida post-compra con todas las funcionalidades
-            try {
-              const emailService = await import('../../lib/emailService')
-              const emailServiceInstance = new emailService.default()
-              const planName = plan.name_es || plan.name || 'Plan Premium'
-              const userName = userProfile?.name || user?.user_metadata?.full_name || 'Usuario'
-              
-              await emailServiceInstance.sendPostPurchaseWelcomeEmail(
-                user.email, 
-                userName, 
-                planName,
-                user.id
-              )
-              console.log('Correo post-compra enviado exitosamente')
-            } catch (emailError) {
-              console.error('Error enviando correo post-compra:', emailError)
-              // No mostrar error al usuario ya que el plan se activó correctamente
+          await createAdminFolder(plan.name_es || plan.name, plan.id)
+        } catch (folderError) {
+          console.error('Error creando carpetas:', folderError)
+          toast.error('Plan activado pero hubo un error creando las carpetas. Contacta soporte.')
+        }
+
+        // 7. Enviar correo de bienvenida
+        try {
+          await emailService.sendPostPurchaseWelcomeEmail(
+            user.email, 
+            userProfile?.name || user?.user_metadata?.full_name || 'Usuario', 
+            plan.name_es || plan.name,
+            user.id
+          )
+        } catch (emailError) {
+          console.error('Error enviando correo:', emailError)
+        }
+
+        toast.dismiss()
+        toast.success('¡Plan activado correctamente!')
+        
+        setTimeout(() => {
+          window.location.reload()
+        }, 1500)
+        
+        return
+      }
+
+      // Flujo normal con Mercado Pago (precio > 0)
+      toast.loading('Iniciando proceso de pago con Mercado Pago...')
+      
+      const apiUrl = window.location.hostname === 'localhost' 
+        ? 'http://localhost:3001/api/create_preference'
+        : '/api/create_preference'
+
+      const items = [
+        {
+          id: plan.id,
+          title: `Plan ${plan.name_es || plan.name}`,
+          description: `Suscripción al plan ${plan.name_es || plan.name} por ${plan.duration_days} días`,
+          picture_url: 'https://brify.cl/logo.png',
+          category_id: 'services',
+          quantity: 1,
+          currency_id: 'CLP',
+          unit_price: parseInt(plan.price)
+        }
+      ]
+
+      // Agregar extensiones seleccionadas como items adicionales
+      const selectedExtensionIds = selectedExtensions[plan.id] || []
+      
+      if (selectedExtensionIds.length > 0) {
+        selectedExtensionIds.forEach(extId => {
+          const extension = extensions.find(e => e.id === extId)
+          if (extension) {
+            // Solo cobrar si NO es elegible para prueba gratis (aunque aquí totalPrice > 0, doble check)
+            if (!isFreeTrialEligible) {
+              items.push({
+                id: extension.id,
+                title: `Extensión: ${extension.name_es || extension.name}`,
+                description: extension.description_es || extension.description,
+                category_id: 'electronics',
+                quantity: 1,
+                currency_id: 'CLP',
+                unit_price: parseInt(extension.price)
+              })
             }
           }
-        } catch (error) {
-          console.error('Error activating plan after payment:', error)
-          toast.error('Pago procesado pero error activando el plan')
-        }
-        setProcessingPayment(null)
-      }, 2000)
+        })
+      }
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          items,
+          payer: {
+            name: userProfile?.name || user?.user_metadata?.full_name || 'Usuario',
+            email: user.email,
+            date_created: new Date().toISOString()
+          },
+          metadata: {
+            user_id: user.id,
+            plan_id: plan.id,
+            extension_ids: selectedExtensionIds.join(','),
+            type: 'purchase'
+          }
+        })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || 'Error al crear preferencia de pago')
+      }
+
+      if (data.init_point) {
+        toast.dismiss()
+        toast.success('Redirigiendo a Mercado Pago...')
+        window.location.href = data.init_point
+      } else {
+        throw new Error('No se recibió el link de pago')
+      }
       
     } catch (error) {
       console.error('Error processing payment:', error)
-      toast.error('Error procesando el pago')
+      toast.dismiss()
+      toast.error(`Error: ${error.message}`)
       setProcessingPayment(null)
     }
   }
-  */
 
   const handleTestPurchase = async (plan) => {
     if (!user) {
@@ -658,7 +784,8 @@ const Plans = () => {
         current_plan_id: plan.id,
         plan_expiration: planExpiration.toISOString(),
         is_active: true,
-        admin: true
+        admin: true,
+        plan_gratis: true // Marcar que ya se usó el plan gratis/trial
       })
       
       if (updateResult.error) {
@@ -778,34 +905,32 @@ const Plans = () => {
   }
 
   const getPlanFeatures = (planCode) => {
+    const code = planCode?.toLowerCase()
+    // Normalizar códigos de plan
+    const normalizedCode = (code === 'professional' || code === 'profesional') ? 'pro' : code
+
     const features = {
       basic: [
-        'Almacenamiento: 1 GB',
-        'Hasta 10 carpetas',
-        'Hasta 100 archivos',
-        'Soporte por email',
-        'Embeddings básicos'
+        '20 interacciones diarias',
+        '5 carpetas',
+        'Acceso a Whatsapp y Telegram',
+        'Soporte Básico'
       ],
       pro: [
-        'Almacenamiento: 5 GB',
-        'Hasta 50 carpetas',
-        'Hasta 1,000 archivos',
-        'Soporte prioritario',
-        'Embeddings avanzados',
-        'API access'
+        '300 interacciones diarias',
+        'Carpetas ilimitadas',
+        'Acceso a Whatsapp y Telegram ',
+        'Contratación de extensiones'
       ],
       premium: [
-        'Almacenamiento: 20 GB',
-        'Carpetas ilimitadas',
-        'Archivos ilimitados',
-        'Soporte 24/7',
-        'Embeddings premium',
-        'API access completo',
-        'Análisis avanzado'
+        'Todo el plan profesional',
+        'Api personalizada',
+        'Integración con sistemas',
+        'Soporte 24/7'
       ]
     }
     
-    return features[planCode?.toLowerCase()] || []
+    return features[normalizedCode] || []
   }
 
   const isCurrentPlan = (planId) => {
@@ -852,6 +977,20 @@ const Plans = () => {
     // Cerrar modal
     setShowUpgradeModal(false)
     setCurrentPlanForUpgrade(null)
+  }
+
+  const handleOpenRenewal = (plan) => {
+    setCurrentPlanForUpgrade(plan) // Reutilizamos este estado ya que sirve para guardar el plan actual
+    setShowRenewalModal(true)
+  }
+
+  const handleRenewalComplete = async () => {
+    // Limpiar caché y recargar extensiones
+    await clearCacheAndRefetch()
+    await loadUserExtensions()
+    await ensureAdminSubFoldersForUser()
+    // Recargar perfil para ver nueva fecha de expiración
+    window.location.reload()
   }
 
   const getAvailableExtensionsCount = () => {
@@ -936,10 +1075,22 @@ const Plans = () => {
 
       {/* Planes */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
-        {plans.map((plan) => {
+        {[...plans, {
+          id: 'static-enterprise',
+          name: 'Plan Empresarial',
+          name_es: 'Plan Empresarial',
+          price: 0,
+          plan_code: 'premium',
+          duration_days: 30,
+          storage_limit_bytes: 0,
+          isStatic: true
+        }].map((plan) => {
           const isProcessing = processingPayment === plan.id
           const isCurrent = isCurrentPlan(plan.id)
-          const features = getPlanFeatures(plan.plan_code)
+          const isBasicPlan = parseInt(plan.price) === 0 && !plan.isStatic
+          const isEnterprise = plan.isStatic
+          const features = isBasicPlan ? getPlanFeatures('basic') : getPlanFeatures(plan.plan_code)
+          const isFreeTrialEligible = isBasicPlan && !userProfile?.plan_gratis
           
           return (
             <div
@@ -960,8 +1111,21 @@ const Plans = () => {
                   <h3 className="text-2xl font-bold text-gray-900 mb-2">
                     {plan.name_es || plan.name}
                   </h3>
-                  <div className="flex items-center justify-center mb-4">
-                    {plan.prueba_gratis ? (
+                  <div className="flex flex-col items-center justify-center mb-4">
+                    <div className="flex items-center justify-center">
+                    {isBasicPlan ? (
+                      <div className="flex flex-col items-center">
+                        <span className="text-4xl font-bold text-green-600">
+                          GRATIS
+                        </span>
+                      </div>
+                    ) : isEnterprise ? (
+                      <div className="flex flex-col items-center">
+                        <span className="text-3xl font-bold text-gray-900">
+                          CONTÁCTANOS
+                        </span>
+                      </div>
+                    ) : plan.prueba_gratis ? (
                       <div className="flex flex-col items-center">
                         {calculatePriceWithExtensions(plan) > parseInt(plan.price) ? (
                           <span className="text-2xl font-bold text-gray-400 line-through">
@@ -991,23 +1155,30 @@ const Plans = () => {
                         )}
                       </div>
                     )}
-                    <span className="text-gray-600 ml-2">/{plan.duration_days} días</span>
+                    {!isBasicPlan && !isEnterprise && <span className="text-gray-600 ml-2">/{plan.duration_days} días</span>}
                   </div>
-                  <p className="text-gray-600">
-                    {plan.service_type === 'entrenador' ? 'Plan General' : plan.service_type}
-                  </p>
+                  </div>
+                  {!isBasicPlan && !isEnterprise && (
+                    <p className="text-gray-600">
+                      {plan.service_type === 'entrenador' ? 'Plan General' : plan.service_type}
+                    </p>
+                  )}
                 </div>
 
                 {/* Características */}
                 <div className="space-y-4 mb-6">
-                  <div className="flex items-center text-sm">
-                    <CloudIcon className="h-4 w-4 text-primary-600 mr-3" />
-                    <span>Almacenamiento: {formatStorage(plan.storage_limit_bytes)}</span>
-                  </div>
-                  <div className="flex items-center text-sm">
-                    <ClockIcon className="h-4 w-4 text-primary-600 mr-3" />
-                    <span>Duración: {plan.duration_days} días</span>
-                  </div>
+                  {!isBasicPlan && !isEnterprise && !['pro', 'professional', 'profesional'].includes(plan.plan_code?.toLowerCase()) && (
+                    <>
+                      <div className="flex items-center text-sm">
+                        <CloudIcon className="h-4 w-4 text-primary-600 mr-3" />
+                        <span>Almacenamiento: {formatStorage(plan.storage_limit_bytes)}</span>
+                      </div>
+                      <div className="flex items-center text-sm">
+                        <ClockIcon className="h-4 w-4 text-primary-600 mr-3" />
+                        <span>Duración: {plan.duration_days} días</span>
+                      </div>
+                    </>
+                  )}
                   
                   {features.map((feature, index) => (
                     <div key={index} className="flex items-start text-sm">
@@ -1018,18 +1189,22 @@ const Plans = () => {
                 </div>
 
                 {/* Extensiones */}
-                {extensions.length > 0 && (
+                {!isEnterprise && extensions.length > 0 && (
                   <div className="mb-6">
                     <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
                       <PlusIcon className="h-4 w-4 mr-2" />
-                      Extensiones Disponibles
+                      {isFreeTrialEligible ? 'Extensiones disponibles por 15 días solo 1 vez' : 'Extensiones Disponibles'}
                     </h4>
                     <div className="space-y-2 max-h-48 overflow-y-auto">
                       {extensions.map((extension) => {
                         const isSelected = (selectedExtensions[plan.id] || []).includes(extension.id)
                         const isAvailable = extension.disponible
-                        const isPurchased = userExtensions.some(ue => ue.extension_id === extension.id)
+                        const isPurchased = userExtensions.some(ue => ue.extension_id === extension.id && ue.plan_id === plan.id) || 
+                          (isBasicPlan && hasFreeExtensionAccess() && isAvailable)
                         
+                        const showAsFree = isFreeTrialEligible && isAvailable
+                        const isForcedSelected = showAsFree
+
                         return (
                           <div
                             key={extension.id}
@@ -1038,7 +1213,7 @@ const Plans = () => {
                                 ? 'bg-green-50 border-green-200'
                                 : !isAvailable
                                 ? 'bg-gray-50 border-gray-200 opacity-60'
-                                : isSelected
+                                : (isSelected || isForcedSelected)
                                 ? 'bg-blue-50 border-blue-200'
                                 : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
                             }`}
@@ -1046,8 +1221,8 @@ const Plans = () => {
                             <div className="flex items-center flex-1">
                               <input
                                 type="checkbox"
-                                checked={isPurchased || isSelected}
-                                disabled={!isAvailable || isPurchased}
+                                checked={isPurchased || isSelected || isForcedSelected}
+                                disabled={!isAvailable || isPurchased || isForcedSelected}
                                 onChange={() => handleExtensionToggle(plan.id, extension.id)}
                                 className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
                               />
@@ -1061,9 +1236,12 @@ const Plans = () => {
                                   </span>
                                   <span className={`text-xs font-bold ${
                                     isPurchased ? 'text-green-600' :
-                                    !isAvailable ? 'text-gray-400 line-through' : 'text-blue-600'
+                                    !isAvailable ? 'text-gray-400 line-through' : 
+                                    showAsFree ? 'text-green-600' : 'text-blue-600'
                                   }`}>
-                                    {isPurchased ? 'COMPRADA' : `+${formatPrice(parseInt(extension.price))}`}
+                                    {isPurchased ? 'COMPRADA' : 
+                                     showAsFree ? 'GRATIS' :
+                                     `+${formatPrice(parseInt(extension.price))}`}
                                   </span>
                                 </div>
                                 {extension.description_es && (
@@ -1095,7 +1273,14 @@ const Plans = () => {
 
                 {/* Botón de acción */}
                 <div className="text-center">
-                  {isCurrent ? (
+                  {isEnterprise ? (
+                    <button
+                      onClick={() => setShowContactModal(true)}
+                      className="w-full bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105"
+                    >
+                      CONTÁCTANOS
+                    </button>
+                  ) : isCurrent ? (
                     <div className="space-y-3">
                       <button
                         disabled
@@ -1103,6 +1288,15 @@ const Plans = () => {
                       >
                         Plan Actual
                       </button>
+                      {['pro', 'professional', 'profesional'].includes(plan.plan_code?.toLowerCase()) && (
+                        <button
+                          onClick={() => handleOpenRenewal(plan)}
+                          className="w-full bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center"
+                        >
+                          <ArrowPathIcon className="h-5 w-5 mr-2" />
+                          Renovar Plan
+                        </button>
+                      )}
                       {getAvailableExtensionsCount() > 0 && (
                         <button
                           onClick={() => handleOpenUpgrade(plan)}
@@ -1117,22 +1311,9 @@ const Plans = () => {
                     </div>
                   ) : (
                     <button
-                      disabled
-                      className="w-full font-semibold py-3 px-6 rounded-lg transition-all duration-200 bg-gray-400 text-gray-600 cursor-not-allowed opacity-60"
-                    >
-                      <div className="flex items-center justify-center">
-                        <CreditCardIcon className="h-5 w-5 mr-2" />
-                        Comprar Plan
-                      </div>
-                    </button>
-                  )}
-                  
-                  {/* Botón de Comprar Prueba */}
-                  {!isCurrent && (
-                    <button
-                      onClick={() => handleTestPurchase(plan)}
+                      onClick={() => handlePurchasePlan(plan)}
                       disabled={!isGoogleDriveConnected || isProcessing}
-                      className={`w-full mt-3 font-bold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg ${
+                      className={`w-full font-bold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg ${
                         !isGoogleDriveConnected
                           ? 'bg-gray-400 text-gray-600 cursor-not-allowed opacity-60'
                           : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none'
@@ -1151,7 +1332,8 @@ const Plans = () => {
                       ) : (
                         <div className="flex items-center justify-center">
                           <CreditCardIcon className="h-4 w-4 mr-2" />
-                          {!isGoogleDriveConnected ? 'Conecta Google Drive' : 'Comenzar Prueba'}
+                          {!isGoogleDriveConnected ? 'Conecta Google Drive' : 
+                           (parseInt(plan.price) === 0 ? 'Obtener Plan Gratis' : 'Comprar Plan')}
                         </div>
                       )}
                     </button>
@@ -1162,11 +1344,11 @@ const Plans = () => {
           )
         })}
         
-        {/* Plan Plantilla Entrenador - Solo se muestra si tiene la extensión */}
-        {userExtensions.some(ue => {
+        {/* Plan Plantilla Entrenador - Solo se muestra si tiene la extensión o acceso gratuito */}
+        {(userExtensions.some(ue => {
           const ext = ue.extensiones || {}
           return (ext.name_es === 'Entrenador' || ext.name === 'Entrenador')
-        }) && (
+        }) || hasFreeExtensionAccess()) && (
           <div className="relative bg-white rounded-2xl shadow-lg border-2 border-gray-200 transition-all duration-300 hover:shadow-xl hover:border-primary-300">
             <div className="p-8">
 
@@ -1227,11 +1409,11 @@ const Plans = () => {
           </div>
         )}
 
-        {/* Plan Plantilla Abogados - Solo se muestra si tiene la extensión */}
-        {userExtensions.some(ue => {
+        {/* Plan Plantilla Abogados - Solo se muestra si tiene la extensión o acceso gratuito */}
+        {(userExtensions.some(ue => {
           const ext = ue.extensiones || {}
           return (ext.name_es === 'Abogados' || ext.name === 'Abogados')
-        }) && (
+        }) || hasFreeExtensionAccess()) && (
           <div className="relative bg-white rounded-2xl shadow-lg border-2 border-gray-200 transition-all duration-300 hover:shadow-xl hover:border-primary-300">
             <div className="p-8">
 
@@ -1303,6 +1485,21 @@ const Plans = () => {
         currentPlan={currentPlanForUpgrade}
         userExtensions={userExtensions}
         onUpgradeComplete={handleUpgradeComplete}
+      />
+
+      {/* Modal de Renovación */}
+      <RenewalModal
+        isOpen={showRenewalModal}
+        onClose={() => setShowRenewalModal(false)}
+        currentPlan={currentPlanForUpgrade}
+        userExtensions={userExtensions}
+        onRenewalComplete={handleRenewalComplete}
+      />
+
+      {/* Modal de Contacto Empresarial */}
+      <ContactModal
+        isOpen={showContactModal}
+        onClose={() => setShowContactModal(false)}
       />
       </div>
     </div>

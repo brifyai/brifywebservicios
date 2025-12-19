@@ -1,11 +1,17 @@
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
+require('dotenv').config(); // Cargar variables de entorno
 const { createClient } = require('@supabase/supabase-js');
 const { google } = require('googleapis');
+const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Configuración de Mercado Pago
+const mpAccessToken = process.env.REACT_APP_MERCADO_PAGO_ACCESS_TOKEN;
+const client = new MercadoPagoConfig({ accessToken: mpAccessToken });
 
 // Middleware
 app.use(cors());
@@ -16,6 +22,101 @@ app.use(express.urlencoded({ extended: true }));
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL || 'https://leoyybfbnjajkktprhro.supabase.co';
 const supabaseKey = process.env.REACT_APP_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxlb3l5YmZibmphamtrdHByaHJvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg4MTQ0MTYsImV4cCI6MjA2NDM5MDQxNn0.VfJoDIHgXB1k4kwgndmr2yLNDeDBBIrOVsbqaSWrjHU';
 const supabase = createClient(supabaseUrl, supabaseKey);
+
+// Endpoint para crear preferencia de Mercado Pago
+app.post('/api/create_preference', async (req, res) => {
+  try {
+    const { items, payer, metadata, back_urls } = req.body;
+    
+    if (!mpAccessToken) {
+      console.error('❌ Mercado Pago Access Token no configurado en variables de entorno');
+      return res.status(500).json({ error: 'Mercado Pago Access Token no configurado' });
+    }
+
+    console.log('📝 Creando preferencia MP con datos:', JSON.stringify({ items, payer, metadata }, null, 2));
+
+    const preference = new Preference(client);
+    
+    // Determinar URL base para redirección
+    const isDev = process.env.NODE_ENV !== 'production';
+    
+    // Configuración robusta de URL base para producción
+    // Prioridad: 1. Variable de entorno FRONTEND_URL, 2. URL hardcodeada de producción, 3. Detección automática
+    let baseUrl;
+    if (process.env.FRONTEND_URL) {
+      baseUrl = process.env.FRONTEND_URL;
+    } else if (!isDev) {
+      baseUrl = 'https://agente.brifyai.com';
+    } else {
+      baseUrl = 'http://localhost:3000';
+    }
+
+    // Asegurar que no termine en slash
+    if (baseUrl.endsWith('/')) {
+      baseUrl = baseUrl.slice(0, -1);
+    }
+
+    console.log(`🔗 Usando Base URL para redirecciones: ${baseUrl}`);
+
+    // Validar que back_urls tenga estructura correcta
+    const successUrl = back_urls?.success || `${baseUrl}/payment/result`;
+    const failureUrl = back_urls?.failure || `${baseUrl}/payment/result`;
+    const pendingUrl = back_urls?.pending || `${baseUrl}/payment/result`;
+
+    const preferenceBody = {
+      items,
+      payer,
+      metadata,
+      back_urls: {
+        success: successUrl,
+        failure: failureUrl,
+        pending: pendingUrl
+      },
+      auto_return: 'approved',
+    };
+
+    console.log('🚀 Enviando preferencia a Mercado Pago:', JSON.stringify(preferenceBody, null, 2));
+
+    const result = await preference.create({
+      body: preferenceBody
+    });
+
+    res.json({
+      id: result.id,
+      init_point: result.init_point,
+    });
+  } catch (error) {
+    console.error('Error creando preferencia MP:', error);
+    res.status(500).json({ error: 'Error al crear la preferencia de pago', details: error.message });
+  }
+});
+
+// Endpoint para verificar pago
+app.post('/api/verify_payment', async (req, res) => {
+  try {
+    const { payment_id } = req.body;
+    
+    if (!payment_id) {
+      return res.status(400).json({ error: 'Payment ID requerido' });
+    }
+
+    const payment = new Payment(client);
+    const paymentData = await payment.get({ id: payment_id });
+
+    res.json({
+      status: paymentData.status,
+      status_detail: paymentData.status_detail,
+      metadata: paymentData.metadata,
+      transaction_amount: paymentData.transaction_amount,
+      currency_id: paymentData.currency_id,
+      date_approved: paymentData.date_approved
+    });
+
+  } catch (error) {
+    console.error('Error verificando pago MP:', error);
+    res.status(500).json({ error: 'Error al verificar el pago', details: error.message });
+  }
+});
 
 // Función para extraer el ID del archivo de la URI de Google Drive
 function extractFileIdFromUri(resourceUri) {

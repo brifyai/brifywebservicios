@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import { EyeIcon, EyeSlashIcon, UserIcon, LockClosedIcon, EnvelopeIcon, ArrowRightIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, EyeSlashIcon, UserIcon, LockClosedIcon, EnvelopeIcon, ArrowRightIcon, PhoneIcon } from '@heroicons/react/24/outline'
 import LoadingSpinner from '../common/LoadingSpinner'
 import SEO from '../common/SEO'
 
@@ -11,7 +11,8 @@ const Register = () => {
     email: '',
     password: '',
     confirmPassword: '',
-    telegramId: ''
+    telegramId: '',
+    whatsapp: ''
   })
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
@@ -69,6 +70,11 @@ const Register = () => {
       newErrors.telegramId = 'El ID de Telegram debe contener solo números'
     }
 
+    // Whatsapp es opcional, pero si se proporciona debe ser válido
+    if (formData.whatsapp && !/^\d+$/.test(formData.whatsapp)) {
+      newErrors.whatsapp = 'El número de Whatsapp debe contener solo números'
+    }
+
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
@@ -85,7 +91,8 @@ const Register = () => {
     try {
       const userData = {
         name: formData.name.trim(),
-        telegram_id: formData.telegramId || null
+        telegram_id: formData.telegramId || null,
+        wssp: formData.whatsapp || null
       }
       
       const { error } = await signUp(formData.email, formData.password, userData)
@@ -353,6 +360,35 @@ const Register = () => {
               <p className="mt-1 text-xs text-gray-500">
                 Puedes encontrar tu ID de Telegram contactando a @userinfobot
               </p>
+            </div>
+
+            {/* Whatsapp */}
+            <div>
+              <label htmlFor="whatsapp" className="block text-sm font-semibold text-white mb-2">
+                Whatsapp <span className="text-gray-300">(Opcional)</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <PhoneIcon className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  id="whatsapp"
+                  name="whatsapp"
+                  type="text"
+                  className={`w-full pl-12 pr-4 py-4 border ${errors.whatsapp ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 'border-gray-200 focus:border-purple-500 focus:ring-purple-500'} rounded-2xl focus:ring-2 focus:outline-none transition-all duration-200 bg-white text-gray-900 placeholder-gray-400`}
+                  placeholder="Número de Whatsapp"
+                  value={formData.whatsapp}
+                  onChange={handleChange}
+                />
+              </div>
+              {errors.whatsapp && (
+                <p className="mt-2 text-sm text-red-600 flex items-center">
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {errors.whatsapp}
+                </p>
+              )}
             </div>
 
             {/* Password */}
