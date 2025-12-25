@@ -249,7 +249,8 @@ const ChatLegal = () => {
 
   const searchLaws = async (query) => {
     try {
-      const response = await fetch(
+      // 1. Búsqueda en leyes generales (RPC buscar_leyes)
+      const leyesPromise = fetch(
         `${process.env.REACT_APP_SUPABASE_LAWS_URL}/rest/v1/rpc/buscar_leyes`,
         {
           method: 'POST',
@@ -263,10 +264,67 @@ const ChatLegal = () => {
             limite_resultados: 5
           })
         }
-      )
-      if (response.ok) {
-        return await response.json()
+      ).then(res => res.ok ? res.json() : []);
+
+      // 2. Búsqueda en base de datos de códigos (RPC buscar_en_codigo_hibrido)
+      // Esta es la nueva base de datos para códigos (penal, civil, etc.)
+      const KONG_URL = process.env.REACT_APP_SUPABASE2_LAWS_CODE_URL;
+      const KONG_KEY = process.env.REACT_APP_SUPABASE2_LAWS_ANON_URL;
+      
+      // Necesitamos generar un embedding para la consulta antes de llamar a la función híbrida
+      // Usamos el servicio de embeddings existente
+      const embedding = await groqService.getEmbedding(query);
+
+      // Intentamos identificar si el usuario menciona un código específico
+      let matchTitulo = '';
+      const queryLower = query.toLowerCase();
+      if (queryLower.includes('penal')) matchTitulo = 'CODIGO PENAL';
+      else if (queryLower.includes('civil')) matchTitulo = 'CODIGO CIVIL';
+      else if (queryLower.includes('trabajo') || queryLower.includes('laboral')) matchTitulo = 'CODIGO DEL TRABAJO';
+      else if (queryLower.includes('comercio')) matchTitulo = 'CODIGO DE COMERCIO';
+      else if (queryLower.includes('procesal penal')) matchTitulo = 'CODIGO PROCESAL PENAL';
+      else if (queryLower.includes('tributario')) matchTitulo = 'CODIGO TRIBUTARIO';
+      else if (queryLower.includes('sanitario')) matchTitulo = 'CODIGO SANITARIO';
+      else if (queryLower.includes('aeronautico')) matchTitulo = 'CODIGO AERONAUTICO';
+      
+      // Si no detectamos un código específico, intentamos buscar en todos (o el más probable según contexto)
+      // Por defecto, si no hay match, la función híbrida podría no devolver nada si match_titulo es obligatorio.
+      
+      let codigosPromise = Promise.resolve([]);
+
+      if (matchTitulo && embedding && embedding.length > 0 && KONG_URL && KONG_KEY) {
+        codigosPromise = fetch(
+          `${KONG_URL}/rest/v1/rpc/buscar_en_codigo_hibrido`,
+          {
+            method: 'POST',
+            headers: {
+              'apikey': KONG_KEY, 
+              'Authorization': `Bearer ${KONG_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              keyword_query: query,
+              query_embedding: embedding,
+              match_titulo: matchTitulo,
+              match_count: 3
+            })
+          }
+        ).then(res => res.ok ? res.json() : []).catch(err => {
+          console.error('Error buscando en códigos:', err);
+          return [];
+        });
       }
+
+      const [leyesResults, codigosResults] = await Promise.all([leyesPromise, codigosPromise]);
+      
+      // Combinar resultados, dando prioridad a los códigos si son muy relevantes
+      const combinedResults = [...(codigosResults || []), ...(leyesResults || [])];
+      
+      // Eliminar duplicados si los hubiera (por ID)
+      const uniqueResults = Array.from(new Map(combinedResults.map(item => [item.id, item])).values());
+      
+      return uniqueResults;
+
     } catch (error) {
       console.error('Error searching laws (RPC):', error)
     }

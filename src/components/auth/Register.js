@@ -38,6 +38,20 @@ const Register = () => {
     }
   }
 
+  const formatWhatsappNumber = (number) => {
+    if (!number) return null
+    const cleaned = number.replace(/\D/g, '')
+    
+    // Caso: 8 dígitos (ej: 96406106 o 50128073) -> Agregar 569
+    if (cleaned.length === 8) return `569${cleaned}`
+    // Caso: 9 dígitos y empieza con 9 (ej: 996406106) -> Agregar 56
+    if (cleaned.length === 9 && cleaned.startsWith('9')) return `56${cleaned}`
+    // Caso: 11 dígitos y empieza con 569 -> Dejar igual
+    if (cleaned.length === 11 && cleaned.startsWith('569')) return cleaned
+    
+    return cleaned
+  }
+
   const validateForm = () => {
     const newErrors = {}
     
@@ -70,9 +84,13 @@ const Register = () => {
       newErrors.telegramId = 'El ID de Telegram debe contener solo números'
     }
 
-    // Whatsapp es opcional, pero si se proporciona debe ser válido
-    if (formData.whatsapp && !/^\d+$/.test(formData.whatsapp)) {
-      newErrors.whatsapp = 'El número de Whatsapp debe contener solo números'
+    // Whatsapp es opcional
+    if (formData.whatsapp) {
+      const formatted = formatWhatsappNumber(formData.whatsapp)
+      // Validar que el resultado final sea un formato válido de 11 dígitos empezando con 569
+      if (!formatted || formatted.length !== 11 || !formatted.startsWith('569')) {
+        newErrors.whatsapp = 'Formato inválido. Ejemplos: +56996406106, 96406106 o 50128073'
+      }
     }
 
     setErrors(newErrors)
@@ -92,7 +110,7 @@ const Register = () => {
       const userData = {
         name: formData.name.trim(),
         telegram_id: formData.telegramId || null,
-        wssp: formData.whatsapp || null
+        wssp: formatWhatsappNumber(formData.whatsapp) || null
       }
       
       const { error } = await signUp(formData.email, formData.password, userData)
