@@ -49,6 +49,7 @@ const PaymentResult = () => {
         })
 
         const data = await response.json()
+        console.log('Payment verification data:', data)
 
         if (!response.ok) {
           throw new Error(data.error || 'Error verificando pago')

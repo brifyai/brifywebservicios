@@ -43,7 +43,8 @@ module.exports = async (req, res) => {
       status_detail: paymentInfo.status_detail,
       date_approved: paymentInfo.date_approved,
       payment_method_id: paymentInfo.payment_method_id,
-      transaction_amount: paymentInfo.transaction_amount
+      transaction_amount: paymentInfo.transaction_amount,
+      metadata: paymentInfo.metadata
     });
   } catch (error) {
     console.error('Error verificando pago:', error);
