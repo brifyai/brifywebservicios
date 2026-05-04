@@ -1,6 +1,9 @@
 import React, { useState } from 'react'
 import { MagnifyingGlassIcon, DocumentTextIcon, CalendarIcon, LinkIcon } from '@heroicons/react/24/outline'
 
+const SUPABASE_LAWS_URL = process.env.REACT_APP_SUPABASE_LAWS_URL || 'https://bfpbyxmvombqarfnjmus.supabase.co'
+const SUPABASE_LAWS_ANON_KEY = process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmcGJ5eG12b21icWFyZm5qbXVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU2MjgyNTYsImV4cCI6MjA3MTIwNDI1Nn0.u4nyRBtJolXas3UDTz-LreewvgU86W5MuzgEsUZdZTA'
+
 const BusquedaLeyes = () => {
   const [searchTerm, setSearchTerm] = useState('')
   const [results, setResults] = useState([])
@@ -19,12 +22,12 @@ const BusquedaLeyes = () => {
     
     try {
       const response = await fetch(
-        `${process.env.REACT_APP_SUPABASE_LAWS_URL}/rest/v1/rpc/buscar_leyes`,
+        `${SUPABASE_LAWS_URL}/rest/v1/rpc/buscar_leyes`,
         {
           method: 'POST',
           headers: {
-            'apikey': process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY,
-            'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY}`,
+            'apikey': SUPABASE_LAWS_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_LAWS_ANON_KEY}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({

@@ -72,6 +72,12 @@ class MinimaxService {
     }
   }
 
+  fireAndForget(promise) {
+    Promise.resolve(promise).catch((error) => {
+      console.error('Background task error:', error)
+    })
+  }
+
   async createMessage({ system, messages, max_tokens, temperature, top_p }) {
     if (!this.apiKey) {
       throw new Error('REACT_APP_MINIMAX_API_KEY no está configurada')
@@ -164,7 +170,7 @@ Instrucciones:
       const totalTokens = inputTokens + outputTokens
 
       if (userId) {
-        await this.trackTokenUsage(userId, totalTokens, 'minimax_chat')
+        this.fireAndForget(this.trackTokenUsage(userId, totalTokens, 'minimax_chat'))
       }
 
       return {
@@ -206,7 +212,7 @@ Instrucciones:
       const totalTokens = inputTokens + outputTokens
 
       if (userId) {
-        await this.trackTokenUsage(userId, totalTokens, 'minimax_summary')
+        this.fireAndForget(this.trackTokenUsage(userId, totalTokens, 'minimax_summary'))
       }
 
       return { summary, tokensUsed: totalTokens }

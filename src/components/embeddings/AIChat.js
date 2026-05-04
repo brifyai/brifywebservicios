@@ -132,7 +132,7 @@ const AIChat = () => {
       
       // Registrar la conversación en la base de datos
       try {
-        await conversationService.registrarConversacion(
+        conversationService.registrarConversacion(
           user.email,
           'chat_ia',
           userMessage,

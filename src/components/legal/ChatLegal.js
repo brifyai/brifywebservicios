@@ -15,6 +15,9 @@ import { renderMarkdownLiteToHtml } from '../../lib/markdownLite'
 import conversationService from '../../services/conversationService'
 import { useAuth } from '../../contexts/AuthContext'
 
+const SUPABASE_LAWS_URL = process.env.REACT_APP_SUPABASE_LAWS_URL || 'https://bfpbyxmvombqarfnjmus.supabase.co'
+const SUPABASE_LAWS_ANON_KEY = process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmcGJ5eG12b21icWFyZm5qbXVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU2MjgyNTYsImV4cCI6MjA3MTIwNDI1Nn0.u4nyRBtJolXas3UDTz-LreewvgU86W5MuzgEsUZdZTA'
+
 const ChatLegal = () => {
   const { user } = useAuth()
   const [messages, setMessages] = useState([])
@@ -226,12 +229,12 @@ const ChatLegal = () => {
     try {
       const query = legalTerms.slice(0, 6).join(' ')
       const response = await fetch(
-        `${process.env.REACT_APP_SUPABASE_LAWS_URL}/rest/v1/rpc/buscar_leyes`,
+        `${SUPABASE_LAWS_URL}/rest/v1/rpc/buscar_leyes`,
         {
           method: 'POST',
           headers: {
-            'apikey': process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY,
-            'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY}`,
+            'apikey': SUPABASE_LAWS_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_LAWS_ANON_KEY}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -253,12 +256,12 @@ const ChatLegal = () => {
     try {
       // 1. Búsqueda en leyes generales (RPC buscar_leyes)
       const leyesPromise = fetch(
-        `${process.env.REACT_APP_SUPABASE_LAWS_URL}/rest/v1/rpc/buscar_leyes`,
+        `${SUPABASE_LAWS_URL}/rest/v1/rpc/buscar_leyes`,
         {
           method: 'POST',
           headers: {
-            'apikey': process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY,
-            'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY}`,
+            'apikey': SUPABASE_LAWS_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_LAWS_ANON_KEY}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -395,7 +398,7 @@ ${fileContent.substring(0, 2000)}`
 
         const promptTokens = Math.ceil(analysisPrompt.length / 4)
         const completionTokens = Math.ceil((analysisText || '').length / 4)
-        await trackTokenUsage(promptTokens, completionTokens, 'document_analysis')
+        trackTokenUsage(promptTokens, completionTokens, 'document_analysis')
       } catch (error) {
         console.error('Error en análisis IA:', error)
         documentAnalysis = 'Error al generar análisis con IA. Revisa manualmente el documento.'

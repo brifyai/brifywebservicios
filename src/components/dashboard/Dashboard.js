@@ -953,11 +953,6 @@ const Dashboard = () => {
                       <Link
                         to="/search"
                         onClick={(e) => {
-                          if (!hasActivePlan()) {
-                            e.preventDefault()
-                            toast.error('Debes comprar el plan para acceder al Chat General')
-                            return
-                          }
                           updateOnboardingProgress({ chat: true })
                         }}
                         className="flex-1 bg-white/10 text-white font-medium py-2 px-3 rounded-lg hover:bg-white/20 transition-colors duration-200 text-center text-sm"
@@ -973,11 +968,6 @@ const Dashboard = () => {
                       <Link
                         to="/folders"
                         onClick={(e) => {
-                          if (!hasActivePlan()) {
-                            e.preventDefault()
-                            toast.error('Debes comprar el plan para gestionar archivos')
-                            return
-                          }
                           updateOnboardingProgress({ folders: true })
                         }}
                         className="flex-1 bg-white/10 text-white font-medium py-2 px-3 rounded-lg hover:bg-white/20 transition-colors duration-200 text-center text-sm"
@@ -1029,13 +1019,7 @@ const Dashboard = () => {
               <Link
                 to="/search"
                 onClick={(e) => {
-                  if (!hasActivePlan()) {
-                    e.preventDefault()
-                    toast.error('Debes comprar el plan para acceder al Chat General')
-                  } else {
-                    // Marcar progreso de onboarding al acceder por Acciones Rápidas
-                    updateOnboardingProgress({ chat: true })
-                  }
+                  updateOnboardingProgress({ chat: true })
                 }}
                 className="group bg-gradient-to-br from-purple-600 to-purple-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white min-w-[280px] max-w-[280px] snap-start flex-shrink-0"
               >
@@ -1062,13 +1046,7 @@ const Dashboard = () => {
               <Link
                 to="/folders"
                 onClick={(e) => {
-                  if (!hasActivePlan()) {
-                    e.preventDefault()
-                    toast.error('Debes comprar el plan para gestionar archivos')
-                  } else {
-                    // Marcar progreso de onboarding al acceder por Acciones Rápidas
-                    updateOnboardingProgress({ folders: true })
-                  }
+                  updateOnboardingProgress({ folders: true })
                 }}
                 className="group bg-gradient-to-br from-blue-600 to-blue-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white min-w-[280px] max-w-[280px] snap-start flex-shrink-0"
               >

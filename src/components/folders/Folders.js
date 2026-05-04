@@ -1150,26 +1150,6 @@ const Folders = () => {
     })
   }
 
-  if (!hasActivePlan()) {
-    return (
-      <div className="text-center py-12">
-        <FolderIcon className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-        <h3 className="text-lg font-medium text-gray-900 mb-2">
-          Plan Requerido
-        </h3>
-        <p className="text-gray-600 mb-6">
-          Necesitas un plan activo para acceder a la gestión de carpetas.
-        </p>
-        <button
-          onClick={() => window.location.href = '/plans'}
-          className="bg-primary-600 text-white px-6 py-2 rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          Ver Planes
-        </button>
-      </div>
-    )
-  }
-
   return (
     <div className="min-h-screen bg-gray-50 scroll-to-top-mobile">
       {/* Header Principal */}
