@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Ocultar la barra de desplazamiento horizontal para carruseles */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.asdsaadad{padding:10px;}
+
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary-600 hover:bg-primary-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg transition-colors duration-200;
+  }
+  
+  .card {
+    @apply bg-white rounded-lg shadow-md border border-gray-200;
+  }
+  
+  .input-field {
+    @apply block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500;
+  }
+  
+  .navbar-container {
+    max-width: 98rem;
+    @apply mx-auto px-4;
+  }
+  
+  @screen sm {
+    .navbar-container {
+      @apply px-6;
+    }
+  }
+  
+  @screen lg {
+    .navbar-container {
+      @apply px-8;
+    }
+  }
+}
+
+/* Asegurar scroll al inicio en móvil para páginas específicas */
+@layer utilities {
+  .scroll-to-top-mobile {
+    @apply scroll-mt-0;
+  }
+  
+  @media (max-width: 767px) {
+    .scroll-to-top-mobile {
+      scroll-behavior: auto !important;
+      scroll-padding-top: 0 !important;
+      scroll-snap-type: none !important;
+    }
+    
+    /* Prevenir scroll no deseado en body y html en móvil */
+    body {
+      scroll-behavior: auto !important;
+      scroll-padding-top: 0 !important;
+      overflow-x: hidden;
+    }
+    
+    html {
+      scroll-behavior: auto !important;
+      scroll-padding-top: 0 !important;
+    }
+    
+    /* Asegurar que el contenedor principal no tenga scroll inicial */
+    .min-h-screen {
+      scroll-snap-type: none !important;
+    }
+    
+    /* Prevenir scroll en contenedor main */
+    main {
+      scroll-behavior: auto !important;
+      scroll-padding-top: 0 !important;
+    }
+    
+    /* Prevenir scroll por foco en inputs */
+    input:focus, textarea:focus, select:focus {
+      scroll-margin-top: 0 !important;
+    }
+  }
+}
