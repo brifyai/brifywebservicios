@@ -75,13 +75,6 @@ const Dashboard = () => {
   
   const hasFreeAccess = hasFreeExtensionAccess()
 
-  // Soporte para distintos nombres posibles de extensiones
-  const hasLegalExtension = hasFreeAccess || (
-    hasExtension('Chat Legal') ||
-    hasExtension('Abogados') ||
-    hasExtension('Abogado') ||
-    hasExtension('Legal')
-  )
   const hasTrainerExtension = hasFreeAccess || (
     hasExtension('Entrenador') ||
     hasExtension('Trainer')
@@ -1095,34 +1088,25 @@ const Dashboard = () => {
                 </div>
               </Link>
 
-              {/* Búsqueda Legal - visible solo si el usuario tiene la extensión (y evitar ocultar durante carga) */}
-              {!extensionsLoading && hasLegalExtension && (
-                <Link
-                  to="/abogado"
-                  onClick={(e) => {
-                    if (!hasActivePlan()) {
-                      e.preventDefault()
-                      toast.error('Debes comprar el plan para acceder al Chat Legal')
-                    }
-                  }}
-                  className="group bg-gradient-to-br from-green-600 to-green-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white min-w-[280px] max-w-[280px] snap-start flex-shrink-0"
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
-                      <MagnifyingGlassIcon className="h-8 w-8 text-white" />
-                    </div>
-                    <ArrowRightIcon className="h-6 w-6 text-white/70 group-hover:text-white transition-colors" />
+              <Link
+                to="/abogado"
+                className="group bg-gradient-to-br from-green-600 to-green-700 rounded-3xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 text-white min-w-[280px] max-w-[280px] snap-start flex-shrink-0"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
+                    <MagnifyingGlassIcon className="h-8 w-8 text-white" />
                   </div>
-                  <h3 className="text-xl font-bold mb-2">Chat Legal</h3>
-                  <p className="text-green-100 text-sm mb-4">
-                    Accede a la base de datos de leyes chilenas
-                  </p>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-green-200">Consultar leyes</span>
-                    <span className="text-xs text-green-300">Base actualizada</span>
-                  </div>
-                </Link>
-              )}
+                  <ArrowRightIcon className="h-6 w-6 text-white/70 group-hover:text-white transition-colors" />
+                </div>
+                <h3 className="text-xl font-bold mb-2">Chat Legal</h3>
+                <p className="text-green-100 text-sm mb-4">
+                  Accede a la base de datos de leyes chilenas
+                </p>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-green-200">Consultar leyes</span>
+                  <span className="text-xs text-green-300">Base actualizada</span>
+                </div>
+              </Link>
 
               {/* Entrenador - visible solo si el usuario tiene la extensión (y evitar ocultar durante carga) */}
               {!extensionsLoading && hasTrainerExtension && (

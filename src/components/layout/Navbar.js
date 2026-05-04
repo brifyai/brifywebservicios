@@ -6,6 +6,7 @@ import {
   UserIcon,
   ChatBubbleLeftRightIcon,
   FolderOpenIcon,
+  ScaleIcon,
   Bars3Icon,
   XMarkIcon,
   ArrowRightOnRectangleIcon
@@ -25,6 +26,7 @@ const Navbar = () => {
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
     { name: 'Chat General', href: '/search', icon: ChatBubbleLeftRightIcon },
+    { name: 'Chat Legal', href: '/abogado', icon: ScaleIcon },
     { name: 'Gestionar Archivos', href: '/folders', icon: FolderOpenIcon },
     { name: 'Mi Perfil', href: '/profile', icon: UserIcon },
   ]
