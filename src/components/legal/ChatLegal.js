@@ -11,6 +11,7 @@ import { supabase } from '../../lib/supabase'
 import fileExtractor from '../../services/fileContentExtractor'
 import minimaxService from '../../services/minimaxService'
 import embeddingsService from '../../lib/embeddings'
+import { renderMarkdownLiteToHtml } from '../../lib/markdownLite'
 import conversationService from '../../services/conversationService'
 import { useAuth } from '../../contexts/AuthContext'
 
@@ -645,7 +646,10 @@ ${fileContent.substring(0, 2000)}`
                   <UserIcon className="h-5 w-5 text-blue-100 mr-2 mt-0.5 flex-shrink-0" />
                 )}
                 <div className="flex-1">
-                  <p className="text-sm whitespace-pre-line">{message.content}</p>
+                  <div
+                    className="text-sm whitespace-pre-wrap markdown-lite"
+                    dangerouslySetInnerHTML={{ __html: renderMarkdownLiteToHtml(message.content) }}
+                  />
                   {message.file && (
                     <div className="mt-2 p-2 bg-blue-500 rounded text-xs">
                       <PaperClipIcon className="h-3 w-3 inline mr-1" />

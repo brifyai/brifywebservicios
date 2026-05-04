@@ -52,6 +52,41 @@
       @apply px-8;
     }
   }
+
+  .markdown-lite p {
+    @apply mb-2 last:mb-0;
+  }
+
+  .markdown-lite h1 {
+    @apply text-lg font-semibold mb-2;
+  }
+
+  .markdown-lite h2 {
+    @apply text-base font-semibold mb-2;
+  }
+
+  .markdown-lite h3,
+  .markdown-lite h4,
+  .markdown-lite h5,
+  .markdown-lite h6 {
+    @apply text-sm font-semibold mb-2;
+  }
+
+  .markdown-lite ul {
+    @apply list-disc pl-5 my-2 space-y-1;
+  }
+
+  .markdown-lite ol {
+    @apply list-decimal pl-5 my-2 space-y-1;
+  }
+
+  .markdown-lite code {
+    @apply px-1 py-0.5 rounded bg-black/10 font-mono text-xs;
+  }
+
+  .markdown-lite a {
+    @apply underline underline-offset-2;
+  }
 }
 
 /* Asegurar scroll al inicio en móvil para páginas específicas */

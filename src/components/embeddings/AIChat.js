@@ -4,6 +4,7 @@ import minimaxService from '../../services/minimaxService'
 import conversationService from '../../services/conversationService'
 import LoadingSpinner from '../common/LoadingSpinner'
 import SubtleSpinner from '../common/SubtleSpinner'
+import { renderMarkdownLiteToHtml } from '../../lib/markdownLite'
 import {
   ChatBubbleLeftRightIcon,
   PaperAirplaneIcon,
@@ -245,7 +246,10 @@ const AIChat = () => {
                           : 'bg-gray-100 text-gray-900'
                       }`}
                     >
-                      <p className="whitespace-pre-wrap">{message.content}</p>
+                      <div
+                        className="whitespace-pre-wrap markdown-lite"
+                        dangerouslySetInnerHTML={{ __html: renderMarkdownLiteToHtml(message.content) }}
+                      />
                     </div>
                     
                     {/* Context info for AI messages */}
