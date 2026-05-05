@@ -361,6 +361,120 @@ const ChatLegal = () => {
     return joined || contenido.substring(0, 600)
   }
 
+  const normalizeForMatch = (text) => {
+    if (!text) return ''
+    return String(text)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+  }
+
+  const tokenizeQuestion = (question) => {
+    const stop = new Set([
+      'que', 'cual', 'cuales', 'como', 'cuando', 'donde', 'porque', 'por', 'para', 'con', 'sin',
+      'del', 'de', 'la', 'el', 'las', 'los', 'un', 'una', 'y', 'o', 'en', 'al',
+      'ley', 'norma', 'articulo', 'articulos', 'codigo', 'chileno', 'chile'
+    ])
+
+    return normalizeForMatch(question)
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .map(t => t.trim())
+      .filter(t => t.length > 3 && !stop.has(t))
+  }
+
+  const scoreLawRelevance = (question, law) => {
+    const q = normalizeForMatch(question)
+    const tokens = tokenizeQuestion(question)
+
+    const title = normalizeForMatch(law?.['Título de la Norma'] || '')
+    const content = normalizeForMatch(law?.Contenido || '')
+    const fragment = normalizeForMatch(extractRelevantContent(question, law?.Contenido || ''))
+
+    let score = 0
+
+    for (const tk of tokens) {
+      if (title.includes(tk)) score += 6
+      else if (fragment.includes(tk)) score += 2
+      else if (content.includes(tk)) score += 1
+    }
+
+    const preguntaEsConducir =
+      q.includes('licencia de conducir') ||
+      q.includes('conducir') ||
+      q.includes('conductor') ||
+      q.includes('transito') ||
+      q.includes('licencias de conducir')
+
+    if (preguntaEsConducir) {
+      const salud = ['salud', 'medic', 'hospital', 'isapre', 'fonasa', 'licencia medica', 'reposo', 'subsidio']
+      if (salud.some(w => title.includes(w) || content.includes(w))) {
+        score -= 25
+      }
+      const transito = ['transito', 'conduc', 'vehicul', 'licencia de conducir', 'licencias de conducir', 'conductor', 'seguridad vial']
+      if (transito.some(w => title.includes(w) || content.includes(w))) {
+        score += 10
+      }
+    }
+
+    return score
+  }
+
+  const selectLawsForAnswer = (question, laws) => {
+    const scored = (laws || [])
+      .map(law => ({ law, score: scoreLawRelevance(question, law) }))
+      .sort((a, b) => b.score - a.score)
+
+    const selected = scored.slice(0, 3).map(x => x.law)
+    const bestScore = scored[0]?.score ?? -999
+
+    const UMBRAL_RELEVANCIA = 14
+    const useContext = selected.length > 0 && bestScore >= UMBRAL_RELEVANCIA
+
+    return { useContext, selected, bestScore }
+  }
+
+  const generateAnswerWithMinimax = async ({ question, lawsContext, allowGeneralKnowledge }) => {
+    const systemPrompt = allowGeneralKnowledge
+      ? `Eres un asistente legal experto en legislación chilena.
+
+Responde usando conocimiento general. No uses el contexto recuperado si no es relevante.
+
+Reglas:
+- No inventes artículos, números de ley o citas textuales.
+- Si no estás seguro de un dato normativo específico, dilo y sugiere verificar en la fuente oficial.
+- Responde en español, claro y directo.`
+      : `Eres un asistente legal experto en legislación chilena.
+
+Reglas estrictas:
+- Responde basándote únicamente en el CONTEXTO LEGAL proporcionado.
+- Si el contexto no contiene la respuesta, indícalo explícitamente.
+- No inventes artículos ni números de ley que no estén en el contexto.
+- Responde en español, claro y directo.
+
+Formato:
+- Entrega una respuesta breve.
+- Si aplica, menciona qué ley(s) del contexto usaste.`
+
+    const userPrompt = allowGeneralKnowledge
+      ? `Consulta del usuario:\n${question}`
+      : `CONTEXTO LEGAL:\n${lawsContext}\n\nCONSULTA DEL USUARIO:\n${question}`
+
+    const answer = await minimaxService.createMessage({
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+      max_tokens: 800,
+      temperature: 0.4,
+      top_p: 1
+    })
+
+    const inputTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 4)
+    const outputTokens = Math.ceil(String(answer || '').length / 4)
+    trackTokenUsage(inputTokens, outputTokens, allowGeneralKnowledge ? 'legal_fallback' : 'legal_rag_answer')
+
+    return answer || 'No se pudo generar una respuesta'
+  }
+
   const generateResponse = async (userMessage, fileContent = null) => {
     let relevantLaws = []
     let documentAnalysis = ''
@@ -413,8 +527,34 @@ ${fileContent.substring(0, 2000)}`
     const uniqueLaws = relevantLaws.filter((law, index, self) => 
       index === self.findIndex(l => l.id === law.id)
     )
-    
+
+    const { useContext, selected: selectedLaws, bestScore } = selectLawsForAnswer(userMessage, uniqueLaws)
+
+    let lawsContext = ''
+    if (useContext) {
+      lawsContext = selectedLaws.map((law, idx) => {
+        const titulo = law['Título de la Norma'] || 'Título no disponible'
+        const numero = law['Número'] || law['Norma Número'] || 'No disponible'
+        const url = law['Url'] || ''
+        const fragmento = extractRelevantContent(userMessage, law.Contenido || '')
+        return `--- Ley ${idx + 1} ---\nTítulo: ${titulo}\nNúmero: ${numero}\n${url ? `Fuente: ${url}\n` : ''}Fragmento relevante:\n${fragmento || 'Fragmento no disponible'}`
+      }).join('\n\n')
+    }
+
+    let aiAnswer = ''
+    try {
+      aiAnswer = await generateAnswerWithMinimax({
+        question: userMessage,
+        lawsContext,
+        allowGeneralKnowledge: !useContext
+      })
+    } catch (error) {
+      console.error('Error generando respuesta con IA:', error)
+      aiAnswer = 'Lo siento, no pude generar una respuesta en este momento.'
+    }
+
     let response = `Consulta Legal: "${userMessage}"\n\n`
+    response += `**🤖 Respuesta:**\n${aiAnswer}\n\n`
     
     if (fileContent && !fileContent.startsWith('Error al extraer')) {
       response += `**📄 Análisis del Documento Subido**\n`
@@ -446,33 +586,45 @@ ${fileContent.substring(0, 2000)}`
     }
     
     if (uniqueLaws.length > 0) {
-      // fijar contexto si hay número de ley en la consulta
-      if (lawNumberMatch) {
-        setCurrentLaw(uniqueLaws[0])
+      if (useContext) {
+        if (lawNumberMatch) {
+          setCurrentLaw(selectedLaws[0] || uniqueLaws[0])
+        }
+
+        response += `**📚 Normativa utilizada (según tu consulta):**\n\n`
+        selectedLaws.forEach((law, index) => {
+          const titulo = law['Título de la Norma'] || 'Título no disponible'
+          const numero = law['Número'] || law['Norma Número'] || 'No disponible'
+          const fechaPub = law['Fecha de Publicación'] || law['Fecha'] || 'No especificada'
+          const tipo = law['Tipo de Norma'] || 'No especificado'
+          const url = law['Url'] || null
+          const fragmento = extractRelevantContent(userMessage, law.Contenido || '')
+          response += `${index + 1}. ${titulo}\n`
+          response += `Número: ${numero}\n`
+          response += `Publicación: ${fechaPub}\n`
+          response += `Tipo: ${tipo}\n`
+          if (fragmento) {
+            response += `Fragmento relevante:\n${fragmento}\n\n`
+          }
+          if (url) {
+            response += `Fuente oficial: ${url}\n\n`
+          }
+        })
+      } else {
+        response += `**ℹ️ Nota:** Se encontraron leyes en la base de datos, pero no parecían relacionadas con tu pregunta (relevancia baja). Respondí sin usar ese contexto.\n\n`
+        response += `**📚 Leyes encontradas (no utilizadas):**\n\n`
+        uniqueLaws.slice(0, 3).forEach((law, index) => {
+          const titulo = law['Título de la Norma'] || 'Título no disponible'
+          const numero = law['Número'] || law['Norma Número'] || 'No disponible'
+          const url = law['Url'] || null
+          response += `${index + 1}. ${titulo}\n`
+          response += `Número: ${numero}\n`
+          if (url) {
+            response += `Fuente oficial: ${url}\n`
+          }
+          response += `\n`
+        })
       }
-      response += `Leyes encontradas:\n\n`
-      uniqueLaws.slice(0, 3).forEach((law, index) => {
-        const titulo = law['Título de la Norma'] || 'Título no disponible'
-        const numero = law['Número'] || law['Norma Número'] || 'No disponible'
-        const fechaPub = law['Fecha de Publicación'] || law['Fecha'] || 'No especificada'
-        const tipo = law['Tipo de Norma'] || 'No especificado'
-        const url = law['Url'] || null
-        const fragmento = extractRelevantContent(userMessage, law.Contenido || '')
-        response += `${index + 1}. ${titulo}\n`
-        response += `Número: ${numero}\n`
-        response += `Publicación: ${fechaPub}\n`
-        response += `Tipo: ${tipo}\n`
-        if (fragmento) {
-          response += `Fragmento relevante:\n${fragmento}\n\n`
-        }
-        const full = (law.Contenido || '').trim()
-        if (full) {
-          response += `Contenido completo:\n${full}\n\n`
-        }
-        if (url) {
-          response += `Fuente oficial: ${url}\n\n`
-        }
-      })
     } else if (!fileContent && currentLaw) {
       // usar contexto previo si existe y la consulta es de seguimiento
       const titulo = currentLaw['Título de la Norma'] || 'Título no disponible'
@@ -502,15 +654,7 @@ ${fileContent.substring(0, 2000)}`
     
     // Se elimina bloque de próximos pasos con símbolos para evitar ruido visual
     
-    if (uniqueLaws.length === 0 && !fileContent && !currentLaw) {
-      response = `No se encontraron leyes específicas para: "${userMessage}"\n\n`
-      response += `Sugerencias:\n`
-      response += `- Usa términos legales más específicos\n`
-      response += `- Indica número de ley cuando lo conozcas\n`
-      response += `- Revisa la fuente oficial si tienes dudas\n`
-    }
-    
-    return { text: response, laws: uniqueLaws.slice(0, 3) }
+    return { text: response, laws: useContext ? selectedLaws : [] }
   }
 
   const handleSendMessage = async () => {
