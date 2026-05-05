@@ -610,20 +610,6 @@ ${fileContent.substring(0, 2000)}`
             response += `Fuente oficial: ${url}\n\n`
           }
         })
-      } else {
-        response += `**ℹ️ Nota:** Se encontraron leyes en la base de datos, pero no parecían relacionadas con tu pregunta (relevancia baja). Respondí sin usar ese contexto.\n\n`
-        response += `**📚 Leyes encontradas (no utilizadas):**\n\n`
-        uniqueLaws.slice(0, 3).forEach((law, index) => {
-          const titulo = law['Título de la Norma'] || 'Título no disponible'
-          const numero = law['Número'] || law['Norma Número'] || 'No disponible'
-          const url = law['Url'] || null
-          response += `${index + 1}. ${titulo}\n`
-          response += `Número: ${numero}\n`
-          if (url) {
-            response += `Fuente oficial: ${url}\n`
-          }
-          response += `\n`
-        })
       }
     } else if (!fileContent && currentLaw) {
       // usar contexto previo si existe y la consulta es de seguimiento
