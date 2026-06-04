@@ -48,6 +48,19 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
+function sanitizeWhatsAppText(text) {
+  let s = String(text || '');
+  if (!s.trim()) return '';
+
+  s = s.replace(/^\s*[-*_]{3,}\s*$/gm, '');
+  s = s.replace(/\*\*(.+?)\*\*/g, '$1');
+  s = s.replace(/(^|\s)\*(\S[^*]{0,200}?)\*(?=\s|$)/g, '$1$2');
+  s = s.replace(/(^|\s)_(\S[^_]{0,200}?)_(?=\s|$)/g, '$1$2');
+  s = s.replace(/^\s*[-•*]\s+/gm, '🔹 ');
+  s = s.replace(/\n{3,}/g, '\n\n');
+  return s.trim();
+}
+
 function normalizeIncomingText(text) {
   if (!text) return '';
   return String(text).trim();
@@ -115,6 +128,7 @@ Reglas estrictas:
 - Conserva links, números, IDs, rutas y tokens tal cual.
 - Mantén intacta la estructura de menús/listas (por ejemplo: "1️⃣", "2️⃣", saltos de línea).
 - No agregues pasos nuevos ni cambies opciones.
+- No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras).
 - Evita argentinismos como "escribí", "vos", "che".
 - Máximo 1–2 emojis por bloque.`;
 
@@ -143,12 +157,12 @@ Reglas estrictas:
   }
 
   const content = data?.content;
-  if (typeof content === 'string' && content.trim()) return content;
+  if (typeof content === 'string' && content.trim()) return sanitizeWhatsAppText(content);
   if (Array.isArray(content)) {
     const joined = content.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
-    if (joined.trim()) return joined;
+    if (joined.trim()) return sanitizeWhatsAppText(joined);
   }
-  if (data?.choices?.[0]?.message?.content) return data.choices[0].message.content;
+  if (data?.choices?.[0]?.message?.content) return sanitizeWhatsAppText(data.choices[0].message.content);
   return input;
 }
 
@@ -551,6 +565,7 @@ Objetivo: mantener una conversación breve y útil, sin perder el hilo.
 Reglas:
 - Si el usuario solo saluda o conversa, responde amable y pregunta qué necesita.
 - Si el usuario expresa una intención (asesoría legal, crear/compartir grupo, subir/listar/analizar/crear documento), invítalo a decirlo tal cual (sin exigir número).
+- No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
 - No inventes datos.`;
 
   try {
@@ -583,7 +598,7 @@ Reglas:
     let raw = data?.content;
     if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
     if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-    return typeof raw === 'string' ? raw.trim() : '';
+    return typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
   } catch (_) {
     return '';
   }
@@ -614,7 +629,7 @@ async function handleCasualConversation({ session, chatId, text, sessionName }) 
   if (!answer) {
     answer = `¡Ya! 🙌 ¿Qué necesitas hacer hoy?\n\n⚖️ Asesoría legal\n📁 Crear grupo\n🤝 Compartir grupo\n📤 Subir archivo\n📋 Listar documentos/imágenes\n✍️ Crear documento\n🔍 Analizar documento`;
   } else {
-    answer = `${answer}\n\nSi quieres, dime qué necesitas: ⚖️ asesoría legal, 📁 crear grupo, 📤 subir archivo, ✍️ crear documento, etc.`;
+    answer = `${sanitizeWhatsAppText(answer)}\n\nSi quieres, dime qué necesitas: ⚖️ asesoría legal, 📁 crear grupo, 📤 subir archivo, ✍️ crear documento, etc.`;
   }
 
   let updatedAfterAssistant = null;
@@ -1118,6 +1133,7 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
       const history = threadId ? await getLegalThreadHistory(threadId, 10, 2500) : '';
       const system = `Eres un asesor legal en WhatsApp para Brify. Responde en español, con tono humano y cercano.
 Si hay contexto legal, cita la ley/artículo de forma clara. Si falta información, haz 1-2 preguntas de aclaración.
+No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
 No inventes artículos ni números.`;
       try {
         const response = await fetchWithTimeout(
@@ -1148,7 +1164,7 @@ No inventes artículos ni números.`;
           let raw = data?.content;
           if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
           if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-          answer = typeof raw === 'string' ? raw : '';
+          answer = typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
         }
       } catch (_) {
         answer = '';
@@ -1949,6 +1965,7 @@ async function handleAnalizarDocumento({ session, chatId, text, sessionName, pay
           const content = Buffer.from(await downloaded.arrayBuffer()).toString('utf8');
           if (MINIMAX_API_KEY) {
             const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
+No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
 Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de aclaración si aplica.`;
             let analysis = '';
             try {
@@ -1975,7 +1992,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
                 let raw = data?.content;
                 if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
                 if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-                analysis = typeof raw === 'string' ? raw : '';
+                analysis = typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
               }
             } catch (_) {
               analysis = '';
@@ -2115,6 +2132,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
     let analysis = '';
     if (MINIMAX_API_KEY) {
       const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
+No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
 Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de aclaración si aplica.`;
       try {
         const response = await fetchWithTimeout(
@@ -2140,7 +2158,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
           let raw = data?.content;
           if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
           if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-          analysis = typeof raw === 'string' ? raw : '';
+          analysis = typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
         }
       } catch (_) {
         analysis = '';
@@ -2933,13 +2951,13 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     return;
   }
 
-  if (intent.intent === 'unknown' && (isLikelyLegalTopic(textTrim) || shouldTreatAsCase(textTrim))) {
+  if (intent.intent === 'unknown' && (isLikelyLegalTopic(textTrim) || isLikelyLawSearch(textTrim))) {
     session = await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'choose_mode' } });
     await handleAsesorLegal({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
-  if (intent.intent === 'unknown' && WAHA_CASUAL_ENABLED && MINIMAX_API_KEY) {
+  if (intent.intent === 'unknown' && WAHA_CASUAL_ENABLED) {
     await handleCasualConversation({ session, chatId, text: textTrim, sessionName });
     return;
   }
