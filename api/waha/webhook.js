@@ -2769,8 +2769,8 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   if (!phoneNumber) return;
 
   let session = await getOrCreateWspSession(phoneNumber);
-  const text = normalizeIncomingText(body);
-  const textLower = text.toLowerCase();
+  const textTrim = normalizeIncomingText(body);
+  const textLower = normalizeForIntent(textTrim);
 
   if (isMenuTrigger(textLower)) {
     if (!session.user_id) {
@@ -2804,7 +2804,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
         return;
       }
 
-      const email = text.trim().toLowerCase();
+      const email = textTrim.trim().toLowerCase();
       const byEmail = await getUserByEmail(email);
       if (!byEmail) {
         await updateWspSession(session.id, { current_branch: null, branch_context: { awaiting_email: true } });
@@ -2825,37 +2825,37 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   }
 
   if (session.current_branch === 'asesor_legal') {
-    await handleAsesorLegal({ session, chatId, text, sessionName });
+    await handleAsesorLegal({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
   if (session.current_branch === 'crear_grupo') {
-    await handleCrearGrupo({ session, chatId, text, sessionName });
+    await handleCrearGrupo({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
   if (session.current_branch === 'compartir_grupo') {
-    await handleCompartirGrupo({ session, chatId, text, sessionName });
+    await handleCompartirGrupo({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
   if (session.current_branch === 'subir_archivo') {
-    await handleSubirArchivo({ session, chatId, text, sessionName, payload });
+    await handleSubirArchivo({ session, chatId, text: textTrim, sessionName, payload });
     return;
   }
 
   if (session.current_branch === 'listar_archivos') {
-    await handleListarArchivos({ session, chatId, text, sessionName });
+    await handleListarArchivos({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
   if (session.current_branch === 'analizar_documento') {
-    await handleAnalizarDocumento({ session, chatId, text, sessionName, payload });
+    await handleAnalizarDocumento({ session, chatId, text: textTrim, sessionName, payload });
     return;
   }
 
   if (session.current_branch === 'crear_documento') {
-    await handleCrearDocumento({ session, chatId, text, sessionName });
+    await handleCrearDocumento({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
@@ -2863,11 +2863,11 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   if (media?.url) {
     await enterBranch(session, chatId, sessionName, 'upload_file');
     session = await getOrCreateWspSession(phoneNumber);
-    await handleSubirArchivo({ session, chatId, text, sessionName, payload });
+    await handleSubirArchivo({ session, chatId, text: textTrim, sessionName, payload });
     return;
   }
 
-  const intent = await detectIntent(text);
+  const intent = await detectIntent(textTrim);
   if (intent.intent === 'menu_1') {
     await enterBranch(session, chatId, sessionName, 'legal');
     return;
@@ -2893,54 +2893,54 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
 
   if (intent.intent === 'legal') {
     session = await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'choose_mode' } });
-    await handleAsesorLegal({ session, chatId, text, sessionName });
+    await handleAsesorLegal({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
   if (intent.intent === 'create_group') {
     session = await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'ask_name' } });
-    await handleCrearGrupo({ session, chatId, text, sessionName });
+    await handleCrearGrupo({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
   if (intent.intent === 'share_group') {
     session = await updateWspSession(session.id, { current_branch: 'compartir_grupo', branch_context: { stage: 'start' } });
-    await handleCompartirGrupo({ session, chatId, text, sessionName });
+    await handleCompartirGrupo({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
   if (intent.intent === 'upload_file') {
     session = await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { stage: 'wait_file' } });
-    await handleSubirArchivo({ session, chatId, text, sessionName, payload });
+    await handleSubirArchivo({ session, chatId, text: textTrim, sessionName, payload });
     return;
   }
 
   if (intent.intent === 'list_files') {
     session = await updateWspSession(session.id, { current_branch: 'listar_archivos', branch_context: { stage: 'choose_location' } });
-    await handleListarArchivos({ session, chatId, text, sessionName });
+    await handleListarArchivos({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
   if (intent.intent === 'create_document') {
     session = await updateWspSession(session.id, { current_branch: 'crear_documento', branch_context: { stage: 'choose_mode' } });
-    await handleCrearDocumento({ session, chatId, text, sessionName });
+    await handleCrearDocumento({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
   if (intent.intent === 'analyze_document') {
     session = await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'choose_mode' } });
-    await handleAnalizarDocumento({ session, chatId, text, sessionName, payload });
+    await handleAnalizarDocumento({ session, chatId, text: textTrim, sessionName, payload });
     return;
   }
 
   if (intent.intent === 'unknown' && (isLikelyLegalTopic(textTrim) || shouldTreatAsCase(textTrim))) {
     session = await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'choose_mode' } });
-    await handleAsesorLegal({ session, chatId, text, sessionName });
+    await handleAsesorLegal({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
   if (intent.intent === 'unknown' && WAHA_CASUAL_ENABLED && MINIMAX_API_KEY) {
-    await handleCasualConversation({ session, chatId, text, sessionName });
+    await handleCasualConversation({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
