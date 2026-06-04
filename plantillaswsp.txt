@@ -1,0 +1,307 @@
+const plantillas = {
+  contrato_arriendo: {
+    nombre: "Contrato de Arriendo",
+    variables_requeridas: ['N° de norma (opcional)', 'Termino de ley (opcional)', 'Ciudad', 'Fecha', 'Nombre Arrendador', 'RUT Arrendador', 'Domicilio Arrendador', 'Nombre Arrendatario', 'RUT Arrendatario', 'Domicilio Arrendatario', 'Dirección Propiedad', 'Comuna', 'Tipo Inmueble (casa/departamento)', 'Plazo en meses', 'Fecha de Inicio', 'Fecha de Término', 'Monto del Arriendo (número)', 'Monto del Arriendo (en palabras)', 'Día de pago mensual', 'Forma de Pago', 'Periodicidad del Reajuste (ej: anual)', 'Monto de la Garantía (número)', 'Monto de la Garantía (en palabras)', 'Número de meses de Garantía', 'Responsable de Gastos Comunes', 'Responsable de Contribuciones', 'Uso de la Propiedad (habitacional/comercial)'],
+    contenido: `__TITULO_PRINCIPAL__CONTRATO DE ARRENDAMIENTO DE BIEN RAÍZ
+
+En {{ciudad}}, a {{fecha}}, entre don(a) **{{nombre_arrendador}}**, RUT **{{rut_arrendador}}**, domiciliado en {{domicilio_arrendador}}, en adelante "EL ARRENDADOR"; y don(a) **{{nombre_arrendatario}}**, RUT **{{rut_arrendatario}}**, domiciliado en {{domicilio_arrendatario}}, en adelante "EL ARRENDATARIO", quienes exponen que han convenido en celebrar el siguiente contrato de arrendamiento.
+
+{{clausula_base_legal}}
+
+__TITULO__PRIMERO: OBJETO DEL CONTRATO
+EL ARRENDADOR da en arrendamiento al ARRENDATARIO la propiedad ubicada en {{direccion_propiedad}}, comuna de {{comuna}}, ciudad de {{ciudad}}, correspondiente a un inmueble de tipo {{tipo_inmueble}} (casa/departamento/oficina/local comercial).
+
+__TITULO__SEGUNDO: PLAZO
+El plazo del arriendo es de {{plazo_meses}} meses, contados desde el {{fecha_inicio}} hasta el {{fecha_termino}}.
+
+__TITULO__TERCERO: RENTA
+La renta mensual es de $ {{monto_arriendo}} ({{monto_arriendo_palabras}} pesos), pagaderos dentro de los primeros {{dia_pago}} días de cada mes, mediante {{forma_pago}}.
+
+CUARTO: REAJUSTE
+La renta se reajustará {{periodicidad_reajuste}} según la variación del IPC.
+
+QUINTO: GARANTÍA
+El ARRENDATARIO entrega en este acto la suma de $ {{monto_garantia}} ({{monto_garantia_palabras}} pesos) equivalente a {{numero_meses_garantia}} mes(es) de arriendo, como garantía del fiel cumplimiento de las obligaciones emanadas del presente contrato.
+
+SEXTO: GASTOS COMUNES Y CONTRIBUCIONES
+Los gastos comunes serán de cargo del {{responsable_gastos_comunes}}. Las contribuciones de bienes raíces serán de cargo del {{responsable_contribuciones}}.
+
+SÉPTIMO: USO DE LA PROPIEDAD
+El inmueble se destinará exclusivamente para {{uso_propiedad}} (habitacional/comercial/oficina), quedando prohibido cualquier otro uso.
+
+OCTAVO: OBLIGACIONES DEL ARRENDATARIO
+a) Pagar la renta en la forma y plazo convenidos
+b) Mantener la propiedad en buen estado de conservación
+c) Permitir inspecciones periódicas del ARRENDADOR
+d) No subarrendar sin autorización escrita
+e) Restituir la propiedad al término del contrato en el estado en que la recibió
+
+NOVENO: OBLIGACIONES DEL ARRENDADOR
+a) Entregar la propiedad en estado de servir para el fin convenido
+b) Mantener la propiedad en estado de servir durante la vigencia del contrato
+c) Realizar las reparaciones necesarias por deterioro no imputable al ARRENDATARIO
+
+DÉCIMO: TÉRMINO DEL CONTRATO
+El contrato terminará:
+a) Por vencimiento del plazo
+b) Por mutuo acuerdo
+c) Por incumplimiento grave de las obligaciones
+d) Por las demás causales legales
+
+UNDÉCIMO: DOMICILIO
+Para todos los efectos legales, las partes fijan domicilio en la ciudad de {{ciudad}} y se someten a la jurisdicción de sus tribunales.
+
+En comprobante y previa lectura, firman las partes:
+
+<div class="firma-container">
+  <div class="firma-block">
+    _______________________<br>
+    {{nombre_arrendador}}<br>
+    RUT: {{rut_arrendador}}<br>
+    ARRENDADOR
+  </div>
+  <div class="firma-block">
+    _______________________<br>
+    {{nombre_arrendatario}}<br>
+    RUT: {{rut_arrendatario}}<br>
+    ARRENDATARIO
+  </div>
+</div>`
+  },
+  poder_simple: {
+    nombre: "Poder Simple",
+    variables_requeridas: ['N° de norma (opcional)', 'Termino de ley (opcional)', 'Ciudad', 'Fecha', 'Nombre Mandante', 'RUT Mandante', 'Domicilio Mandante', 'Nombre Mandatario', 'RUT Mandatario', 'Domicilio Mandatario', 'Facultades específicas (descripción)', 'Facultad 1', 'Facultad 2', 'Facultad 3', 'Facultades adicionales (si aplica)', 'Vigencia en días', 'Fecha de Vencimiento', 'Nombre Testigo 1', 'RUT Testigo 1', 'Nombre Testigo 2', 'RUT Testigo 2'],
+    contenido: `__TITULO_PRINCIPAL__PODER SIMPLE
+
+En {{ciudad}}, a {{fecha}}
+
+Por el presente instrumento:
+
+YO, {{nombre_mandante}}, cédula nacional de identidad número {{rut_mandante}}, domiciliado en {{domicilio_mandante}}, en adelante el "MANDANTE".
+
+VENGO EN CONFERIR PODER a:
+
+{{nombre_mandatario}}, cédula nacional de identidad número {{rut_mandatario}}, domiciliado en {{domicilio_mandatario}}, en adelante el "MANDATARIO".
+
+PARA QUE A MI NOMBRE Y REPRESENTACIÓN:
+
+{{facultades_especificas}}
+
+FACULTADES:
+
+El MANDATARIO queda especialmente facultado para:
+
+1. {{facultad_1}}
+2. {{facultad_2}}
+3. {{facultad_3}}
+{{facultades_adicionales}}
+
+VIGENCIA:
+
+El presente poder tendrá una vigencia de {{vigencia_dias}} días corridos, contados desde la fecha de su otorgamiento, es decir, hasta el {{fecha_vencimiento}}.
+
+REVOCACIÓN:
+
+El MANDANTE se reserva el derecho de revocar el presente poder en cualquier momento, mediante comunicación escrita dirigida al MANDATARIO.
+
+ACEPTACIÓN:
+
+El MANDATARIO acepta el presente mandato y se obliga a desempeñarlo conforme a las instrucciones recibidas y en el mejor interés del MANDANTE.
+
+DOMICILIO:
+
+Para todos los efectos legales derivados del presente poder, las partes fijan domicilio en la ciudad de {{ciudad}}.
+
+
+_______________________
+{{nombre_mandante}}
+RUT: {{rut_mandante}}
+MANDANTE
+
+_______________________
+{{nombre_mandatario}}
+RUT: {{rut_mandatario}}
+MANDATARIO
+
+
+TESTIGOS:
+
+_______________________
+Nombre: {{nombre_testigo_1}}
+RUT: {{rut_testigo_1}}
+
+_______________________
+Nombre: {{nombre_testigo_2}}
+RUT: {{rut_testigo_2}}`
+  },
+  finiquito_laboral: {
+    nombre: "Finiquito Laboral",
+    variables_requeridas: ['N° de norma (opcional)', 'Termino de ley (opcional)', 'Ciudad', 'Fecha', 'Nombre Empleador', 'RUT Empleador', 'Razón Social Empresa', 'RUT Empresa', 'Domicilio Empresa', 'Nombre Trabajador', 'RUT Trabajador', 'Domicilio Trabajador', 'Fecha de Ingreso', 'Fecha de Término', 'Cargo del Trabajador', 'Artículo de Causal de Término', 'Descripción de la Causal', 'Días trabajados en el mes', 'Monto Remuneración Proporcional', 'Días de feriado legal proporcional', 'Monto Feriado Proporcional', 'Monto Indemnización Años de Servicio', 'Monto Indemnización Aviso Previo', 'Otros conceptos (si aplica)', 'Monto Total a Pagar', 'Monto Total en Palabras', 'Forma de Pago', 'Plazo para el Pago', 'Ministro de Fe (Notario o Inspección del Trabajo)', 'Fecha de Ratificación'],
+    contenido: `__TITULO_PRINCIPAL__FINIQUITO DE CONTRATO INDIVIDUAL DE TRABAJO
+
+En {{ciudad}}, a {{fecha}}, comparecen por una parte la empresa **{{razon_social_empresa}}**, R.U.T. **{{rut_empresa}}**, con domicilio en {{domicilio_empresa}}, representada legalmente por don(a) **{{nombre_empleador}}**, cédula de identidad N° **{{rut_empleador}}**, en adelante "EL EMPLEADOR", y por la otra parte don(a) **{{nombre_trabajador}}**, cédula de identidad N° **{{rut_trabajador}}**, domiciliado en {{domicilio_trabajador}}, en adelante "EL TRABAJADOR".
+
+Ambas partes dejan constancia que el trabajador ingresó a prestar servicios el día {{fecha_ingreso}} para desempeñarse como {{cargo_trabajador}}.
+
+Que con fecha {{fecha_termino}}, el empleador ha puesto término al contrato de trabajo invocado la causal legal establecida en el artículo **{{articulo_causal_termino}}** del Código del Trabajo, consistente en **"{{descripcion_causal}}"**.
+
+Por este acto, el trabajador declara recibir a su entera satisfacción, por concepto de las remuneraciones, indemnizaciones y demás prestaciones que a continuación se indican, las siguientes sumas:
+
+1.  Días trabajados en el mes de término: {{dias_trabajados_mes}} días. Monto: $ {{monto_remuneracion_proporcional}}.
+2.  Indemnización por feriado legal proporcional ({{dias_feriado_legal_proporcional}} días): $ {{monto_feriado_proporcional}}.
+3.  Indemnización por años de servicio: $ {{monto_indemnizacion_anios_servicio}}.
+4.  Indemnización sustitutiva del aviso previo: $ {{monto_indemnizacion_aviso_previo}}.
+5.  {{otros_conceptos}} (si aplica).
+
+Lo que suma un total de $ **{{monto_total_a_pagar}}** ({{monto_total_en_palabras}} pesos), suma que se paga en este acto mediante {{forma_pago}}.
+
+El trabajador declara que con el pago recibido en este finiquito, nada se le adeuda por concepto de remuneraciones, indemnizaciones, feriados, ni por ningún otro concepto derivado de la relación laboral o de su terminación, renunciando expresamente a cualquier acción, derecho o reclamo presente o futuro.
+
+El presente finiquito es leído y ratificado por las partes ante **{{ministro_de_fe}}**, en {{ciudad}}, con fecha {{fecha_ratificacion}}.
+
+<div class="firma-container">
+  <div class="firma-block">
+    _______________________<br>
+    {{nombre_empleador}}<br>
+    Representante Legal {{razon_social_empresa}}<br>
+    RUT: {{rut_empleador}}
+  </div>
+  <div class="firma-block">
+    _______________________<br>
+    {{nombre_trabajador}}<br>
+    RUT: {{rut_trabajador}}
+  </div>
+</div>`
+  },
+  carta_aviso_termino: {
+    nombre: "Carta de Aviso de Término de Contrato",
+    variables_requeridas: ['N° de norma (opcional)', 'Termino de ley (opcional)', 'Ciudad', 'Fecha', 'Nombre Trabajador', 'RUT Trabajador', 'Artículo Legal aplicable', 'Fecha de Ingreso', 'Cargo del Trabajador', 'Fecha de Término del Contrato', 'Causal de Término detallada', 'Fundamentos detallados de la causal', 'Días de aviso previo', 'Fecha efectiva del término', 'Elementos que debe entregar el trabajador', 'Fecha para firmar finiquito', 'Nombre del Representante de la Empresa', 'Cargo del Representante', 'Razón Social Empresa', 'RUT Empresa'],
+    contenido: `__TITULO_PRINCIPAL__CARTA DE AVISO DE TÉRMINO DE CONTRATO DE TRABAJO
+
+{{razon_social_empresa}}
+RUT: {{rut_empresa}}
+{{domicilio_empresa}}
+{{ciudad}}, {{fecha}}
+
+SEÑOR(A)
+**{{nombre_trabajador}}**
+RUT: {{rut_trabajador}}
+{{domicilio_trabajador}}
+Presente
+
+De nuestra consideración:
+
+Por medio de la presente, y en uso de las facultades que confiere el Código del Trabajo, le comunicamos a usted que, con fecha **{{fecha_efectiva_termino}}**, hemos resuelto poner término a su contrato de trabajo, el cual se inició el día {{fecha_ingreso}}, para desempeñar el cargo de {{cargo_trabajador}}.
+
+La causal invocada para este término de contrato es la establecida en el artículo **{{articulo_legal_aplicable}}** del Código del Trabajo, que señala:
+
+**"{{causal_termino_detallada}}"**
+
+Los hechos en que se funda esta causal son los siguientes:
+**"{{fundamentos_detallados_causal}}"**
+
+De acuerdo a la ley, este aviso se le ha entregado con {{dias_aviso_previo}} días de anticipación a la fecha de término efectiva.
+
+Informamos a usted que su finiquito, que incluirá el pago de todas las prestaciones a que tenga derecho, estará a su disposición para su firma y pago el día {{fecha_para_firmar_finiquito}} en las oficinas de la empresa ubicadas en {{domicilio_empresa}}.
+
+Le solicitamos encarecidamente que, a la brevedad posible y antes de la fecha efectiva de término, haga entrega de **{{elementos_que_debe_entregar_trabajador}}** (ej: herramientas, uniforme, credenciales, equipo computacional, etc.).
+
+Sin otro particular, le saluda atentamente,
+
+<div class="firma-container">
+  <div class="firma-block">
+    _______________________<br>
+    {{nombre_representante_empresa}}<br>
+    {{cargo_representante}}<br>
+    {{razon_social_empresa}}
+  </div>
+</div>`
+  }
+};
+// --- FIN DE PLANTILLAS ---
+
+
+// --- MAPA DE CLAVES: "Clave del Usuario" -> "Clave de la Plantilla" ---
+// Este es el "traductor".
+const MapeoDeClaves = {
+    "N° de norma (opcional)": "n_norma",
+    "Termino de ley (opcional)": "termino_ley",
+    "Ciudad": "ciudad",
+    "Fecha": "fecha",
+    "Nombre Arrendador": "nombre_arrendador",
+    "RUT Arrendador": "rut_arrendador",
+    "Domicilio Arrendador": "domicilio_arrendador",
+    "Nombre Arrendatario": "nombre_arrendatario",
+    "RUT Arrendatario": "rut_arrendatario",
+    "Domicilio Arrendatario": "domicilio_arrendatario",
+    "Dirección Propiedad": "direccion_propiedad",
+    "Comuna": "comuna",
+    "Tipo Inmueble (casa/departamento)": "tipo_inmueble",
+    "Plazo en meses": "plazo_meses",
+    "Fecha de Inicio": "fecha_inicio",
+    "Fecha de Término": "fecha_termino",
+    "Monto del Arriendo (número)": "monto_arriendo",
+    "Monto del Arriendo (en palabras)": "monto_arriendo_palabras",
+    "Día de pago mensual": "dia_pago",
+    "Forma de Pago": "forma_pago",
+    "Periodicidad del Reajuste (ej: anual)": "periodicidad_reajuste",
+    "Monto de la Garantía (número)": "monto_garantia",
+    "Monto de la Garantía (en palabras)": "monto_garantia_palabras",
+    "Número de meses de Garantía": "numero_meses_garantia",
+    "Responsable de Gastos Comunes": "responsable_gastos_comunes",
+    "Responsable de Contribuciones": "responsable_contribuciones",
+    "Uso de la Propiedad (habitacional/comercial)": "uso_propiedad",
+    "Nombre Mandante": "nombre_mandante",
+    "RUT Mandante": "rut_mandante",
+    "Domicilio Mandante": "domicilio_mandante",
+    "Nombre Mandatario": "nombre_mandatario",
+    "RUT Mandatario": "rut_mandatario",
+    "Domicilio Mandatario": "domicilio_mandatario",
+    "Facultades específicas (descripción)": "facultades_especificas",
+    "Facultad 1": "facultad_1",
+    "Facultad 2": "facultad_2",
+    "Facultad 3": "facultad_3",
+    "Facultades adicionales (si aplica)": "facultades_adicionales",
+    "Vigencia en días": "vigencia_dias",
+    "Fecha de Vencimiento": "fecha_vencimiento",
+    "Nombre Testigo 1": "nombre_testigo_1",
+    "RUT Testigo 1": "rut_testigo_1",
+    "Nombre Testigo 2": "nombre_testigo_2",
+    "RUT Testigo 2": "rut_testigo_2",
+    // Variables para Finiquito Laboral
+    "Nombre Empleador": "nombre_empleador",
+    "RUT Empleador": "rut_empleador",
+    "Razón Social Empresa": "razon_social_empresa",
+    "RUT Empresa": "rut_empresa",
+    "Domicilio Empresa": "domicilio_empresa",
+    "Nombre Trabajador": "nombre_trabajador",
+    "RUT Trabajador": "rut_trabajador",
+    "Domicilio Trabajador": "domicilio_trabajador",
+    "Fecha de Ingreso": "fecha_ingreso",
+    "Fecha de Término": "fecha_termino",
+    "Cargo del Trabajador": "cargo_trabajador",
+    "Artículo de Causal de Término": "articulo_causal_termino",
+    "Descripción de la Causal": "descripcion_causal",
+    "Días trabajados en el mes": "dias_trabajados_mes",
+    "Monto Remuneración Proporcional": "monto_remuneracion_proporcional",
+    "Días de feriado legal proporcional": "dias_feriado_legal_proporcional",
+    "Monto Feriado Proporcional": "monto_feriado_proporcional",
+    "Monto Indemnización Años de Servicio": "monto_indemnizacion_anios_servicio",
+    "Monto Indemnización Aviso Previo": "monto_indemnizacion_aviso_previo",
+    "Otros conceptos (si aplica)": "otros_conceptos",
+    "Monto Total a Pagar": "monto_total_a_pagar",
+    "Monto Total en Palabras": "monto_total_en_palabras",
+    "Plazo para el Pago": "plazo_para_el_pago",
+    "Ministro de Fe (Notario o Inspección del Trabajo)": "ministro_de_fe",
+    "Fecha de Ratificación": "fecha_ratificacion",
+    // Variables para Carta de Aviso de Término de Contrato
+    "Artículo Legal aplicable": "articulo_legal_aplicable",
+    "Causal de Término detallada": "causal_termino_detallada",
+    "Fundamentos detallados de la causal": "fundamentos_detallados_causal",
+    "Días de aviso previo": "dias_aviso_previo",
+    "Fecha efectiva del término": "fecha_efectiva_termino",
+    "Elementos que debe entregar el trabajador": "elementos_que_debe_entregar_trabajador",
+    "Fecha para firmar finiquito": "fecha_para_firmar_finiquito",
+    "Nombre del Representante de la Empresa": "nombre_representante_empresa",
+    "Cargo del Representante": "cargo_representante",
+};
