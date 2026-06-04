@@ -15,6 +15,9 @@ const WAHA_BASE_URL = process.env.WAHA_BASE_URL || '';
 const WAHA_API_KEY = process.env.WAHA_API_KEY || '';
 const DEFAULT_WAHA_SESSION = process.env.WAHA_SESSION || 'default';
 const WAHA_SEND_ENDPOINT = process.env.WAHA_SEND_ENDPOINT || '/api/sendText';
+const WAHA_SEEN_ENDPOINT = process.env.WAHA_SEEN_ENDPOINT || '/api/sendSeen';
+const WAHA_START_TYPING_ENDPOINT = process.env.WAHA_START_TYPING_ENDPOINT || '/api/startTyping';
+const WAHA_STOP_TYPING_ENDPOINT = process.env.WAHA_STOP_TYPING_ENDPOINT || '/api/stopTyping';
 const WAHA_WEBHOOK_SECRET = process.env.WAHA_WEBHOOK_SECRET || '';
 const BRIFY_PROFILE_URL = process.env.BRIFY_PROFILE_URL || 'https://agente.brifyai.com/profile';
 const BRIFY_REGISTER_URL = process.env.BRIFY_REGISTER_URL || 'https://agente.brifyai.com/register';
@@ -47,6 +50,12 @@ function normalizeChatIdForSend(chatId) {
     return `${digits}@c.us`;
   }
   return raw;
+}
+
+function endpointUrl(pathname) {
+  const baseUrl = WAHA_BASE_URL.replace(/\/$/, '');
+  const endpoint = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return `${baseUrl}${endpoint}`;
 }
 
 function isMenuTrigger(textLower) {
@@ -132,9 +141,7 @@ async function wahaSendText(chatId, text, sessionName) {
     finalText = text;
   }
 
-  const baseUrl = WAHA_BASE_URL.replace(/\/$/, '');
-  const endpoint = WAHA_SEND_ENDPOINT.startsWith('/') ? WAHA_SEND_ENDPOINT : `/${WAHA_SEND_ENDPOINT}`;
-  const response = await fetch(`${baseUrl}${endpoint}`, {
+  const response = await fetch(endpointUrl(WAHA_SEND_ENDPOINT), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -153,6 +160,254 @@ async function wahaSendText(chatId, text, sessionName) {
   }
 
   return response.json().catch(() => null);
+}
+
+async function wahaSendSeen(chatId, sessionName) {
+  if (!WAHA_BASE_URL) return null;
+  const toChatId = normalizeChatIdForSend(chatId);
+  if (!toChatId) return null;
+
+  const response = await fetch(endpointUrl(WAHA_SEEN_ENDPOINT), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
+    },
+    body: JSON.stringify({
+      session: sessionName || DEFAULT_WAHA_SESSION,
+      chatId: toChatId
+    })
+  });
+
+  return response.ok ? response.json().catch(() => null) : null;
+}
+
+async function wahaStartTyping(chatId, sessionName) {
+  if (!WAHA_BASE_URL) return null;
+  const toChatId = normalizeChatIdForSend(chatId);
+  if (!toChatId) return null;
+
+  const response = await fetch(endpointUrl(WAHA_START_TYPING_ENDPOINT), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
+    },
+    body: JSON.stringify({
+      session: sessionName || DEFAULT_WAHA_SESSION,
+      chatId: toChatId
+    })
+  });
+
+  return response.ok ? response.json().catch(() => null) : null;
+}
+
+async function wahaStopTyping(chatId, sessionName) {
+  if (!WAHA_BASE_URL) return null;
+  const toChatId = normalizeChatIdForSend(chatId);
+  if (!toChatId) return null;
+
+  const response = await fetch(endpointUrl(WAHA_STOP_TYPING_ENDPOINT), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
+    },
+    body: JSON.stringify({
+      session: sessionName || DEFAULT_WAHA_SESSION,
+      chatId: toChatId
+    })
+  });
+
+  return response.ok ? response.json().catch(() => null) : null;
+}
+
+function normalizeForIntent(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function detectIntentRuleBased(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return { intent: 'unknown', confidence: 0 };
+
+  if (['menu', 'menú', 'inicio', 'volver'].includes(t)) return { intent: 'menu', confidence: 1 };
+
+  if (/^\d+$/.test(t)) {
+    const n = Number(t);
+    if (n >= 1 && n <= 7) return { intent: `menu_${n}`, confidence: 1 };
+  }
+
+  if (t.includes('asesor') || t.includes('abogad') || t.includes('legal') || t.includes('ley') || t.includes('demanda') || t.includes('contrato')) {
+    return { intent: 'legal', confidence: 0.8 };
+  }
+  if (t.includes('crear grupo') || (t.includes('crear') && t.includes('grupo')) || t.includes('nueva carpeta') || t.includes('nuevo grupo')) {
+    return { intent: 'create_group', confidence: 0.8 };
+  }
+  if (t.includes('compartir grupo') || (t.includes('compartir') && t.includes('grupo')) || (t.includes('invitar') && t.includes('grupo')) || t.includes('dar acceso')) {
+    return { intent: 'share_group', confidence: 0.8 };
+  }
+  if (t.includes('subir') || t.includes('adjuntar') || t.includes('enviar archivo') || t.includes('cargar archivo')) {
+    return { intent: 'upload_file', confidence: 0.8 };
+  }
+  if ((t.includes('listar') || t.includes('ver') || t.includes('mostrar')) && (t.includes('document') || t.includes('archivo') || t.includes('imagen'))) {
+    return { intent: 'list_files', confidence: 0.75 };
+  }
+  if (t.includes('crear documento') || t.includes('crear doc') || (t.includes('hacer') && t.includes('documento')) || t.includes('plantilla')) {
+    return { intent: 'create_document', confidence: 0.8 };
+  }
+  if (t.includes('analizar') || t.includes('resumir') || t.includes('interpretar') || (t.includes('revisar') && t.includes('document'))) {
+    return { intent: 'analyze_document', confidence: 0.75 };
+  }
+
+  return { intent: 'unknown', confidence: 0 };
+}
+
+async function detectIntentWithAI(text) {
+  if (!MINIMAX_API_KEY) return { intent: 'unknown', confidence: 0 };
+  const t = normalizeIncomingText(text);
+  if (!t) return { intent: 'unknown', confidence: 0 };
+
+  const system = `Clasifica la intención del usuario para un menú de WhatsApp de Brify.
+Devuelve SOLO JSON válido con este formato:
+{"intent":"menu|legal|create_group|share_group|upload_file|list_files|create_document|analyze_document|unknown","confidence":0.0}
+Reglas:
+- No agregues texto fuera del JSON.
+- Si el usuario pide "asesor legal/abogado/ley" => legal
+- "crear grupo/carpeta" => create_group
+- "compartir grupo/dar acceso" => share_group
+- "subir/adjuntar archivo" => upload_file
+- "ver/listar documentos/imagenes" => list_files
+- "crear documento/plantilla" => create_document
+- "analizar/resumir documento" => analyze_document
+- Si hay duda => unknown con baja confianza.`;
+
+  const response = await fetch(MINIMAX_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${MINIMAX_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: MINIMAX_MODEL,
+      system,
+      temperature: 0,
+      max_tokens: 120,
+      messages: [{ role: 'user', content: t }]
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return { intent: 'unknown', confidence: 0 };
+  }
+
+  let raw = data?.content;
+  if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+  if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+  if (typeof raw !== 'string') return { intent: 'unknown', confidence: 0 };
+
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return { intent: 'unknown', confidence: 0 };
+  try {
+    const parsed = JSON.parse(match[0]);
+    const intent = parsed?.intent;
+    const confidence = Number(parsed?.confidence || 0);
+    if (typeof intent !== 'string') return { intent: 'unknown', confidence: 0 };
+    return { intent, confidence: Number.isFinite(confidence) ? confidence : 0 };
+  } catch (_) {
+    return { intent: 'unknown', confidence: 0 };
+  }
+}
+
+async function detectIntent(text) {
+  const rule = detectIntentRuleBased(text);
+  if (rule.intent !== 'unknown') return rule;
+  const ai = await detectIntentWithAI(text);
+  if (ai.intent !== 'unknown' && ai.confidence >= 0.5) return ai;
+  return rule;
+}
+
+async function enterBranch(session, chatId, sessionName, branch) {
+  if (branch === 'legal') {
+    await updateWspSession(session.id, {
+      current_branch: 'asesor_legal',
+      branch_context: { stage: 'choose_mode' }
+    });
+    await wahaSendText(
+      chatId,
+      `¿Cómo quieres que te ayude hoy? ⚖️\n\n1️⃣ 📝 Compartir mi caso — cuéntame tu situación y te oriento con respaldo legal\n2️⃣ 🔎 Buscar una ley — dime el nombre, término o artículo que buscas`,
+      sessionName
+    );
+    return true;
+  }
+
+  if (branch === 'create_group') {
+    await updateWspSession(session.id, {
+      current_branch: 'crear_grupo',
+      branch_context: { stage: 'ask_name' }
+    });
+    await wahaSendText(chatId, `¡Vamos a crear tu nuevo grupo! 📁 ¿Cómo se llamará?`, sessionName);
+    return true;
+  }
+
+  if (branch === 'share_group') {
+    await updateWspSession(session.id, {
+      current_branch: 'compartir_grupo',
+      branch_context: { stage: 'start' }
+    });
+    await wahaSendText(chatId, `¡Perfecto! 🤝 Para compartir, dime el nombre del grupo o escribe "listar" para ver tus grupos 📂`, sessionName);
+    return true;
+  }
+
+  if (branch === 'upload_file') {
+    await updateWspSession(session.id, {
+      current_branch: 'subir_archivo',
+      branch_context: { stage: 'instructions' }
+    });
+    await wahaSendText(
+      chatId,
+      `¡Claro! Para subir tu archivo sigue estos pasos 📤\n\n1) Adjunta el archivo directamente en este chat\n2) Formatos: PDF, DOCX, JPG, PNG, XLSX\n\nCuando lo envíes te preguntaré dónde guardarlo 😊`,
+      sessionName
+    );
+    return true;
+  }
+
+  if (branch === 'list_files') {
+    await updateWspSession(session.id, {
+      current_branch: 'listar_archivos',
+      branch_context: { stage: 'start' }
+    });
+    await wahaSendText(chatId, `Dime si quieres ver 📄 documentos o 🖼️ imágenes (o escribe "todo")`, sessionName);
+    return true;
+  }
+
+  if (branch === 'create_document') {
+    await updateWspSession(session.id, {
+      current_branch: 'crear_documento',
+      branch_context: {}
+    });
+    await handleCrearDocumento({ session, chatId, text: '6', sessionName });
+    return true;
+  }
+
+  if (branch === 'analyze_document') {
+    await updateWspSession(session.id, {
+      current_branch: 'analizar_documento',
+      branch_context: { stage: 'start' }
+    });
+    await wahaSendText(
+      chatId,
+      `¡Perfecto! Vamos a analizar tu documento 🔍\n\n1️⃣ 📂 Analizar un documento que ya subiste a Brify\n2️⃣ 📤 Subir un nuevo documento ahora para analizarlo`,
+      sessionName
+    );
+    return true;
+  }
+
+  return false;
 }
 
 async function getOrCreateWspSession(phoneNumber) {
@@ -679,8 +934,34 @@ async function handleWahaMessage({ chatId, body, sessionName }) {
     return;
   }
 
-  if (isCreateDocumentTrigger(textLower)) {
-    await handleCrearDocumento({ session, chatId, text, sessionName });
+  const intent = await detectIntent(text);
+  if (intent.intent === 'menu_1') await enterBranch(session, chatId, sessionName, 'legal');
+  else if (intent.intent === 'menu_2') await enterBranch(session, chatId, sessionName, 'create_group');
+  else if (intent.intent === 'menu_3') await enterBranch(session, chatId, sessionName, 'share_group');
+  else if (intent.intent === 'menu_4') await enterBranch(session, chatId, sessionName, 'upload_file');
+  else if (intent.intent === 'menu_5') await enterBranch(session, chatId, sessionName, 'list_files');
+  else if (intent.intent === 'menu_6') await enterBranch(session, chatId, sessionName, 'create_document');
+  else if (intent.intent === 'menu_7') await enterBranch(session, chatId, sessionName, 'analyze_document');
+  else if (intent.intent === 'legal') {
+    await enterBranch(session, chatId, sessionName, 'legal');
+    return;
+  } else if (intent.intent === 'create_group') {
+    await enterBranch(session, chatId, sessionName, 'create_group');
+    return;
+  } else if (intent.intent === 'share_group') {
+    await enterBranch(session, chatId, sessionName, 'share_group');
+    return;
+  } else if (intent.intent === 'upload_file') {
+    await enterBranch(session, chatId, sessionName, 'upload_file');
+    return;
+  } else if (intent.intent === 'list_files') {
+    await enterBranch(session, chatId, sessionName, 'list_files');
+    return;
+  } else if (intent.intent === 'create_document') {
+    await enterBranch(session, chatId, sessionName, 'create_document');
+    return;
+  } else if (intent.intent === 'analyze_document') {
+    await enterBranch(session, chatId, sessionName, 'analyze_document');
     return;
   }
 
@@ -732,10 +1013,21 @@ module.exports = async (req, res) => {
       return res.status(400).json({ success: false });
     }
 
+    await wahaSendSeen(chatId, sessionName);
+    await wahaStartTyping(chatId, sessionName);
     await handleWahaMessage({ chatId, body, sessionName });
+    await wahaStopTyping(chatId, sessionName);
     return res.json({ success: true });
   } catch (error) {
     console.error('Error procesando webhook WAHA (Serverless):', error);
+    try {
+      const payload = req.body?.payload || {};
+      const sessionName = req.body?.session || DEFAULT_WAHA_SESSION;
+      const chatId = payload?._data?.key?.remoteJidAlt || payload.from || payload.chatId;
+      if (chatId) {
+        await wahaStopTyping(chatId, sessionName);
+      }
+    } catch (_) {}
     return res.status(500).json({ success: false, error: error.message });
   }
 };
