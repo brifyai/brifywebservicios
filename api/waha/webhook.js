@@ -32,6 +32,8 @@ const WAHA_MINIMAX_ENABLED = (process.env.WAHA_MINIMAX_ENABLED || 'true').toLowe
 const WAHA_MINIMAX_TEMPERATURE = Number(process.env.WAHA_MINIMAX_TEMPERATURE || '0.7');
 const WAHA_ROUTER_ENABLED = (process.env.WAHA_ROUTER_ENABLED || 'true').toLowerCase() === 'true';
 const WAHA_ROUTER_MIN_CONFIDENCE = Number(process.env.WAHA_ROUTER_MIN_CONFIDENCE || '0.55');
+const WAHA_CASUAL_ENABLED = (process.env.WAHA_CASUAL_ENABLED || 'true').toLowerCase() === 'true';
+const WAHA_CASUAL_MAX_TURNS = Number(process.env.WAHA_CASUAL_MAX_TURNS || '12');
 
 function normalizeIncomingText(text) {
   if (!text) return '';
@@ -133,7 +135,7 @@ Reglas estrictas:
   return input;
 }
 
-async function wahaSendText(chatId, text, sessionName) {
+async function wahaSendText(chatId, text, sessionName, options = {}) {
   if (!WAHA_BASE_URL) {
     throw new Error('WAHA_BASE_URL no configurado');
   }
@@ -144,10 +146,14 @@ async function wahaSendText(chatId, text, sessionName) {
   }
 
   let finalText = text;
-  try {
-    finalText = await minimaxRewriteForWhatsApp(text);
-  } catch (_) {
-    finalText = text;
+  if (options?.skipRewrite) {
+    finalText = String(text || '');
+  } else {
+    try {
+      finalText = await minimaxRewriteForWhatsApp(text);
+    } catch (_) {
+      finalText = text;
+    }
   }
 
   const response = await fetch(endpointUrl(WAHA_SEND_ENDPOINT), {
@@ -171,11 +177,11 @@ async function wahaSendText(chatId, text, sessionName) {
   return response.json().catch(() => null);
 }
 
-async function wahaSendTextLogged({ threadId, chatId, text, sessionName }) {
+async function wahaSendTextLogged({ threadId, chatId, text, sessionName, options }) {
   if (threadId) {
     await appendLegalMessage(threadId, 'assistant', text);
   }
-  return wahaSendText(chatId, text, sessionName);
+  return wahaSendText(chatId, text, sessionName, options);
 }
 
 async function wahaSendSeen(chatId, sessionName) {
@@ -459,6 +465,89 @@ function isLikelyLegalTopic(text) {
     'norma'
   ];
   return keywords.some((k) => t.includes(k));
+}
+
+function getGlobalState(ctx) {
+  const base = ctx && typeof ctx === 'object' ? ctx : {};
+  const global = base._global && typeof base._global === 'object' ? base._global : {};
+  const history = Array.isArray(global.history) ? global.history : [];
+  return { history };
+}
+
+async function appendGlobalHistory(sessionId, currentCtx, role, content) {
+  const { history } = getGlobalState(currentCtx);
+  const trimmed = String(content || '').trim();
+  if (!trimmed) return null;
+  const next = [...history.slice(-(Number.isFinite(WAHA_CASUAL_MAX_TURNS) ? WAHA_CASUAL_MAX_TURNS : 12) * 2 + 1), { role, content: trimmed, ts: new Date().toISOString() }];
+  return updateWspSession(sessionId, { branch_context: { ...(currentCtx || {}), _global: { history: next } } });
+}
+
+function formatGlobalHistoryForModel(history, maxItems = 10, maxChars = 1800) {
+  const items = Array.isArray(history) ? history.slice(-maxItems) : [];
+  const lines = items.map((m) => {
+    const r = m?.role === 'assistant' ? 'Brify' : 'Usuario';
+    const c = String(m?.content || '').replace(/\s+/g, ' ').trim();
+    return `${r}: ${c}`;
+  });
+  const joined = lines.join('\n');
+  if (joined.length <= maxChars) return joined;
+  return joined.slice(-maxChars);
+}
+
+async function minimaxCasualReply({ history, userMessage }) {
+  if (!MINIMAX_API_KEY) return '';
+  const system = `Eres Brify en WhatsApp. Responde en español chileno neutral (sin voseo), humano y cercano.
+Objetivo: mantener una conversación breve y útil, sin perder el hilo.
+Reglas:
+- Si el usuario solo saluda o conversa, responde amable y pregunta qué necesita.
+- Si el usuario expresa una intención (asesoría legal, crear/compartir grupo, subir/listar/analizar/crear documento), invítalo a decirlo tal cual (sin exigir número).
+- No inventes datos.`;
+
+  const response = await fetch(MINIMAX_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${MINIMAX_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: MINIMAX_MODEL,
+      system,
+      temperature: 0.6,
+      max_tokens: 450,
+      messages: [
+        {
+          role: 'user',
+          content: `Historial reciente:\n${history || '(sin historial)'}\n\nMensaje actual:\n${String(userMessage || '').trim()}\n\nResponde:`
+        }
+      ]
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  let raw = data?.content;
+  if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+  if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+async function handleCasualConversation({ session, chatId, text, sessionName }) {
+  const ctx = session.branch_context || {};
+  const userText = normalizeIncomingText(text);
+  const updatedAfterUser = await appendGlobalHistory(session.id, ctx, 'user', userText);
+  const freshCtx = updatedAfterUser?.branch_context || ctx;
+  const { history } = getGlobalState(freshCtx);
+  const historyText = formatGlobalHistoryForModel(history, 10, 1800);
+
+  let answer = await minimaxCasualReply({ history: historyText, userMessage: userText });
+  if (!answer) {
+    answer = `¡Ya! 🙌 ¿Qué necesitas hacer hoy?\n\n⚖️ Asesoría legal\n📁 Crear grupo\n🤝 Compartir grupo\n📤 Subir archivo\n📋 Listar documentos/imágenes\n✍️ Crear documento\n🔍 Analizar documento`;
+  } else {
+    answer = `${answer}\n\nSi quieres, dime qué necesitas: ⚖️ asesoría legal, 📁 crear grupo, 📤 subir archivo, ✍️ crear documento, etc.`;
+  }
+
+  const updatedAfterAssistant = await appendGlobalHistory(session.id, freshCtx, 'assistant', answer);
+  await wahaSendText(chatId, answer, sessionName, { skipRewrite: true });
+  return updatedAfterAssistant || session;
 }
 
 async function getActiveLegalThread(sessionId) {
@@ -2048,10 +2137,21 @@ async function getOrCreateWspSession(phoneNumber) {
 }
 
 async function updateWspSession(sessionId, patch) {
+  let nextPatch = patch;
+  if (patch && typeof patch === 'object' && patch.branch_context && typeof patch.branch_context === 'object') {
+    try {
+      const { data: existing } = await supabase.from('wsp_sessions').select('branch_context').eq('id', sessionId).single();
+      const global = existing?.branch_context?._global;
+      if (global && !patch.branch_context._global) {
+        nextPatch = { ...patch, branch_context: { ...patch.branch_context, _global: global } };
+      }
+    } catch (_) {}
+  }
+
   const { data, error } = await supabase
     .from('wsp_sessions')
     .update({
-      ...patch,
+      ...nextPatch,
       last_interaction: new Date().toISOString(),
       updated_at: new Date().toISOString()
     })
@@ -2704,6 +2804,11 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     return;
   }
 
+  if (intent.intent === 'unknown' && WAHA_CASUAL_ENABLED && MINIMAX_API_KEY) {
+    await handleCasualConversation({ session, chatId, text, sessionName });
+    return;
+  }
+
   const { data: user } = await supabase.from('users').select('name, full_name').eq('id', session.user_id).single();
   await wahaSendText(chatId, buildMainMenu(user?.name || user?.full_name || ''), sessionName);
 }
@@ -2770,4 +2875,3 @@ module.exports = async (req, res) => {
     return res.status(500).json({ success: false, error: error.message });
   }
 };
-
