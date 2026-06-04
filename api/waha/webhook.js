@@ -1507,7 +1507,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
       return;
     }
 
-    const rootFolderId = await resolveRootFolderIdForUser(userEmail, session.user_id);
+    const rootFolderId = await ensureRootFolderIdForUser(userEmail, session.user_id);
     if (!rootFolderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
       await wahaSendText(chatId, `No encontré tu carpeta raíz de Brify 😕 Revisa tu configuración en ${BRIFY_PROFILE_URL}`, sessionName);
@@ -1742,7 +1742,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       parentFolderId = ctx.selectedGroup.folder_id;
     } else {
-      parentFolderId = await resolveRootFolderIdForUser(user.email, session.user_id);
+      parentFolderId = await ensureRootFolderIdForUser(user.email, session.user_id);
     }
     if (!parentFolderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -1877,7 +1877,7 @@ async function handleListarArchivos({ session, chatId, text, sessionName }) {
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       folderId = ctx.selectedGroup.folder_id;
     } else {
-      folderId = await resolveRootFolderIdForUser(user.email, session.user_id);
+      folderId = await ensureRootFolderIdForUser(user.email, session.user_id);
     }
     if (!folderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -2111,7 +2111,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
 
     let folderId = null;
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) folderId = ctx.selectedGroup.folder_id;
-    else folderId = await resolveRootFolderIdForUser(user.email, session.user_id);
+    else folderId = await ensureRootFolderIdForUser(user.email, session.user_id);
 
     if (!folderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -2409,16 +2409,74 @@ async function getDriveClientForUser(userId) {
 }
 
 async function resolveRootFolderIdForUser(userEmail, userId) {
+  const email = String(userEmail || '').trim().toLowerCase();
+  if (!email && !userId) return null;
+
   const { data: adminFolder, error } = await supabase
     .from('carpeta_administrador')
     .select('id_drive_carpeta')
-    .or(`user_id.eq.${userId},correo.eq.${userEmail}`)
+    .or(`user_id.eq.${userId},correo.eq.${email}`)
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (error || !adminFolder?.id_drive_carpeta) return null;
-  return adminFolder.id_drive_carpeta;
+  if (!error && adminFolder?.id_drive_carpeta) return adminFolder.id_drive_carpeta;
+
+  const { data: adminFolder2, error: error2 } = await supabase
+    .from('carpeta_administrador')
+    .select('id_drive_carpeta')
+    .ilike('correo', email)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error2 || !adminFolder2?.id_drive_carpeta) return null;
+  return adminFolder2.id_drive_carpeta;
+}
+
+async function ensureRootFolderIdForUser(userEmail, userId) {
+  const email = String(userEmail || '').trim().toLowerCase();
+  const existing = await resolveRootFolderIdForUser(email, userId);
+  if (existing) return existing;
+  if (!userId) return null;
+
+  try {
+    const drive = await getDriveClientForUser(userId);
+    const list = await drive.files.list({
+      q: `name='Master - Brify' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false`,
+      pageSize: 1,
+      fields: 'files(id,name,createdTime)'
+    });
+    const foundId = Array.isArray(list?.data?.files) && list.data.files.length ? list.data.files[0].id : null;
+
+    let folderId = foundId;
+    if (!folderId) {
+      const created = await drive.files.create({
+        requestBody: { name: 'Master - Brify', mimeType: 'application/vnd.google-apps.folder' },
+        fields: 'id'
+      });
+      folderId = created?.data?.id || null;
+    }
+
+    if (!folderId) return null;
+
+    await supabase
+      .from('carpeta_administrador')
+      .upsert(
+        {
+          user_id: userId,
+          correo: email,
+          telegram_id: null,
+          id_drive_carpeta: folderId,
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: 'correo' }
+      );
+
+    return folderId;
+  } catch (_) {
+    return null;
+  }
 }
 
 async function createHtmlFileInDrive({ userId, parentFolderId, fileName, html }) {
@@ -2753,7 +2811,7 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       parentFolderId = ctx.selectedGroup.folder_id;
     } else {
-      parentFolderId = await resolveRootFolderIdForUser(user.email, user.id);
+      parentFolderId = await ensureRootFolderIdForUser(user.email, user.id);
     }
 
     if (!parentFolderId) {
@@ -2852,7 +2910,11 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
         return;
       }
 
-      await supabase.from('users').update({ phone_number: phoneNumber, phone_verified: true, updated_at: new Date().toISOString() }).eq('id', byEmail.id);
+      const wssp = phoneNumber ? `+${phoneNumber}` : null;
+      await supabase
+        .from('users')
+        .update({ phone_number: phoneNumber, phone_verified: true, wssp, updated_at: new Date().toISOString() })
+        .eq('id', byEmail.id);
       session = await updateWspSession(session.id, { user_id: byEmail.id, current_branch: null, branch_context: {} });
     }
   }
