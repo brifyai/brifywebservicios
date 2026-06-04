@@ -30,6 +30,8 @@ const MINIMAX_ENDPOINT = process.env.MINIMAX_ENDPOINT || process.env.REACT_APP_M
 const MINIMAX_MODEL = process.env.MINIMAX_MODEL || process.env.REACT_APP_MINIMAX_MODEL || 'MiniMax-M2.7';
 const WAHA_MINIMAX_ENABLED = (process.env.WAHA_MINIMAX_ENABLED || 'true').toLowerCase() === 'true';
 const WAHA_MINIMAX_TEMPERATURE = Number(process.env.WAHA_MINIMAX_TEMPERATURE || '0.7');
+const WAHA_ROUTER_ENABLED = (process.env.WAHA_ROUTER_ENABLED || 'true').toLowerCase() === 'true';
+const WAHA_ROUTER_MIN_CONFIDENCE = Number(process.env.WAHA_ROUTER_MIN_CONFIDENCE || '0.55');
 
 function normalizeIncomingText(text) {
   if (!text) return '';
@@ -72,7 +74,10 @@ function isCreateDocumentTrigger(textLower) {
 }
 
 function parseNumberSelection(text) {
-  const n = Number(String(text).trim());
+  const raw = String(text || '');
+  const match = raw.match(/\d+/);
+  if (!match) return null;
+  const n = Number(match[0]);
   if (!Number.isFinite(n)) return null;
   return n;
 }
@@ -269,6 +274,80 @@ function detectIntentRuleBased(text) {
   return { intent: 'unknown', confidence: 0 };
 }
 
+async function routeStageWithAI({ branch, stage, text, options }) {
+  if (!WAHA_ROUTER_ENABLED) return null;
+  if (!MINIMAX_API_KEY) return null;
+  const input = normalizeIncomingText(text);
+  if (!input) return null;
+  if (!Array.isArray(options) || !options.length) return null;
+
+  const safeOptions = options
+    .map((o) => ({
+      id: String(o?.id || '').trim(),
+      label: String(o?.label || '').trim(),
+      keywords: Array.isArray(o?.keywords) ? o.keywords.map((k) => String(k)) : []
+    }))
+    .filter((o) => o.id && o.label);
+
+  if (!safeOptions.length) return null;
+
+  const system = `Clasifica la intención del usuario dentro de un paso conversacional de WhatsApp.
+Devuelve SOLO JSON válido (sin texto extra) con el formato:
+{"option_id":"...","confidence":0.0}
+Reglas:
+- option_id debe ser uno de los ids listados.
+- confidence entre 0 y 1.
+- Si no estás seguro, devuelve confidence baja (<0.5).`;
+
+  const response = await fetch(MINIMAX_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${MINIMAX_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: MINIMAX_MODEL,
+      system,
+      temperature: 0,
+      max_tokens: 120,
+      messages: [
+        {
+          role: 'user',
+          content: JSON.stringify({
+            branch: String(branch || ''),
+            stage: String(stage || ''),
+            user_text: input,
+            options: safeOptions
+          })
+        }
+      ]
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return null;
+
+  let raw = data?.content;
+  if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+  if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+  if (typeof raw !== 'string') return null;
+
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[0]);
+    const optionId = String(parsed?.option_id || '').trim();
+    const confidence = Number(parsed?.confidence || 0);
+    if (!optionId) return null;
+    if (!safeOptions.some((o) => o.id === optionId)) return null;
+    if (!Number.isFinite(confidence)) return null;
+    if (confidence < (Number.isFinite(WAHA_ROUTER_MIN_CONFIDENCE) ? WAHA_ROUTER_MIN_CONFIDENCE : 0.55)) return null;
+    return optionId;
+  } catch (_) {
+    return null;
+  }
+}
+
 function getLawTitle(law) {
   return law?.['Título de la Norma'] || law?.titulo || law?.title || 'Título no disponible';
 }
@@ -409,6 +488,33 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
       const results = await searchLawsRpc(query || textTrim, 7);
       await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: query || textTrim, results } });
       await wahaSendText(chatId, formatLawResults(results), sessionName);
+      return;
+    }
+
+    const optionId = await routeStageWithAI({
+      branch: 'asesor_legal',
+      stage: 'choose_mode',
+      text: textTrim,
+      options: [
+        { id: 'case', label: 'Compartir mi caso', keywords: ['caso', 'situacion', 'problema', 'orientame', 'orientación'] },
+        { id: 'law', label: 'Buscar una ley', keywords: ['buscar', 'ley', 'articulo', 'norma', 'decreto', 'codigo'] }
+      ]
+    });
+    if (optionId === 'law') {
+      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_search' } });
+      const query = extractLawQuery(textTrim);
+      if (!query || query.length < 2) {
+        await wahaSendText(chatId, `Perfecto 🔎 ¿Qué término, número de ley o artículo quieres buscar?`, sessionName);
+        return;
+      }
+      const results = await searchLawsRpc(query, 7);
+      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: query, results } });
+      await wahaSendText(chatId, formatLawResults(results), sessionName);
+      return;
+    }
+    if (optionId === 'case') {
+      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'case_collect' } });
+      await wahaSendText(chatId, `Cuéntame tu caso con el mayor detalle posible 📝\n\nQué pasó, fechas aproximadas y qué quieres lograr.`, sessionName);
       return;
     }
 
@@ -627,6 +733,12 @@ function findGroupByName(groups, query) {
   const contains = groups.find((g) => normalizeForIntent(g.group_name).includes(q));
   if (contains) return contains;
   return null;
+}
+
+function pickGroupFromInput(groups, input) {
+  const selection = parseNumberSelection(input);
+  if (selection && groups[selection - 1]) return groups[selection - 1];
+  return findGroupByName(groups, input);
 }
 
 async function createDriveFolder({ userId, parentFolderId, name }) {
@@ -879,8 +991,7 @@ async function handleCompartirGrupo({ session, chatId, text, sessionName }) {
       return;
     }
 
-    const selection = parseNumberSelection(textTrim);
-    const picked = selection ? groups[selection - 1] : findGroupByName(groups, textTrim);
+    const picked = pickGroupFromInput(groups, textTrim);
     if (picked) {
       await updateWspSession(session.id, { current_branch: 'compartir_grupo', branch_context: { stage: 'ask_emails', group: picked } });
       await wahaSendText(chatId, `¡Perfecto! 🤝 ¿Con qué correo(s) quieres compartir "${picked.group_name}"?\n\nPuedes escribir uno o varios separados por coma.`, sessionName);
@@ -895,8 +1006,7 @@ async function handleCompartirGrupo({ session, chatId, text, sessionName }) {
 
   if (ctx.stage === 'choose_group') {
     const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
-    const selection = parseNumberSelection(textTrim);
-    const picked = selection ? groups[selection - 1] : findGroupByName(groups, textTrim);
+    const picked = pickGroupFromInput(groups, textTrim);
     if (!picked) {
       await wahaSendText(chatId, `Elige un grupo por número o escribe su nombre 📁`, sessionName);
       return;
@@ -960,12 +1070,24 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
   }
 
   if (ctx.stage === 'choose_location') {
-    const selection =
+    let selection =
       textLower === '1' || textLower.includes('raiz') || textLower.includes('raíz') || textLower.includes('root')
         ? '1'
         : textLower === '2' || textLower.includes('grupo')
           ? '2'
           : textLower;
+    if (selection !== '1' && selection !== '2') {
+      const optionId = await routeStageWithAI({
+        branch: 'subir_archivo',
+        stage: 'choose_location',
+        text: textTrim,
+        options: [
+          { id: 'root', label: 'Carpeta raíz', keywords: ['raiz', 'raíz', 'root', 'principal'] },
+          { id: 'group', label: 'Grupo', keywords: ['grupo', 'carpeta del grupo'] }
+        ]
+      });
+      selection = optionId === 'group' ? '2' : optionId === 'root' ? '1' : selection;
+    }
     if (selection !== '1' && selection !== '2') {
       await wahaSendText(chatId, `Elige 1 o 2 🙌\n\n1️⃣ 📂 Carpeta raíz\n2️⃣ 📁 Grupo`, sessionName);
       return;
@@ -994,8 +1116,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
 
   if (ctx.stage === 'choose_group') {
     const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
-    const selection = parseNumberSelection(textTrim);
-    const picked = selection ? groups[selection - 1] : findGroupByName(groups, textTrim);
+    const picked = pickGroupFromInput(groups, textTrim);
     if (!picked) {
       await wahaSendText(chatId, `Elige un grupo válido 🙌 (número o nombre)`, sessionName);
       return;
@@ -1069,12 +1190,24 @@ async function handleListarArchivos({ session, chatId, text, sessionName }) {
   }
 
   if (ctx.stage === 'choose_location') {
-    const selection =
+    let selection =
       textLower === '1' || textLower.includes('raiz') || textLower.includes('raíz') || textLower.includes('root')
         ? '1'
         : textLower === '2' || textLower.includes('grupo')
           ? '2'
           : textLower;
+    if (selection !== '1' && selection !== '2') {
+      const optionId = await routeStageWithAI({
+        branch: 'listar_archivos',
+        stage: 'choose_location',
+        text: textTrim,
+        options: [
+          { id: 'root', label: 'Carpeta raíz', keywords: ['raiz', 'raíz', 'root', 'principal'] },
+          { id: 'group', label: 'Grupo', keywords: ['grupo'] }
+        ]
+      });
+      selection = optionId === 'group' ? '2' : optionId === 'root' ? '1' : selection;
+    }
     if (selection !== '1' && selection !== '2') {
       await wahaSendText(chatId, `Elige 1 o 2 🙌\n\n1️⃣ 📂 Carpeta raíz\n2️⃣ 📁 Grupo`, sessionName);
       return;
@@ -1117,6 +1250,19 @@ async function handleListarArchivos({ session, chatId, text, sessionName }) {
     if (textLower === '1' || textLower.includes('doc')) kind = 'docs';
     else if (textLower === '2' || textLower.includes('imagen') || textLower.includes('foto')) kind = 'images';
     else if (textLower === '3' || textLower.includes('todo')) kind = 'all';
+    if (!kind) {
+      const optionId = await routeStageWithAI({
+        branch: 'listar_archivos',
+        stage: 'choose_kind',
+        text: textTrim,
+        options: [
+          { id: 'docs', label: 'Documentos', keywords: ['documento', 'doc', 'pdf', 'word', 'archivo'] },
+          { id: 'images', label: 'Imágenes', keywords: ['imagen', 'foto', 'captura', 'png', 'jpg'] },
+          { id: 'all', label: 'Todo', keywords: ['todo', 'todos', 'todo junto'] }
+        ]
+      });
+      kind = optionId === 'docs' ? 'docs' : optionId === 'images' ? 'images' : optionId === 'all' ? 'all' : null;
+    }
     if (!kind) {
       await wahaSendText(chatId, `Elige 1, 2 o 3 🙌`, sessionName);
       return;
@@ -1197,6 +1343,25 @@ async function handleAnalizarDocumento({ session, chatId, text, sessionName, pay
       await wahaSendText(chatId, `Perfecto 📎 Adjunta el documento aquí y lo analizo.`, sessionName);
       return;
     }
+    const optionId = await routeStageWithAI({
+      branch: 'analizar_documento',
+      stage: 'choose_mode',
+      text: textTrim,
+      options: [
+        { id: 'existing', label: 'Documento existente', keywords: ['existente', 'ya subido', 'en drive', 'en brify'] },
+        { id: 'upload', label: 'Subir documento', keywords: ['subir', 'adjuntar', 'enviar'] }
+      ]
+    });
+    if (optionId === 'existing') {
+      await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'choose_location' } });
+      await wahaSendText(chatId, `¿Dónde está el documento? 📂\n\n1️⃣ 📂 Carpeta raíz\n2️⃣ 📁 En un grupo`, sessionName);
+      return;
+    }
+    if (optionId === 'upload') {
+      await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'wait_file' } });
+      await wahaSendText(chatId, `Perfecto 📎 Adjunta el documento aquí y lo analizo.`, sessionName);
+      return;
+    }
     await wahaSendText(chatId, `Elige 1 o 2 🙌`, sessionName);
     return;
   }
@@ -1265,12 +1430,24 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
   }
 
   if (ctx.stage === 'choose_location') {
-    const selection =
+    let selection =
       textLower === '1' || textLower.includes('raiz') || textLower.includes('raíz') || textLower.includes('root')
         ? '1'
         : textLower === '2' || textLower.includes('grupo')
           ? '2'
           : textLower;
+    if (selection !== '1' && selection !== '2') {
+      const optionId = await routeStageWithAI({
+        branch: 'analizar_documento',
+        stage: 'choose_location',
+        text: textTrim,
+        options: [
+          { id: 'root', label: 'Carpeta raíz', keywords: ['raiz', 'raíz', 'root', 'principal'] },
+          { id: 'group', label: 'Grupo', keywords: ['grupo'] }
+        ]
+      });
+      selection = optionId === 'group' ? '2' : optionId === 'root' ? '1' : selection;
+    }
     if (selection !== '1' && selection !== '2') {
       await wahaSendText(chatId, `Elige 1 o 2 🙌`, sessionName);
       return;
@@ -1298,8 +1475,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
 
   if (ctx.stage === 'choose_group') {
     const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
-    const selection = parseNumberSelection(textTrim);
-    const picked = selection ? groups[selection - 1] : findGroupByName(groups, textTrim);
+    const picked = pickGroupFromInput(groups, textTrim);
     if (!picked) {
       await wahaSendText(chatId, `Elige un grupo válido 🙌`, sessionName);
       return;
@@ -1690,6 +1866,34 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
       return;
     }
 
+    const optionId = await routeStageWithAI({
+      branch: 'crear_documento',
+      stage: 'choose_mode',
+      text: textTrim,
+      options: [
+        { id: 'template', label: 'Plantilla predefinida', keywords: ['plantilla', 'formato', 'modelo', 'contrato', 'finiquito', 'poder'] },
+        { id: 'blank', label: 'Documento en blanco', keywords: ['blanco', 'personalizado', 'desde cero', 'redactar'] }
+      ]
+    });
+    if (optionId === 'template') {
+      const keys = Object.keys(plantillas);
+      const lines = keys.map((k, idx) => `${idx + 1}️⃣ 📄 ${plantillas[k].nombre}`);
+      await updateWspSession(session.id, {
+        current_branch: 'crear_documento',
+        branch_context: { stage: 'choose_template', keys }
+      });
+      await wahaSendText(chatId, `Perfecto ✅ Elige una plantilla:\n\n${lines.join('\n')}\n\nEscribe el número.`, sessionName);
+      return;
+    }
+    if (optionId === 'blank') {
+      await updateWspSession(session.id, {
+        current_branch: 'crear_documento',
+        branch_context: { stage: 'blank_title' }
+      });
+      await wahaSendText(chatId, `Genial 📝 ¿Cuál es el título del documento?`, sessionName);
+      return;
+    }
+
     await wahaSendText(chatId, `No entendí esa opción 😅\n\n1️⃣ 📋 Plantilla\n2️⃣ 📝 Documento en blanco`, sessionName);
     return;
   }
@@ -1806,7 +2010,24 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
   }
 
   if (ctx.stage === 'choose_save_location' || ctx.stage === 'choose_save_location_blank') {
-    const selection = textLower;
+    let selection =
+      textLower === '1' || textLower.includes('raiz') || textLower.includes('raíz') || textLower.includes('root')
+        ? '1'
+        : textLower === '2' || textLower.includes('grupo')
+          ? '2'
+          : textLower;
+    if (selection !== '1' && selection !== '2') {
+      const optionId = await routeStageWithAI({
+        branch: 'crear_documento',
+        stage: 'choose_save_location',
+        text: textTrim,
+        options: [
+          { id: 'root', label: 'Carpeta raíz', keywords: ['raiz', 'raíz', 'root', 'principal'] },
+          { id: 'group', label: 'Grupo específico', keywords: ['grupo', 'carpeta del grupo'] }
+        ]
+      });
+      selection = optionId === 'group' ? '2' : optionId === 'root' ? '1' : selection;
+    }
     if (selection !== '1' && selection !== '2') {
       await wahaSendText(chatId, `Elige una opción 🙌\n\n1️⃣ 📂 Carpeta raíz\n2️⃣ 📁 Grupo específico`, sessionName);
       return;
@@ -1864,9 +2085,9 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
   if (ctx.stage === 'choose_group') {
     const selection = parseNumberSelection(textTrim);
     const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
-    const selected = selection ? groups[selection - 1] : null;
+    const selected = pickGroupFromInput(groups, textTrim);
     if (!selected) {
-      await wahaSendText(chatId, `Elige un número válido 🙌`, sessionName);
+      await wahaSendText(chatId, `Elige un grupo válido 🙌 (número o nombre)`, sessionName);
       return;
     }
     const updated = await updateWspSession(session.id, {
