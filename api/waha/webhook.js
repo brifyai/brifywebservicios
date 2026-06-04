@@ -22,6 +22,9 @@ const WAHA_WEBHOOK_SECRET = process.env.WAHA_WEBHOOK_SECRET || '';
 const BRIFY_PROFILE_URL = process.env.BRIFY_PROFILE_URL || 'https://agente.brifyai.com/profile';
 const BRIFY_REGISTER_URL = process.env.BRIFY_REGISTER_URL || 'https://agente.brifyai.com/register';
 
+const SUPABASE_LAWS_URL = process.env.REACT_APP_SUPABASE_LAWS_URL || process.env.SUPABASE_LAWS_URL || '';
+const SUPABASE_LAWS_ANON_KEY = process.env.REACT_APP_SUPABASE_LAWS_ANON_KEY || process.env.SUPABASE_LAWS_ANON_KEY || '';
+
 const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || process.env.REACT_APP_MINIMAX_API_KEY || '';
 const MINIMAX_ENDPOINT = process.env.MINIMAX_ENDPOINT || process.env.REACT_APP_MINIMAX_ENDPOINT || 'https://api.minimax.io/anthropic/v1/messages';
 const MINIMAX_MODEL = process.env.MINIMAX_MODEL || process.env.REACT_APP_MINIMAX_MODEL || 'MiniMax-M2.7';
@@ -266,6 +269,247 @@ function detectIntentRuleBased(text) {
   return { intent: 'unknown', confidence: 0 };
 }
 
+function getLawTitle(law) {
+  return law?.['Título de la Norma'] || law?.titulo || law?.title || 'Título no disponible';
+}
+
+function getLawNumber(law) {
+  return law?.['Número'] || law?.['Norma Número'] || law?.numero || law?.number || null;
+}
+
+function getLawUrl(law) {
+  return law?.['Url'] || law?.url || null;
+}
+
+function getLawContent(law) {
+  return law?.Contenido || law?.contenido || law?.content || '';
+}
+
+function extractLawQuery(text) {
+  const t = normalizeIncomingText(text);
+  if (!t) return '';
+  const cleaned = t
+    .replace(/buscar( una)? ley(es)?/gi, '')
+    .replace(/necesito/gi, '')
+    .replace(/quiero/gi, '')
+    .replace(/sobre/gi, '')
+    .replace(/ley( numero| n°| nro| n)?/gi, 'ley ')
+    .trim();
+  return cleaned;
+}
+
+function isLikelyLawSearch(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  if (t.includes('buscar') && (t.includes('ley') || t.includes('norma') || t.includes('articulo') || t.includes('artículo'))) return true;
+  if (t.includes('ley ') || /ley\s*\d+/i.test(t)) return true;
+  if (t.includes('articulo') || t.includes('artículo')) return true;
+  if (t.includes('norma') || t.includes('decreto') || t.includes('codigo') || t.includes('código')) return true;
+  return false;
+}
+
+async function searchLawsRpc(query, limit = 5) {
+  if (!SUPABASE_LAWS_URL || !SUPABASE_LAWS_ANON_KEY) return [];
+  const q = String(query || '').trim();
+  if (!q) return [];
+
+  const response = await fetch(`${SUPABASE_LAWS_URL.replace(/\/$/, '')}/rest/v1/rpc/buscar_leyes`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_LAWS_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_LAWS_ANON_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      termino_busqueda: q,
+      limite_resultados: limit
+    })
+  });
+
+  if (!response.ok) return [];
+  const data = await response.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+
+function formatLawResults(results) {
+  if (!results?.length) return 'No encontré resultados 😕\n\nPuedes probar con otro término o con el número de ley (ej: "Ley 19.628").';
+  const lines = results.slice(0, 7).map((law, idx) => {
+    const titulo = getLawTitle(law);
+    const numero = getLawNumber(law);
+    const numText = numero ? ` — Ley ${numero}` : '';
+    return `${idx + 1}️⃣ 📜 ${titulo}${numText}`;
+  });
+  return `📚 Encontré estos resultados:\n\n${lines.join('\n')}\n\nResponde con el número para ver el detalle, o escribe otro término.`;
+}
+
+function formatLawDetail(law) {
+  const titulo = getLawTitle(law);
+  const numero = getLawNumber(law);
+  const url = getLawUrl(law);
+  const contenido = getLawContent(law);
+  const snippet = contenido ? contenido.slice(0, 900) + (contenido.length > 900 ? '…' : '') : 'Contenido no disponible';
+  return `📜 ${titulo}\n${numero ? `Ley ${numero}\n` : ''}${url ? `Fuente: ${url}\n` : ''}\n${snippet}\n\n¿Quieres buscar otra ley o ver otro resultado?`;
+}
+
+async function handleAsesorLegal({ session, chatId, text, sessionName }) {
+  const ctx = session.branch_context || {};
+  const textTrim = normalizeIncomingText(text);
+  const textLower = normalizeForIntent(textTrim);
+
+  if (isMenuTrigger(textLower)) {
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    const { data: user } = await supabase.from('users').select('name, full_name').eq('id', session.user_id).single();
+    await wahaSendText(chatId, buildMainMenu(user?.name || user?.full_name || ''), sessionName);
+    return;
+  }
+
+  if (!ctx.stage) {
+    await updateWspSession(session.id, {
+      current_branch: 'asesor_legal',
+      branch_context: { stage: 'choose_mode' }
+    });
+    await wahaSendText(
+      chatId,
+      `¿Cómo quieres que te ayude hoy? ⚖️\n\n1️⃣ 📝 Compartir mi caso — cuéntame tu situación y te oriento con respaldo legal\n2️⃣ 🔎 Buscar una ley — dime el nombre, término o artículo que buscas`,
+      sessionName
+    );
+    return;
+  }
+
+  if (ctx.stage === 'choose_mode') {
+    const isCase = textLower === '1' || textLower.includes('caso') || textLower.includes('situacion') || textLower.includes('situación') || textLower.includes('problema');
+    const isSearch = textLower === '2' || isLikelyLawSearch(textTrim);
+
+    if (isSearch) {
+      const query = extractLawQuery(textTrim);
+      if (!query || query.length < 3) {
+        await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_search' } });
+        await wahaSendText(chatId, `Perfecto 🔎 ¿Qué término, número de ley o artículo quieres buscar?`, sessionName);
+        return;
+      }
+
+      const results = await searchLawsRpc(query, 7);
+      await updateWspSession(session.id, {
+        current_branch: 'asesor_legal',
+        branch_context: { stage: 'law_results', last_query: query, results }
+      });
+      await wahaSendText(chatId, formatLawResults(results), sessionName);
+      return;
+    }
+
+    if (isCase) {
+      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'case_collect' } });
+      await wahaSendText(chatId, `Cuéntame tu caso con el mayor detalle posible 📝\n\nQué pasó, fechas aproximadas y qué quieres lograr.`, sessionName);
+      return;
+    }
+
+    if (textTrim.length > 8 && isLikelyLawSearch(textTrim)) {
+      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_search' } });
+      const query = extractLawQuery(textTrim);
+      const results = await searchLawsRpc(query || textTrim, 7);
+      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: query || textTrim, results } });
+      await wahaSendText(chatId, formatLawResults(results), sessionName);
+      return;
+    }
+
+    await wahaSendText(chatId, `¿Prefieres?\n\n1️⃣ 📝 Compartir mi caso\n2️⃣ 🔎 Buscar una ley`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'law_search') {
+    const query = extractLawQuery(textTrim) || textTrim;
+    if (!query || query.length < 2) {
+      await wahaSendText(chatId, `Dime el término o número de ley 😊`, sessionName);
+      return;
+    }
+    const results = await searchLawsRpc(query, 7);
+    await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: query, results } });
+    await wahaSendText(chatId, formatLawResults(results), sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'law_results') {
+    const selection = parseNumberSelection(textTrim);
+    const results = Array.isArray(ctx.results) ? ctx.results : [];
+    if (selection && results[selection - 1]) {
+      const law = results[selection - 1];
+      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: ctx.last_query, results, selected: selection - 1 } });
+      await wahaSendText(chatId, formatLawDetail(law), sessionName);
+      return;
+    }
+
+    const query = extractLawQuery(textTrim) || textTrim;
+    if (!query) {
+      await wahaSendText(chatId, `Responde con un número de la lista o escribe otra búsqueda 🔎`, sessionName);
+      return;
+    }
+    const newResults = await searchLawsRpc(query, 7);
+    await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: query, results: newResults } });
+    await wahaSendText(chatId, formatLawResults(newResults), sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'case_collect') {
+    const description = textTrim;
+    if (!description || description.length < 20) {
+      await wahaSendText(chatId, `Cuéntame un poquito más 🙌 (qué pasó, cuándo, con quién y qué necesitas)`, sessionName);
+      return;
+    }
+
+    const candidateLaws = await searchLawsRpc(description, 5);
+    const lawsContext = candidateLaws
+      .slice(0, 3)
+      .map((law, idx) => {
+        const titulo = getLawTitle(law);
+        const numero = getLawNumber(law) || 'No disponible';
+        const url = getLawUrl(law);
+        const contenido = getLawContent(law);
+        const fragmento = contenido ? contenido.slice(0, 700) + (contenido.length > 700 ? '…' : '') : 'Contenido no disponible';
+        return `--- Ley ${idx + 1} ---\nTítulo: ${titulo}\nNúmero: ${numero}\n${url ? `Fuente: ${url}\n` : ''}Fragmento:\n${fragmento}`;
+      })
+      .join('\n\n');
+
+    let answer = '';
+    if (MINIMAX_API_KEY) {
+      const system = `Eres un asesor legal en WhatsApp para Brify. Responde en español, con tono humano y cercano.
+Si hay contexto legal, cita la ley/artículo de forma clara. Si falta información, haz 1-2 preguntas de aclaración.
+No inventes artículos ni números.`;
+      const response = await fetch(MINIMAX_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${MINIMAX_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: MINIMAX_MODEL,
+          system,
+          temperature: 0.4,
+          max_tokens: 700,
+          messages: [
+            { role: 'user', content: `Caso del usuario:\n${description}\n\nContexto de leyes (puede estar vacío):\n${lawsContext || '(sin contexto)'}\n\nResponde:` }
+          ]
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      let raw = data?.content;
+      if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+      if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+      answer = typeof raw === 'string' ? raw : '';
+    }
+
+    if (!answer) {
+      answer = `Gracias por el detalle 🙌\n\nPara orientarte mejor, necesito 2 datos:\n1) ¿En qué ciudad/comuna ocurrió?\n2) ¿Qué quieres lograr exactamente (cobrar, terminar contrato, demanda, etc.)?\n\nSi quieres, también puedo buscar una ley específica: dime el término o número (ej: "Ley 19.628").`;
+    }
+
+    await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'choose_mode' } });
+    await wahaSendText(chatId, answer, sessionName);
+    return;
+  }
+
+  await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'choose_mode' } });
+  await wahaSendText(chatId, `¿Quieres?\n\n1️⃣ 📝 Compartir mi caso\n2️⃣ 🔎 Buscar una ley`, sessionName);
+}
+
 async function detectIntentWithAI(text) {
   if (!MINIMAX_API_KEY) return { intent: 'unknown', confidence: 0 };
   const t = normalizeIncomingText(text);
@@ -323,6 +567,833 @@ Reglas:
   }
 }
 
+function parseEmails(text) {
+  const matches = String(text || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  return Array.from(new Set(matches.map((e) => e.toLowerCase())));
+}
+
+function normalizeYesNo(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return null;
+  if (['si', 'sí', 's', 'dale', 'ok', 'okay', 'confirmo', 'confirmar', 'confirmado', 'yes'].includes(t)) return true;
+  if (['no', 'n', 'cancelar', 'cancela', 'anular', 'stop'].includes(t)) return false;
+  if (t.includes('si')) return true;
+  if (t.includes('no')) return false;
+  return null;
+}
+
+function extractQuoted(text) {
+  const s = String(text || '');
+  const m1 = s.match(/"([^"]+)"/);
+  if (m1?.[1]) return m1[1].trim();
+  const m2 = s.match(/'([^']+)'/);
+  if (m2?.[1]) return m2[1].trim();
+  return null;
+}
+
+function guessGroupName(text) {
+  const quoted = extractQuoted(text);
+  if (quoted) return quoted;
+  const t = String(text || '').trim();
+  if (!t) return null;
+  const cleaned = t
+    .replace(/crear( un| una)?/i, '')
+    .replace(/grupo/i, '')
+    .replace(/llamad[oa]/i, '')
+    .replace(/que se llame/i, '')
+    .replace(/con/gi, '')
+    .trim();
+  if (cleaned.length < 2) return null;
+  return cleaned;
+}
+
+async function listUserGroupsByEmail(userEmail) {
+  if (!userEmail) return [];
+  const { data, error } = await supabase
+    .from('grupos_drive')
+    .select('id, group_name, folder_id, administrador')
+    .eq('administrador', userEmail)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error || !Array.isArray(data)) return [];
+  return data;
+}
+
+function findGroupByName(groups, query) {
+  const q = normalizeForIntent(query);
+  if (!q) return null;
+  const exact = groups.find((g) => normalizeForIntent(g.group_name) === q);
+  if (exact) return exact;
+  const contains = groups.find((g) => normalizeForIntent(g.group_name).includes(q));
+  if (contains) return contains;
+  return null;
+}
+
+async function createDriveFolder({ userId, parentFolderId, name }) {
+  const drive = await getDriveClientForUser(userId);
+  const response = await drive.files.create({
+    requestBody: {
+      name,
+      parents: [parentFolderId],
+      mimeType: 'application/vnd.google-apps.folder'
+    },
+    fields: 'id, webViewLink, name'
+  });
+  return response.data;
+}
+
+async function shareDriveFolder({ userId, folderId, emails, role }) {
+  const drive = await getDriveClientForUser(userId);
+  const normalizedRole = role === 'reader' || role === 'writer' ? role : 'reader';
+  const results = [];
+  for (const email of emails) {
+    const response = await drive.permissions.create({
+      fileId: folderId,
+      requestBody: {
+        type: 'user',
+        role: normalizedRole,
+        emailAddress: email
+      },
+      fields: 'id'
+    });
+    results.push({ email, permissionId: response.data?.id || null });
+  }
+  return results;
+}
+
+function normalizeMediaUrl(url) {
+  if (!url) return null;
+  const s = String(url);
+  if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  const base = WAHA_BASE_URL.replace(/\/$/, '');
+  const endpoint = s.startsWith('/') ? s : `/${s}`;
+  return `${base}${endpoint}`;
+}
+
+function extractMediaFromPayload(payload) {
+  if (!payload) return null;
+  if (payload.hasMedia && payload.media && payload.media.url) {
+    return {
+      url: payload.media.url,
+      mimetype: payload.media.mimetype || payload.media.mimeType || null,
+      filename: payload.media.filename || payload.media.fileName || null
+    };
+  }
+  if (payload.media && payload.media.url) {
+    return {
+      url: payload.media.url,
+      mimetype: payload.media.mimetype || payload.media.mimeType || null,
+      filename: payload.media.filename || payload.media.fileName || null
+    };
+  }
+  return null;
+}
+
+async function uploadFileFromUrlToDrive({ userId, parentFolderId, fileName, mimeType, url }) {
+  const drive = await getDriveClientForUser(userId);
+  const headers = {
+    ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
+  };
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    const details = await response.text().catch(() => '');
+    throw new Error(`No se pudo descargar el archivo desde WAHA: ${response.status} ${details}`);
+  }
+  const buf = Buffer.from(await response.arrayBuffer());
+  const created = await drive.files.create({
+    requestBody: {
+      name: fileName,
+      parents: [parentFolderId],
+      mimeType: mimeType || undefined
+    },
+    media: {
+      mimeType: mimeType || 'application/octet-stream',
+      body: buf
+    },
+    fields: 'id, webViewLink, name, mimeType'
+  });
+  return created.data;
+}
+
+async function listDriveFiles({ userId, folderId, kind }) {
+  const drive = await getDriveClientForUser(userId);
+  const qBase = `'${folderId}' in parents and trashed=false`;
+  let q = qBase;
+  if (kind === 'images') {
+    q = `${qBase} and mimeType contains 'image/'`;
+  } else if (kind === 'docs') {
+    q = `${qBase} and mimeType != 'application/vnd.google-apps.folder' and not mimeType contains 'image/'`;
+  }
+  const response = await drive.files.list({
+    q,
+    pageSize: 15,
+    fields: 'files(id,name,mimeType,modifiedTime,webViewLink,size)'
+  });
+  return Array.isArray(response.data?.files) ? response.data.files : [];
+}
+
+async function getDriveFileText({ userId, fileId, mimeType }) {
+  const drive = await getDriveClientForUser(userId);
+
+  if (mimeType === 'application/vnd.google-apps.document') {
+    const res = await drive.files.export({ fileId, mimeType: 'text/plain' }, { responseType: 'arraybuffer' });
+    return Buffer.from(res.data).toString('utf8');
+  }
+
+  if (mimeType && mimeType.startsWith('text/')) {
+    const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' });
+    return Buffer.from(res.data).toString('utf8');
+  }
+
+  return null;
+}
+
+async function handleCrearGrupo({ session, chatId, text, sessionName }) {
+  const ctx = session.branch_context || {};
+  const textTrim = normalizeIncomingText(text);
+  const textLower = normalizeForIntent(textTrim);
+
+  if (isMenuTrigger(textLower)) {
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    const { data: user } = await supabase.from('users').select('name, full_name').eq('id', session.user_id).single();
+    await wahaSendText(chatId, buildMainMenu(user?.name || user?.full_name || ''), sessionName);
+    return;
+  }
+
+  if (!ctx.stage) {
+    await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'ask_name' } });
+    await wahaSendText(chatId, `¡Vamos a crear tu nuevo grupo! 📁 ¿Cómo se llamará?`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'ask_name') {
+    const name = guessGroupName(textTrim);
+    if (!name) {
+      await wahaSendText(chatId, `Dime el nombre del grupo 📁 (puedes escribirlo entre comillas).`, sessionName);
+      return;
+    }
+    await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'confirm_name', group_name: name } });
+    await wahaSendText(chatId, `Perfecto ✅ ¿Confirmas crear el grupo "${name}"? (sí/no)`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'confirm_name') {
+    const ok = normalizeYesNo(textTrim);
+    if (ok === false) {
+      await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'ask_name' } });
+      await wahaSendText(chatId, `Ok 🙌 ¿Qué nombre le ponemos entonces?`, sessionName);
+      return;
+    }
+    if (ok !== true) {
+      await wahaSendText(chatId, `¿Confirmas? Responde "sí" o "no" 🙌`, sessionName);
+      return;
+    }
+
+    const { data: user, error } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+    const userEmail = user?.email;
+    if (error || !userEmail) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `No pude obtener tu usuario 😕 Escribe "menú" para reiniciar.`, sessionName);
+      return;
+    }
+
+    const rootFolderId = await resolveRootFolderIdForUser(userEmail, session.user_id);
+    if (!rootFolderId) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `No encontré tu carpeta raíz de Brify 😕 Revisa tu configuración en ${BRIFY_PROFILE_URL}`, sessionName);
+      return;
+    }
+
+    const groupName = String(ctx.group_name || 'Grupo').trim();
+    const folder = await createDriveFolder({ userId: session.user_id, parentFolderId: rootFolderId, name: groupName });
+
+    await supabase.from('grupos_drive').insert({
+      id: crypto.randomUUID(),
+      owner_id: session.user_id,
+      group_name: groupName,
+      nombre_grupo_low: groupName.toLowerCase(),
+      folder_id: folder.id,
+      administrador: userEmail,
+      extension: 'abogados',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    });
+
+    await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'ask_share', folder_id: folder.id, group_name: groupName } });
+    await wahaSendText(chatId, `¡Listo! 🎉 Tu grupo "${groupName}" fue creado.\n\n¿Quieres compartirlo con alguien? Puedes indicarme uno o varios correos separados por coma, o escribe "no".`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'ask_share') {
+    const ok = normalizeYesNo(textTrim);
+    if (ok === false) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `Perfecto ✅ ¿Necesitas algo más? Escribe "menú" 🙌`, sessionName);
+      return;
+    }
+
+    const emails = parseEmails(textTrim);
+    if (!emails.length) {
+      await wahaSendText(chatId, `Pásame uno o varios correos separados por coma, o escribe "no".`, sessionName);
+      return;
+    }
+
+    const role = process.env.WAHA_DRIVE_SHARE_ROLE || 'reader';
+    try {
+      await shareDriveFolder({ userId: session.user_id, folderId: ctx.folder_id, emails, role });
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `¡Hecho! ✅ Compartí "${ctx.group_name}" con: ${emails.join(', ')}\n\n¿Algo más? Escribe "menú" 🙌`, sessionName);
+    } catch (_) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `Tuve un problema compartiendo el grupo 😕\n\n¿Quieres intentarlo de nuevo? Escribe "compartir grupo"`, sessionName);
+    }
+    return;
+  }
+}
+
+async function handleCompartirGrupo({ session, chatId, text, sessionName }) {
+  const ctx = session.branch_context || {};
+  const textTrim = normalizeIncomingText(text);
+  const textLower = normalizeForIntent(textTrim);
+
+  if (isMenuTrigger(textLower)) {
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    const { data: user } = await supabase.from('users').select('name, full_name').eq('id', session.user_id).single();
+    await wahaSendText(chatId, buildMainMenu(user?.name || user?.full_name || ''), sessionName);
+    return;
+  }
+
+  const { data: user, error } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+  const userEmail = user?.email;
+  if (error || !userEmail) {
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    await wahaSendText(chatId, `No pude obtener tu usuario 😕 Escribe "menú" para reiniciar.`, sessionName);
+    return;
+  }
+
+  if (!ctx.stage || ctx.stage === 'start') {
+    const groups = await listUserGroupsByEmail(userEmail);
+    if (!groups.length) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `Aún no tienes grupos creados 📭\n\n¿Te gustaría crear uno? Escribe "crear grupo"`, sessionName);
+      return;
+    }
+
+    const selection = parseNumberSelection(textTrim);
+    const picked = selection ? groups[selection - 1] : findGroupByName(groups, textTrim);
+    if (picked) {
+      await updateWspSession(session.id, { current_branch: 'compartir_grupo', branch_context: { stage: 'ask_emails', group: picked } });
+      await wahaSendText(chatId, `¡Perfecto! 🤝 ¿Con qué correo(s) quieres compartir "${picked.group_name}"?\n\nPuedes escribir uno o varios separados por coma.`, sessionName);
+      return;
+    }
+
+    const lines = groups.slice(0, 15).map((g, idx) => `${idx + 1}️⃣ 📁 ${g.group_name}`);
+    await updateWspSession(session.id, { current_branch: 'compartir_grupo', branch_context: { stage: 'choose_group', groups } });
+    await wahaSendText(chatId, `Estos son tus grupos disponibles 📂\n\n${lines.join('\n')}\n\n¿Con cuál quieres trabajar? (número o nombre)`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'choose_group') {
+    const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
+    const selection = parseNumberSelection(textTrim);
+    const picked = selection ? groups[selection - 1] : findGroupByName(groups, textTrim);
+    if (!picked) {
+      await wahaSendText(chatId, `Elige un grupo por número o escribe su nombre 📁`, sessionName);
+      return;
+    }
+    await updateWspSession(session.id, { current_branch: 'compartir_grupo', branch_context: { stage: 'ask_emails', group: picked } });
+    await wahaSendText(chatId, `¡Perfecto! 🤝 ¿Con qué correo(s) quieres compartir "${picked.group_name}"?`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'ask_emails') {
+    const emails = parseEmails(textTrim);
+    if (!emails.length) {
+      await wahaSendText(chatId, `Pásame uno o varios correos separados por coma 🙌`, sessionName);
+      return;
+    }
+    const role = process.env.WAHA_DRIVE_SHARE_ROLE || 'reader';
+    try {
+      await shareDriveFolder({ userId: session.user_id, folderId: ctx.group?.folder_id, emails, role });
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `¡Hecho! ✅ Compartiste "${ctx.group?.group_name}" con ${emails.join(', ')}\n\n¿Necesitas algo más? Escribe "menú" 🙌`, sessionName);
+    } catch (_) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `Tuve un problema compartiendo el grupo 😕\n\nVuelve a intentar escribiendo "compartir grupo".`, sessionName);
+    }
+    return;
+  }
+}
+
+async function handleSubirArchivo({ session, chatId, text, sessionName, payload }) {
+  const ctx = session.branch_context || {};
+  const textTrim = normalizeIncomingText(text);
+  const textLower = normalizeForIntent(textTrim);
+  const media = extractMediaFromPayload(payload);
+
+  if (isMenuTrigger(textLower)) {
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    const { data: user } = await supabase.from('users').select('name, full_name').eq('id', session.user_id).single();
+    await wahaSendText(chatId, buildMainMenu(user?.name || user?.full_name || ''), sessionName);
+    return;
+  }
+
+  if (!ctx.stage) {
+    await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { stage: 'wait_file' } });
+    await wahaSendText(chatId, `Adjunta el archivo aquí 📎 y te pregunto dónde guardarlo 😊`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'wait_file') {
+    if (!media?.url) {
+      await wahaSendText(chatId, `Ahora envíame el archivo adjunto 📎`, sessionName);
+      return;
+    }
+    const pending = {
+      url: normalizeMediaUrl(media.url),
+      mimetype: media.mimetype,
+      filename: media.filename
+    };
+    await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { stage: 'choose_location', pending } });
+    await wahaSendText(chatId, `Recibí tu archivo 📎 ¿Dónde quieres guardarlo?\n\n1️⃣ 📂 En mi carpeta raíz de Brify\n2️⃣ 📁 Moverlo a un grupo específico`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'choose_location') {
+    const selection =
+      textLower === '1' || textLower.includes('raiz') || textLower.includes('raíz') || textLower.includes('root')
+        ? '1'
+        : textLower === '2' || textLower.includes('grupo')
+          ? '2'
+          : textLower;
+    if (selection !== '1' && selection !== '2') {
+      await wahaSendText(chatId, `Elige 1 o 2 🙌\n\n1️⃣ 📂 Carpeta raíz\n2️⃣ 📁 Grupo`, sessionName);
+      return;
+    }
+
+    if (selection === '1') {
+      const updated = await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { ...ctx, stage: 'save_now', saveTarget: 'root' } });
+      await handleSubirArchivo({ session: updated, chatId, text, sessionName, payload });
+      return;
+    } else {
+      const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+      const groups = await listUserGroupsByEmail(user?.email);
+      if (!groups.length) {
+        await wahaSendText(chatId, `No encontré grupos creados 📭\n\nLo guardo en la carpeta raíz ✅`, sessionName);
+        const updated = await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { ...ctx, stage: 'save_now', saveTarget: 'root' } });
+        await handleSubirArchivo({ session: updated, chatId, text, sessionName, payload });
+        return;
+      } else {
+        const lines = groups.slice(0, 15).map((g, idx) => `${idx + 1}️⃣ 📁 ${g.group_name}`);
+        await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { ...ctx, stage: 'choose_group', groups } });
+        await wahaSendText(chatId, `¿En cuál grupo lo guardamos? 📁\n\n${lines.join('\n')}\n\nEscribe el número o el nombre.`, sessionName);
+        return;
+      }
+    }
+  }
+
+  if (ctx.stage === 'choose_group') {
+    const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
+    const selection = parseNumberSelection(textTrim);
+    const picked = selection ? groups[selection - 1] : findGroupByName(groups, textTrim);
+    if (!picked) {
+      await wahaSendText(chatId, `Elige un grupo válido 🙌 (número o nombre)`, sessionName);
+      return;
+    }
+    const updated = await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { ...ctx, stage: 'save_now', saveTarget: 'group', selectedGroup: picked } });
+    await handleSubirArchivo({ session: updated, chatId, text, sessionName, payload });
+    return;
+  }
+
+  if (ctx.stage === 'save_now') {
+    const { data: user, error } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+    if (error || !user?.email) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `No pude obtener tu usuario 😕 Escribe "menú" para reiniciar.`, sessionName);
+      return;
+    }
+    const pending = ctx.pending;
+    if (!pending?.url) {
+      await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { stage: 'wait_file' } });
+      await wahaSendText(chatId, `No encontré el archivo adjunto 😕 Reenvíalo por favor 📎`, sessionName);
+      return;
+    }
+
+    let parentFolderId = null;
+    if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
+      parentFolderId = ctx.selectedGroup.folder_id;
+    } else {
+      parentFolderId = await resolveRootFolderIdForUser(user.email, session.user_id);
+    }
+    if (!parentFolderId) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `No encontré tu carpeta raíz de Brify 😕 Revisa tu configuración en ${BRIFY_PROFILE_URL}`, sessionName);
+      return;
+    }
+
+    const fileName = pending.filename || `Archivo - ${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}`;
+    try {
+      const file = await uploadFileFromUrlToDrive({
+        userId: session.user_id,
+        parentFolderId,
+        fileName,
+        mimeType: pending.mimetype,
+        url: pending.url
+      });
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `✅ Listo. Guardé "${file.name}".\n${file.webViewLink}\n\n¿Algo más? Escribe "menú" 🙌`, sessionName);
+    } catch (_) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `Tuve un problema subiendo el archivo 😕\n\nIntenta de nuevo enviándolo otra vez 📎`, sessionName);
+    }
+    return;
+  }
+}
+
+async function handleListarArchivos({ session, chatId, text, sessionName }) {
+  const ctx = session.branch_context || {};
+  const textTrim = normalizeIncomingText(text);
+  const textLower = normalizeForIntent(textTrim);
+
+  if (isMenuTrigger(textLower)) {
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    const { data: user } = await supabase.from('users').select('name, full_name').eq('id', session.user_id).single();
+    await wahaSendText(chatId, buildMainMenu(user?.name || user?.full_name || ''), sessionName);
+    return;
+  }
+
+  if (!ctx.stage) {
+    await updateWspSession(session.id, { current_branch: 'listar_archivos', branch_context: { stage: 'choose_location' } });
+    await wahaSendText(chatId, `¿Dónde quieres listar tus archivos? 📋\n\n1️⃣ 📂 Carpeta raíz\n2️⃣ 📁 Un grupo`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'choose_location') {
+    const selection =
+      textLower === '1' || textLower.includes('raiz') || textLower.includes('raíz') || textLower.includes('root')
+        ? '1'
+        : textLower === '2' || textLower.includes('grupo')
+          ? '2'
+          : textLower;
+    if (selection !== '1' && selection !== '2') {
+      await wahaSendText(chatId, `Elige 1 o 2 🙌\n\n1️⃣ 📂 Carpeta raíz\n2️⃣ 📁 Grupo`, sessionName);
+      return;
+    }
+
+    if (selection === '1') {
+      await updateWspSession(session.id, { current_branch: 'listar_archivos', branch_context: { stage: 'choose_kind', saveTarget: 'root' } });
+      await wahaSendText(chatId, `¿Qué quieres ver? 📋\n\n1️⃣ 📄 Documentos\n2️⃣ 🖼️ Imágenes\n3️⃣ 📦 Todo`, sessionName);
+      return;
+    }
+
+    const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+    const groups = await listUserGroupsByEmail(user?.email);
+    if (!groups.length) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `No encontré grupos creados 📭\n\n¿Quieres crear uno? Escribe "crear grupo"`, sessionName);
+      return;
+    }
+    const lines = groups.slice(0, 15).map((g, idx) => `${idx + 1}️⃣ 📁 ${g.group_name}`);
+    await updateWspSession(session.id, { current_branch: 'listar_archivos', branch_context: { stage: 'choose_group', groups } });
+    await wahaSendText(chatId, `¿De cuál grupo quieres listar? 📁\n\n${lines.join('\n')}\n\nEscribe el número o el nombre.`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'choose_group') {
+    const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
+    const selection = parseNumberSelection(textTrim);
+    const picked = selection ? groups[selection - 1] : findGroupByName(groups, textTrim);
+    if (!picked) {
+      await wahaSendText(chatId, `Elige un grupo válido 🙌 (número o nombre)`, sessionName);
+      return;
+    }
+    await updateWspSession(session.id, { current_branch: 'listar_archivos', branch_context: { stage: 'choose_kind', saveTarget: 'group', selectedGroup: picked } });
+    await wahaSendText(chatId, `¿Qué quieres ver? 📋\n\n1️⃣ 📄 Documentos\n2️⃣ 🖼️ Imágenes\n3️⃣ 📦 Todo`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'choose_kind') {
+    let kind = null;
+    if (textLower === '1' || textLower.includes('doc')) kind = 'docs';
+    else if (textLower === '2' || textLower.includes('imagen') || textLower.includes('foto')) kind = 'images';
+    else if (textLower === '3' || textLower.includes('todo')) kind = 'all';
+    if (!kind) {
+      await wahaSendText(chatId, `Elige 1, 2 o 3 🙌`, sessionName);
+      return;
+    }
+
+    const { data: user, error } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+    if (error || !user?.email) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `No pude obtener tu usuario 😕 Escribe "menú" para reiniciar.`, sessionName);
+      return;
+    }
+
+    let folderId = null;
+    if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
+      folderId = ctx.selectedGroup.folder_id;
+    } else {
+      folderId = await resolveRootFolderIdForUser(user.email, session.user_id);
+    }
+    if (!folderId) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `No encontré tu carpeta raíz de Brify 😕 Revisa tu configuración en ${BRIFY_PROFILE_URL}`, sessionName);
+      return;
+    }
+
+    const files = await listDriveFiles({ userId: session.user_id, folderId, kind: kind === 'all' ? null : kind });
+    if (!files.length) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `No encontré archivos en esa carpeta 📭\n\n¿Algo más? Escribe "menú" 🙌`, sessionName);
+      return;
+    }
+    const lines = files.map((f, idx) => `${idx + 1}️⃣ ${f.mimeType?.startsWith('image/') ? '🖼️' : '📄'} ${f.name}`);
+    await updateWspSession(session.id, { current_branch: 'listar_archivos', branch_context: { stage: 'pick_file', files } });
+    await wahaSendText(chatId, `Aquí están tus archivos 📋\n\n${lines.join('\n')}\n\nEscribe el número para ver el link.`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'pick_file') {
+    const files = Array.isArray(ctx.files) ? ctx.files : [];
+    const selection = parseNumberSelection(textTrim);
+    const picked = selection ? files[selection - 1] : null;
+    if (!picked) {
+      await wahaSendText(chatId, `Elige un número válido 🙌`, sessionName);
+      return;
+    }
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    await wahaSendText(chatId, `🔗 ${picked.name}\n${picked.webViewLink || 'Link no disponible'}\n\n¿Quieres ver otro? Escribe "listar documentos" o "menú" 🙌`, sessionName);
+    return;
+  }
+}
+
+async function handleAnalizarDocumento({ session, chatId, text, sessionName, payload }) {
+  const ctx = session.branch_context || {};
+  const textTrim = normalizeIncomingText(text);
+  const textLower = normalizeForIntent(textTrim);
+  const media = extractMediaFromPayload(payload);
+
+  if (isMenuTrigger(textLower)) {
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    const { data: user } = await supabase.from('users').select('name, full_name').eq('id', session.user_id).single();
+    await wahaSendText(chatId, buildMainMenu(user?.name || user?.full_name || ''), sessionName);
+    return;
+  }
+
+  if (!ctx.stage) {
+    await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'choose_mode' } });
+    await wahaSendText(chatId, `¿Qué prefieres? 🔍\n\n1️⃣ 📂 Analizar un documento existente\n2️⃣ 📤 Subir un documento ahora`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'choose_mode') {
+    if (textLower === '1' || textLower.includes('exist') || textLower.includes('ya subi') || textLower.includes('ya sub')) {
+      await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'choose_location' } });
+      await wahaSendText(chatId, `¿Dónde está el documento? 📂\n\n1️⃣ 📂 Carpeta raíz\n2️⃣ 📁 En un grupo`, sessionName);
+      return;
+    }
+    if (textLower === '2' || textLower.includes('subir') || textLower.includes('adjunt')) {
+      await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'wait_file' } });
+      await wahaSendText(chatId, `Perfecto 📎 Adjunta el documento aquí y lo analizo.`, sessionName);
+      return;
+    }
+    await wahaSendText(chatId, `Elige 1 o 2 🙌`, sessionName);
+    return;
+  }
+
+  if (ctx.stage === 'wait_file') {
+    if (!media?.url) {
+      await wahaSendText(chatId, `Aún no veo el documento adjunto 📎 Envíalo por aquí.`, sessionName);
+      return;
+    }
+
+    const url = normalizeMediaUrl(media.url);
+    const mimeType = media.mimetype || '';
+    const headers = {
+      ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
+    };
+
+    if (url && mimeType.startsWith('text/')) {
+      const downloaded = await fetch(url, { headers });
+      if (downloaded.ok) {
+        const content = Buffer.from(await downloaded.arrayBuffer()).toString('utf8');
+        if (MINIMAX_API_KEY) {
+          const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
+Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de aclaración si aplica.`;
+          const response = await fetch(MINIMAX_ENDPOINT, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${MINIMAX_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: MINIMAX_MODEL,
+              system,
+              temperature: 0.4,
+              max_tokens: 900,
+              messages: [{ role: 'user', content: `Documento:\n${content.slice(0, 12000)}\n\nAnaliza:` }]
+            })
+          });
+          const data = await response.json().catch(() => ({}));
+          let raw = data?.content;
+          if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+          if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+          const analysis = typeof raw === 'string' ? raw : '';
+
+          await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+          await wahaSendText(
+            chatId,
+            analysis || `Pude leer el documento, pero no pude generar el análisis automático.\n\n¿Quieres intentar con otro archivo o buscar una ley? Escribe "menú" 🙌`,
+            sessionName
+          );
+          return;
+        }
+
+        await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+        await wahaSendText(chatId, `✅ Recibí el texto.\n\n${content.slice(0, 1200)}${content.length > 1200 ? '…' : ''}\n\n¿Quieres que lo resuma?`, sessionName);
+        return;
+      }
+    }
+
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    await wahaSendText(
+      chatId,
+      `Recibí tu documento 📎\n\nPara un análisis completo de este tipo de archivo, súbelo desde la web: ${BRIFY_PROFILE_URL}\n\nSi quieres, dime qué necesitas (resumen, puntos clave, riesgos) y te guío 🙌`,
+      sessionName
+    );
+    return;
+  }
+
+  if (ctx.stage === 'choose_location') {
+    const selection =
+      textLower === '1' || textLower.includes('raiz') || textLower.includes('raíz') || textLower.includes('root')
+        ? '1'
+        : textLower === '2' || textLower.includes('grupo')
+          ? '2'
+          : textLower;
+    if (selection !== '1' && selection !== '2') {
+      await wahaSendText(chatId, `Elige 1 o 2 🙌`, sessionName);
+      return;
+    }
+    if (selection === '1') {
+      const updated = await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'pick_file', saveTarget: 'root' } });
+      await handleAnalizarDocumento({ session: updated, chatId, text, sessionName, payload });
+      return;
+    } else {
+      const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+      const groups = await listUserGroupsByEmail(user?.email);
+      if (!groups.length) {
+        await wahaSendText(chatId, `No encontré grupos creados 📭\n\nIntentemos con la carpeta raíz ✅`, sessionName);
+        const updated = await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'pick_file', saveTarget: 'root' } });
+        await handleAnalizarDocumento({ session: updated, chatId, text, sessionName, payload });
+        return;
+      } else {
+        const lines = groups.slice(0, 15).map((g, idx) => `${idx + 1}️⃣ 📁 ${g.group_name}`);
+        await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'choose_group', groups } });
+        await wahaSendText(chatId, `¿De cuál grupo? 📁\n\n${lines.join('\n')}\n\nEscribe el número o el nombre.`, sessionName);
+        return;
+      }
+    }
+  }
+
+  if (ctx.stage === 'choose_group') {
+    const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
+    const selection = parseNumberSelection(textTrim);
+    const picked = selection ? groups[selection - 1] : findGroupByName(groups, textTrim);
+    if (!picked) {
+      await wahaSendText(chatId, `Elige un grupo válido 🙌`, sessionName);
+      return;
+    }
+    const updated = await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'pick_file', saveTarget: 'group', selectedGroup: picked } });
+    await handleAnalizarDocumento({ session: updated, chatId, text, sessionName, payload });
+    return;
+  }
+
+  if (ctx.stage === 'pick_file') {
+    const { data: user, error } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+    if (error || !user?.email) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `No pude obtener tu usuario 😕 Escribe "menú" para reiniciar.`, sessionName);
+      return;
+    }
+
+    let folderId = null;
+    if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) folderId = ctx.selectedGroup.folder_id;
+    else folderId = await resolveRootFolderIdForUser(user.email, session.user_id);
+
+    if (!folderId) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `No encontré tu carpeta raíz de Brify 😕 Revisa tu configuración en ${BRIFY_PROFILE_URL}`, sessionName);
+      return;
+    }
+
+    const files = await listDriveFiles({ userId: session.user_id, folderId, kind: 'docs' });
+    if (!files.length) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `No encontré documentos en esa carpeta 📭\n\n¿Algo más? Escribe "menú" 🙌`, sessionName);
+      return;
+    }
+
+    const selection = parseNumberSelection(textTrim);
+    if (!selection) {
+      const lines = files.map((f, idx) => `${idx + 1}️⃣ 📄 ${f.name}`);
+      await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'pick_file_select', files } });
+      await wahaSendText(chatId, `Elige el documento a analizar 🔍\n\n${lines.join('\n')}\n\nEscribe el número.`, sessionName);
+      return;
+    }
+  }
+
+  if (ctx.stage === 'pick_file_select') {
+    const files = Array.isArray(ctx.files) ? ctx.files : [];
+    const selection = parseNumberSelection(textTrim);
+    const picked = selection ? files[selection - 1] : null;
+    if (!picked) {
+      await wahaSendText(chatId, `Elige un número válido 🙌`, sessionName);
+      return;
+    }
+
+    const textContent = await getDriveFileText({ userId: session.user_id, fileId: picked.id, mimeType: picked.mimeType });
+    if (!textContent) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `Aún no puedo analizar ese tipo de archivo por WhatsApp 😕\n\nAbre el documento aquí y analízalo desde la web:\n${picked.webViewLink}\n\n¿Algo más? Escribe "menú" 🙌`, sessionName);
+      return;
+    }
+
+    let analysis = '';
+    if (MINIMAX_API_KEY) {
+      const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
+Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de aclaración si aplica.`;
+      const response = await fetch(MINIMAX_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${MINIMAX_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: MINIMAX_MODEL,
+          system,
+          temperature: 0.4,
+          max_tokens: 900,
+          messages: [{ role: 'user', content: `Documento:\n${textContent.slice(0, 12000)}\n\nAnaliza:` }]
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      let raw = data?.content;
+      if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+      if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+      analysis = typeof raw === 'string' ? raw : '';
+    }
+
+    if (!analysis) {
+      analysis = `✅ Puedo abrir el documento, pero ahora mismo no pude generar el análisis automático.\n\nLink: ${picked.webViewLink}\n\n¿Quieres intentar de nuevo o analizar otro? Escribe "analizar" 🙌`;
+    }
+
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    await wahaSendText(chatId, analysis, sessionName);
+    return;
+  }
+}
+
 async function detectIntent(text) {
   const rule = detectIntentRuleBased(text);
   if (rule.intent !== 'unknown') return rule;
@@ -359,18 +1430,18 @@ async function enterBranch(session, chatId, sessionName, branch) {
       current_branch: 'compartir_grupo',
       branch_context: { stage: 'start' }
     });
-    await wahaSendText(chatId, `¡Perfecto! 🤝 Para compartir, dime el nombre del grupo o escribe "listar" para ver tus grupos 📂`, sessionName);
+    await wahaSendText(chatId, `¡Perfecto! 🤝 Dime el nombre del grupo (o escribe "listar" para ver tus grupos 📂)`, sessionName);
     return true;
   }
 
   if (branch === 'upload_file') {
     await updateWspSession(session.id, {
       current_branch: 'subir_archivo',
-      branch_context: { stage: 'instructions' }
+      branch_context: { stage: 'wait_file' }
     });
     await wahaSendText(
       chatId,
-      `¡Claro! Para subir tu archivo sigue estos pasos 📤\n\n1) Adjunta el archivo directamente en este chat\n2) Formatos: PDF, DOCX, JPG, PNG, XLSX\n\nCuando lo envíes te preguntaré dónde guardarlo 😊`,
+      `¡Claro! 📤 Adjunta el archivo directamente en este chat y te pregunto dónde guardarlo 😊`,
       sessionName
     );
     return true;
@@ -379,9 +1450,9 @@ async function enterBranch(session, chatId, sessionName, branch) {
   if (branch === 'list_files') {
     await updateWspSession(session.id, {
       current_branch: 'listar_archivos',
-      branch_context: { stage: 'start' }
+      branch_context: { stage: 'choose_location' }
     });
-    await wahaSendText(chatId, `Dime si quieres ver 📄 documentos o 🖼️ imágenes (o escribe "todo")`, sessionName);
+    await wahaSendText(chatId, `¿Dónde quieres listar tus archivos? �\n\n1️⃣ 📂 Carpeta raíz\n2️⃣ 📁 Un grupo`, sessionName);
     return true;
   }
 
@@ -397,11 +1468,11 @@ async function enterBranch(session, chatId, sessionName, branch) {
   if (branch === 'analyze_document') {
     await updateWspSession(session.id, {
       current_branch: 'analizar_documento',
-      branch_context: { stage: 'start' }
+      branch_context: { stage: 'choose_mode' }
     });
     await wahaSendText(
       chatId,
-      `¡Perfecto! Vamos a analizar tu documento 🔍\n\n1️⃣ 📂 Analizar un documento que ya subiste a Brify\n2️⃣ 📤 Subir un nuevo documento ahora para analizarlo`,
+      `¿Qué prefieres? 🔍\n\n1️⃣ 📂 Analizar un documento existente\n2️⃣ 📤 Subir un documento ahora`,
       sessionName
     );
     return true;
@@ -778,7 +1849,7 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
       return;
     }
 
-    await updateWspSession(session.id, {
+    const updated = await updateWspSession(session.id, {
       current_branch: 'crear_documento',
       branch_context: {
         ...ctx,
@@ -786,6 +1857,8 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
         saveTarget: 'root'
       }
     });
+    await handleCrearDocumento({ session: updated, chatId, text, sessionName });
+    return;
   }
 
   if (ctx.stage === 'choose_group') {
@@ -796,7 +1869,7 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
       await wahaSendText(chatId, `Elige un número válido 🙌`, sessionName);
       return;
     }
-    await updateWspSession(session.id, {
+    const updated = await updateWspSession(session.id, {
       current_branch: 'crear_documento',
       branch_context: {
         ...ctx,
@@ -805,6 +1878,8 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
         selectedGroup: selected
       }
     });
+    await handleCrearDocumento({ session: updated, chatId, text, sessionName });
+    return;
   }
 
   if (ctx.stage === 'save_now') {
@@ -870,7 +1945,7 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
   }
 }
 
-async function handleWahaMessage({ chatId, body, sessionName }) {
+async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   const phoneNumber = normalizePhoneFromChatId(chatId);
   if (!phoneNumber) return;
 
@@ -929,41 +2004,100 @@ async function handleWahaMessage({ chatId, body, sessionName }) {
     return;
   }
 
+  if (session.current_branch === 'asesor_legal') {
+    await handleAsesorLegal({ session, chatId, text, sessionName });
+    return;
+  }
+
+  if (session.current_branch === 'crear_grupo') {
+    await handleCrearGrupo({ session, chatId, text, sessionName });
+    return;
+  }
+
+  if (session.current_branch === 'compartir_grupo') {
+    await handleCompartirGrupo({ session, chatId, text, sessionName });
+    return;
+  }
+
+  if (session.current_branch === 'subir_archivo') {
+    await handleSubirArchivo({ session, chatId, text, sessionName, payload });
+    return;
+  }
+
+  if (session.current_branch === 'listar_archivos') {
+    await handleListarArchivos({ session, chatId, text, sessionName });
+    return;
+  }
+
+  if (session.current_branch === 'analizar_documento') {
+    await handleAnalizarDocumento({ session, chatId, text, sessionName, payload });
+    return;
+  }
+
   if (session.current_branch === 'crear_documento') {
     await handleCrearDocumento({ session, chatId, text, sessionName });
     return;
   }
 
+  const media = extractMediaFromPayload(payload);
+  if (media?.url) {
+    await enterBranch(session, chatId, sessionName, 'upload_file');
+    session = await getOrCreateWspSession(phoneNumber);
+    await handleSubirArchivo({ session, chatId, text, sessionName, payload });
+    return;
+  }
+
   const intent = await detectIntent(text);
-  if (intent.intent === 'menu_1') await enterBranch(session, chatId, sessionName, 'legal');
-  else if (intent.intent === 'menu_2') await enterBranch(session, chatId, sessionName, 'create_group');
-  else if (intent.intent === 'menu_3') await enterBranch(session, chatId, sessionName, 'share_group');
-  else if (intent.intent === 'menu_4') await enterBranch(session, chatId, sessionName, 'upload_file');
-  else if (intent.intent === 'menu_5') await enterBranch(session, chatId, sessionName, 'list_files');
-  else if (intent.intent === 'menu_6') await enterBranch(session, chatId, sessionName, 'create_document');
-  else if (intent.intent === 'menu_7') await enterBranch(session, chatId, sessionName, 'analyze_document');
-  else if (intent.intent === 'legal') {
+  if (intent.intent === 'menu_1') {
     await enterBranch(session, chatId, sessionName, 'legal');
     return;
-  } else if (intent.intent === 'create_group') {
+  } else if (intent.intent === 'menu_2') {
     await enterBranch(session, chatId, sessionName, 'create_group');
     return;
-  } else if (intent.intent === 'share_group') {
+  } else if (intent.intent === 'menu_3') {
     await enterBranch(session, chatId, sessionName, 'share_group');
     return;
-  } else if (intent.intent === 'upload_file') {
+  } else if (intent.intent === 'menu_4') {
     await enterBranch(session, chatId, sessionName, 'upload_file');
     return;
-  } else if (intent.intent === 'list_files') {
+  } else if (intent.intent === 'menu_5') {
     await enterBranch(session, chatId, sessionName, 'list_files');
     return;
-  } else if (intent.intent === 'create_document') {
+  } else if (intent.intent === 'menu_6') {
     await enterBranch(session, chatId, sessionName, 'create_document');
     return;
-  } else if (intent.intent === 'analyze_document') {
+  } else if (intent.intent === 'menu_7') {
     await enterBranch(session, chatId, sessionName, 'analyze_document');
     return;
   }
+    session = await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'choose_mode' } });
+    await handleAsesorLegal({ session, chatId, text, sessionName });
+    await enterBranch(session, chatId, sessionName, 'legal');
+    return;
+    session = await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'ask_name' } });
+    await handleCrearGrupo({ session, chatId, text, sessionName });
+    await enterBranch(session, chatId, sessionName, 'create_group');
+    return;
+    session = await updateWspSession(session.id, { current_branch: 'compartir_grupo', branch_context: { stage: 'start' } });
+    await handleCompartirGrupo({ session, chatId, text, sessionName });
+    await enterBranch(session, chatId, sessionName, 'share_group');
+    return;
+    session = await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { stage: 'wait_file' } });
+    await handleSubirArchivo({ session, chatId, text, sessionName, payload });
+    await enterBranch(session, chatId, sessionName, 'upload_file');
+    return;
+    session = await updateWspSession(session.id, { current_branch: 'listar_archivos', branch_context: { stage: 'choose_location' } });
+    await handleListarArchivos({ session, chatId, text, sessionName });
+    await enterBranch(session, chatId, sessionName, 'list_files');
+    return;
+    session = await updateWspSession(session.id, { current_branch: 'crear_documento', branch_context: { stage: 'choose_mode' } });
+    await handleCrearDocumento({ session, chatId, text, sessionName });
+    await enterBranch(session, chatId, sessionName, 'create_document');
+    return;
+    session = await updateWspSession(session.id, { current_branch: 'analizar_documento', branch_context: { stage: 'choose_mode' } });
+    await handleAnalizarDocumento({ session, chatId, text, sessionName, payload });
+    await enterBranch(session, chatId, sessionName, 'analyze_document');
+    return;
 
   const { data: user } = await supabase.from('users').select('name, full_name').eq('id', session.user_id).single();
   await wahaSendText(chatId, buildMainMenu(user?.name || user?.full_name || ''), sessionName);
@@ -1015,7 +2149,7 @@ module.exports = async (req, res) => {
 
     await wahaSendSeen(chatId, sessionName);
     await wahaStartTyping(chatId, sessionName);
-    await handleWahaMessage({ chatId, body, sessionName });
+    await handleWahaMessage({ chatId, body, payload, sessionName });
     await wahaStopTyping(chatId, sessionName);
     return res.json({ success: true });
   } catch (error) {
