@@ -560,7 +560,7 @@ function formatGlobalHistoryForModel(history, maxItems = 10, maxChars = 1800) {
 
 async function minimaxCasualReply({ history, userMessage }) {
   if (!MINIMAX_API_KEY) return '';
-  const system = `Eres Brify en WhatsApp. Responde en español chileno neutral (sin voseo), humano y cercano.
+  const system = `Eres Brify en WhatsApp (Chile). Responde en español chileno neutral (sin voseo), humano y cercano.
 Objetivo: mantener una conversación breve y útil, sin perder el hilo.
 Reglas:
 - Si el usuario solo saluda o conversa, responde amable y pregunta qué necesita.
@@ -568,40 +568,61 @@ Reglas:
 - No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
 - No inventes datos.`;
 
-  try {
-    const response = await fetchWithTimeout(
-      MINIMAX_ENDPOINT,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${MINIMAX_API_KEY}`,
-          'Content-Type': 'application/json'
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetchWithTimeout(
+        MINIMAX_ENDPOINT,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${MINIMAX_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: MINIMAX_MODEL,
+            system,
+            temperature: 0.6,
+            max_tokens: 450,
+            messages: [
+              {
+                role: 'user',
+                content: `Historial reciente:\n${history || '(sin historial)'}\n\nMensaje actual:\n${String(userMessage || '').trim()}\n\nResponde:`
+              }
+            ]
+          })
         },
-        body: JSON.stringify({
-          model: MINIMAX_MODEL,
-          system,
-          temperature: 0.6,
-          max_tokens: 450,
-          messages: [
-            {
-              role: 'user',
-              content: `Historial reciente:\n${history || '(sin historial)'}\n\nMensaje actual:\n${String(userMessage || '').trim()}\n\nResponde:`
-            }
-          ]
-        })
-      },
-      Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
-    );
+        Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+      );
 
-    if (!response.ok) return '';
-    const data = await response.json().catch(() => ({}));
-    let raw = data?.content;
-    if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
-    if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-    return typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
-  } catch (_) {
-    return '';
+      if (!response.ok) {
+        if (attempt === 0) {
+          await new Promise((r) => setTimeout(r, 250));
+          continue;
+        }
+        return '';
+      }
+
+      const data = await response.json().catch(() => ({}));
+      let raw = data?.content;
+      if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+      if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+      const cleaned = typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
+      if (cleaned) return cleaned;
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 250));
+        continue;
+      }
+      return '';
+    } catch (_) {
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 250));
+        continue;
+      }
+      return '';
+    }
   }
+
+  return '';
 }
 
 async function handleCasualConversation({ session, chatId, text, sessionName }) {
@@ -1131,7 +1152,8 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
     let answer = '';
     if (MINIMAX_API_KEY) {
       const history = threadId ? await getLegalThreadHistory(threadId, 10, 2500) : '';
-      const system = `Eres un asesor legal en WhatsApp para Brify. Responde en español, con tono humano y cercano.
+      const system = `Eres un asesor legal en WhatsApp para Brify (Chile). Responde en español chileno neutral (sin voseo), con tono humano y cercano.
+Asume que el caso ocurrió en Chile, salvo que el usuario indique otro país. No preguntes por el país; pregunta por comuna/ciudad y región si hace falta.
 Si hay contexto legal, cita la ley/artículo de forma clara. Si falta información, haz 1-2 preguntas de aclaración.
 No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
 No inventes artículos ni números.`;
