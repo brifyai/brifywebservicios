@@ -95,11 +95,12 @@ async function minimaxRewriteForWhatsApp(text) {
   if (!input.trim()) return input;
   if (input.length > 3500) return input;
 
-  const system = `Eres el asistente oficial de Brify en WhatsApp. Reescribe el mensaje para que suene más humano, cálido y lúdico, usando emojis con moderación. Mantén EXACTAMENTE el significado y no inventes información.
+  const system = `Eres el asistente oficial de Brify en WhatsApp. Escribe en español chileno neutral (sin voseo). Reescribe el mensaje para que suene humano, cálido y lúdico, usando emojis con moderación. Mantén EXACTAMENTE el significado y no inventes información.
 Reglas estrictas:
 - Conserva links, números, IDs, rutas y tokens tal cual.
 - Mantén intacta la estructura de menús/listas (por ejemplo: "1️⃣", "2️⃣", saltos de línea).
 - No agregues pasos nuevos ni cambies opciones.
+- Evita argentinismos como "escribí", "vos", "che".
 - Máximo 1–2 emojis por bloque.`;
 
   const response = await fetch(MINIMAX_ENDPOINT, {
@@ -368,11 +369,12 @@ function extractLawQuery(text) {
   const t = normalizeIncomingText(text);
   if (!t) return '';
   const cleaned = t
-    .replace(/buscar( una)? ley(es)?/gi, '')
-    .replace(/necesito/gi, '')
-    .replace(/quiero/gi, '')
-    .replace(/sobre/gi, '')
-    .replace(/ley( numero| n°| nro| n)?/gi, 'ley ')
+    .replace(/[.,;:!?()]/g, ' ')
+    .replace(/buscar( una)? ley(es)?/gi, ' ')
+    .replace(/\b(necesito|quiero|deseo|me gustaria|me gustaría|saber|averiguar|consultar|ver)\b/gi, ' ')
+    .replace(/\b(sobre|acerca de|respecto de)\b/gi, ' ')
+    .replace(/\bley( numero| n°| nro| n)?\b/gi, 'ley ')
+    .replace(/\s+/g, ' ')
     .trim();
   return cleaned;
 }
@@ -387,9 +389,31 @@ function isLikelyLawSearch(text) {
   return false;
 }
 
+function normalizeLawNumber(value) {
+  return String(value || '').replace(/[^\d]/g, '');
+}
+
+function expandLawQuery(query) {
+  const t = normalizeForIntent(query);
+  if (!t) return query;
+  const expansions = [];
+  if (t.includes('arriendo') || t.includes('arriendos')) {
+    expansions.push('arrendamiento', 'arrendatario', 'arrendador', 'contrato', 'renta', 'garantia', 'canon');
+  }
+  if (t.includes('finiquito')) {
+    expansions.push('codigo del trabajo', 'termino de contrato', 'indemnizacion', 'despido');
+  }
+  if (t.includes('divorcio')) {
+    expansions.push('matrimonio', 'alimentos', 'cuidado personal', 'relacion directa y regular');
+  }
+  if (!expansions.length) return query;
+  const merged = `${query} ${expansions.join(' ')}`.trim();
+  return merged.length > 240 ? query : merged;
+}
+
 async function searchLawsRpc(query, limit = 5) {
   if (!SUPABASE_LAWS_URL || !SUPABASE_LAWS_ANON_KEY) return [];
-  const q = String(query || '').trim();
+  const q = expandLawQuery(String(query || '').trim());
   if (!q) return [];
 
   const response = await fetch(`${SUPABASE_LAWS_URL.replace(/\/$/, '')}/rest/v1/rpc/buscar_leyes`, {
@@ -410,15 +434,73 @@ async function searchLawsRpc(query, limit = 5) {
   return Array.isArray(data) ? data : [];
 }
 
-function formatLawResults(results) {
-  if (!results?.length) return 'No encontré resultados 😕\n\nPuedes probar con otro término o con el número de ley (ej: "Ley 19.628").';
+function buildLawSnippet(law, query) {
+  const content = String(getLawContent(law) || '').replace(/\s+/g, ' ').trim();
+  if (!content) return '';
+
+  const q = normalizeForIntent(query);
+  const tokens = q
+    .split(/\s+/)
+    .filter((t) => t.length >= 4)
+    .slice(0, 8);
+
+  if (!tokens.length) return content.slice(0, 260) + (content.length > 260 ? '…' : '');
+
+  const lower = normalizeForIntent(content);
+  let bestIdx = -1;
+  let bestToken = '';
+  for (const token of tokens) {
+    const idx = lower.indexOf(token);
+    if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) {
+      bestIdx = idx;
+      bestToken = token;
+    }
+  }
+
+  if (bestIdx === -1) return content.slice(0, 260) + (content.length > 260 ? '…' : '');
+
+  const start = Math.max(0, bestIdx - 140);
+  const end = Math.min(lower.length, bestIdx + bestToken.length + 160);
+  const snippet = content.slice(start, end).trim();
+  const prefix = start > 0 ? '…' : '';
+  const suffix = end < content.length ? '…' : '';
+  return `${prefix}${snippet}${suffix}`;
+}
+
+function suggestLawRefinement(query) {
+  const t = normalizeForIntent(query);
+  if (!t) return '';
+  if (t.includes('arriendo') || t.includes('arriendos')) {
+    return `\n\nSi no era eso, prueba con: "arrendamiento", "contrato de arriendo", "arrendatario".`;
+  }
+  return '';
+}
+
+function formatLawResults(results, query) {
+  if (!results?.length) {
+    return 'No encontré resultados 😕\n\nDime otro término, o el número de ley (por ejemplo: "Ley 19.628").';
+  }
+
+  if (results.length <= 2) {
+    const blocks = results.map((law, idx) => {
+      const titulo = getLawTitle(law);
+      const numero = getLawNumber(law);
+      const numText = numero ? ` (Ley ${numero})` : '';
+      const snippet = buildLawSnippet(law, query);
+      return `${idx + 1}️⃣ 📜 ${titulo}${numText}\n🧾 ${snippet || 'Extracto no disponible'}`;
+    });
+    const header = results.length === 1 ? `Esto es lo más cercano que encontré 👇` : `Encontré esto 👇`;
+    return `${header}\n\n${blocks.join('\n\n')}\n\n¿Te muestro el detalle de alguna? Puedes decir "la 1", "la 2" o mencionar una palabra del título.${suggestLawRefinement(query)}`;
+  }
+
   const lines = results.slice(0, 7).map((law, idx) => {
     const titulo = getLawTitle(law);
     const numero = getLawNumber(law);
     const numText = numero ? ` — Ley ${numero}` : '';
     return `${idx + 1}️⃣ 📜 ${titulo}${numText}`;
   });
-  return `📚 Encontré estos resultados:\n\n${lines.join('\n')}\n\nResponde con el número para ver el detalle, o escribe otro término.`;
+
+  return `Mira lo que encontré 👇\n\n${lines.join('\n')}\n\nDime el número o una palabra del título para abrir una.`;
 }
 
 function formatLawDetail(law) {
@@ -428,6 +510,55 @@ function formatLawDetail(law) {
   const contenido = getLawContent(law);
   const snippet = contenido ? contenido.slice(0, 900) + (contenido.length > 900 ? '…' : '') : 'Contenido no disponible';
   return `📜 ${titulo}\n${numero ? `Ley ${numero}\n` : ''}${url ? `Fuente: ${url}\n` : ''}\n${snippet}\n\n¿Quieres buscar otra ley o ver otro resultado?`;
+}
+
+function pickLawFromResults(results, input) {
+  if (!Array.isArray(results) || !results.length) return null;
+  const raw = String(input || '').trim();
+  const t = normalizeForIntent(raw);
+  if (!t) return null;
+
+  const ordinalMap = new Map([
+    ['primera', 1],
+    ['primero', 1],
+    ['segunda', 2],
+    ['segundo', 2],
+    ['tercera', 3],
+    ['tercero', 3]
+  ]);
+  for (const [k, v] of ordinalMap.entries()) {
+    if (t.includes(k) && v <= results.length) return { law: results[v - 1], index: v - 1 };
+  }
+
+  const selection = parseNumberSelection(raw);
+  if (selection && selection >= 1 && selection <= results.length) {
+    return { law: results[selection - 1], index: selection - 1 };
+  }
+
+  const digits = normalizeLawNumber(raw);
+  if (digits && t.includes('ley')) {
+    const idx = results.findIndex((r) => normalizeLawNumber(getLawNumber(r)) === digits);
+    if (idx !== -1) return { law: results[idx], index: idx };
+  }
+
+  const tokens = t
+    .split(/\s+/)
+    .filter((w) => w.length >= 4 && !['para', 'como', 'esta', 'esto', 'sobre', 'leyes', 'ley'].includes(w))
+    .slice(0, 8);
+  if (!tokens.length) return null;
+
+  let best = { idx: -1, score: 0 };
+  results.forEach((law, idx) => {
+    const title = normalizeForIntent(getLawTitle(law));
+    let score = 0;
+    for (const tok of tokens) {
+      if (title.includes(tok)) score += 1;
+    }
+    if (score > best.score) best = { idx, score };
+  });
+
+  if (best.idx !== -1 && best.score > 0) return { law: results[best.idx], index: best.idx };
+  return null;
 }
 
 async function handleAsesorLegal({ session, chatId, text, sessionName }) {
@@ -472,7 +603,7 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
         current_branch: 'asesor_legal',
         branch_context: { stage: 'law_results', last_query: query, results }
       });
-      await wahaSendText(chatId, formatLawResults(results), sessionName);
+      await wahaSendText(chatId, formatLawResults(results, query), sessionName);
       return;
     }
 
@@ -487,7 +618,7 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
       const query = extractLawQuery(textTrim);
       const results = await searchLawsRpc(query || textTrim, 7);
       await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: query || textTrim, results } });
-      await wahaSendText(chatId, formatLawResults(results), sessionName);
+      await wahaSendText(chatId, formatLawResults(results, query || textTrim), sessionName);
       return;
     }
 
@@ -509,7 +640,7 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
       }
       const results = await searchLawsRpc(query, 7);
       await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: query, results } });
-      await wahaSendText(chatId, formatLawResults(results), sessionName);
+      await wahaSendText(chatId, formatLawResults(results, query), sessionName);
       return;
     }
     if (optionId === 'case') {
@@ -530,28 +661,27 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
     }
     const results = await searchLawsRpc(query, 7);
     await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: query, results } });
-    await wahaSendText(chatId, formatLawResults(results), sessionName);
+    await wahaSendText(chatId, formatLawResults(results, query), sessionName);
     return;
   }
 
   if (ctx.stage === 'law_results') {
-    const selection = parseNumberSelection(textTrim);
     const results = Array.isArray(ctx.results) ? ctx.results : [];
-    if (selection && results[selection - 1]) {
-      const law = results[selection - 1];
-      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: ctx.last_query, results, selected: selection - 1 } });
-      await wahaSendText(chatId, formatLawDetail(law), sessionName);
+    const picked = pickLawFromResults(results, textTrim);
+    if (picked) {
+      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: ctx.last_query, results, selected: picked.index } });
+      await wahaSendText(chatId, formatLawDetail(picked.law), sessionName);
       return;
     }
 
     const query = extractLawQuery(textTrim) || textTrim;
     if (!query) {
-      await wahaSendText(chatId, `Responde con un número de la lista o escribe otra búsqueda 🔎`, sessionName);
+      await wahaSendText(chatId, `Dime el número, una palabra del título, o un término nuevo para buscar 🔎`, sessionName);
       return;
     }
     const newResults = await searchLawsRpc(query, 7);
     await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'law_results', last_query: query, results: newResults } });
-    await wahaSendText(chatId, formatLawResults(newResults), sessionName);
+    await wahaSendText(chatId, formatLawResults(newResults, query), sessionName);
     return;
   }
 
