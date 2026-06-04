@@ -34,6 +34,19 @@ const WAHA_ROUTER_ENABLED = (process.env.WAHA_ROUTER_ENABLED || 'true').toLowerC
 const WAHA_ROUTER_MIN_CONFIDENCE = Number(process.env.WAHA_ROUTER_MIN_CONFIDENCE || '0.55');
 const WAHA_CASUAL_ENABLED = (process.env.WAHA_CASUAL_ENABLED || 'true').toLowerCase() === 'true';
 const WAHA_CASUAL_MAX_TURNS = Number(process.env.WAHA_CASUAL_MAX_TURNS || '12');
+const WAHA_HTTP_TIMEOUT_MS = Number(process.env.WAHA_HTTP_TIMEOUT_MS || '7000');
+const WAHA_MINIMAX_TIMEOUT_MS = Number(process.env.WAHA_MINIMAX_TIMEOUT_MS || '8000');
+const WAHA_MEDIA_TIMEOUT_MS = Number(process.env.WAHA_MEDIA_TIMEOUT_MS || '12000');
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...(options || {}), signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function normalizeIncomingText(text) {
   if (!text) return '';
@@ -105,7 +118,9 @@ Reglas estrictas:
 - Evita argentinismos como "escribí", "vos", "che".
 - Máximo 1–2 emojis por bloque.`;
 
-  const response = await fetch(MINIMAX_ENDPOINT, {
+  const response = await fetchWithTimeout(
+    MINIMAX_ENDPOINT,
+    {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${MINIMAX_API_KEY}`,
@@ -118,7 +133,9 @@ Reglas estrictas:
       max_tokens: 500,
       messages: [{ role: 'user', content: input }]
     })
-  });
+    },
+    Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+  );
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -156,21 +173,25 @@ async function wahaSendText(chatId, text, sessionName, options = {}) {
     }
   }
 
-  const response = await fetch(endpointUrl(WAHA_SEND_ENDPOINT), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
+  const response = await fetchWithTimeout(
+    endpointUrl(WAHA_SEND_ENDPOINT),
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
+      },
+      body: JSON.stringify({
+        session: sessionName || DEFAULT_WAHA_SESSION,
+        chatId: toChatId,
+        text: finalText
+      })
     },
-    body: JSON.stringify({
-      session: sessionName || DEFAULT_WAHA_SESSION,
-      chatId: toChatId,
-      text: finalText
-    })
-  });
+    Number.isFinite(WAHA_HTTP_TIMEOUT_MS) && WAHA_HTTP_TIMEOUT_MS > 0 ? WAHA_HTTP_TIMEOUT_MS : 7000
+  );
 
   if (!response.ok) {
-    const details = await response.text();
+    const details = await response.text().catch(() => '');
     throw new Error(`WAHA sendText failed: ${response.status} ${details}`);
   }
 
@@ -189,19 +210,26 @@ async function wahaSendSeen(chatId, sessionName) {
   const toChatId = normalizeChatIdForSend(chatId);
   if (!toChatId) return null;
 
-  const response = await fetch(endpointUrl(WAHA_SEEN_ENDPOINT), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
-    },
-    body: JSON.stringify({
-      session: sessionName || DEFAULT_WAHA_SESSION,
-      chatId: toChatId
-    })
-  });
-
-  return response.ok ? response.json().catch(() => null) : null;
+  try {
+    const response = await fetchWithTimeout(
+      endpointUrl(WAHA_SEEN_ENDPOINT),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
+        },
+        body: JSON.stringify({
+          session: sessionName || DEFAULT_WAHA_SESSION,
+          chatId: toChatId
+        })
+      },
+      Number.isFinite(WAHA_HTTP_TIMEOUT_MS) && WAHA_HTTP_TIMEOUT_MS > 0 ? WAHA_HTTP_TIMEOUT_MS : 7000
+    );
+    return response.ok ? response.json().catch(() => null) : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 async function wahaStartTyping(chatId, sessionName) {
@@ -209,19 +237,26 @@ async function wahaStartTyping(chatId, sessionName) {
   const toChatId = normalizeChatIdForSend(chatId);
   if (!toChatId) return null;
 
-  const response = await fetch(endpointUrl(WAHA_START_TYPING_ENDPOINT), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
-    },
-    body: JSON.stringify({
-      session: sessionName || DEFAULT_WAHA_SESSION,
-      chatId: toChatId
-    })
-  });
-
-  return response.ok ? response.json().catch(() => null) : null;
+  try {
+    const response = await fetchWithTimeout(
+      endpointUrl(WAHA_START_TYPING_ENDPOINT),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
+        },
+        body: JSON.stringify({
+          session: sessionName || DEFAULT_WAHA_SESSION,
+          chatId: toChatId
+        })
+      },
+      Number.isFinite(WAHA_HTTP_TIMEOUT_MS) && WAHA_HTTP_TIMEOUT_MS > 0 ? WAHA_HTTP_TIMEOUT_MS : 7000
+    );
+    return response.ok ? response.json().catch(() => null) : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 async function wahaStopTyping(chatId, sessionName) {
@@ -229,19 +264,26 @@ async function wahaStopTyping(chatId, sessionName) {
   const toChatId = normalizeChatIdForSend(chatId);
   if (!toChatId) return null;
 
-  const response = await fetch(endpointUrl(WAHA_STOP_TYPING_ENDPOINT), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
-    },
-    body: JSON.stringify({
-      session: sessionName || DEFAULT_WAHA_SESSION,
-      chatId: toChatId
-    })
-  });
-
-  return response.ok ? response.json().catch(() => null) : null;
+  try {
+    const response = await fetchWithTimeout(
+      endpointUrl(WAHA_STOP_TYPING_ENDPOINT),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
+        },
+        body: JSON.stringify({
+          session: sessionName || DEFAULT_WAHA_SESSION,
+          chatId: toChatId
+        })
+      },
+      Number.isFinite(WAHA_HTTP_TIMEOUT_MS) && WAHA_HTTP_TIMEOUT_MS > 0 ? WAHA_HTTP_TIMEOUT_MS : 7000
+    );
+    return response.ok ? response.json().catch(() => null) : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 function normalizeForIntent(text) {
@@ -313,7 +355,9 @@ Reglas:
 - confidence entre 0 y 1.
 - Si no estás seguro, devuelve confidence baja (<0.5).`;
 
-  const response = await fetch(MINIMAX_ENDPOINT, {
+  const response = await fetchWithTimeout(
+    MINIMAX_ENDPOINT,
+    {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${MINIMAX_API_KEY}`,
@@ -336,7 +380,9 @@ Reglas:
         }
       ]
     })
-  });
+    },
+    Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+  );
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return null;
@@ -479,7 +525,11 @@ async function appendGlobalHistory(sessionId, currentCtx, role, content) {
   const trimmed = String(content || '').trim();
   if (!trimmed) return null;
   const next = [...history.slice(-(Number.isFinite(WAHA_CASUAL_MAX_TURNS) ? WAHA_CASUAL_MAX_TURNS : 12) * 2 + 1), { role, content: trimmed, ts: new Date().toISOString() }];
-  return updateWspSession(sessionId, { branch_context: { ...(currentCtx || {}), _global: { history: next } } });
+  try {
+    return await updateWspSession(sessionId, { branch_context: { ...(currentCtx || {}), _global: { history: next } } });
+  } catch (_) {
+    return null;
+  }
 }
 
 function formatGlobalHistoryForModel(history, maxItems = 10, maxChars = 1800) {
@@ -503,50 +553,81 @@ Reglas:
 - Si el usuario expresa una intención (asesoría legal, crear/compartir grupo, subir/listar/analizar/crear documento), invítalo a decirlo tal cual (sin exigir número).
 - No inventes datos.`;
 
-  const response = await fetch(MINIMAX_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${MINIMAX_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: MINIMAX_MODEL,
-      system,
-      temperature: 0.6,
-      max_tokens: 450,
-      messages: [
-        {
-          role: 'user',
-          content: `Historial reciente:\n${history || '(sin historial)'}\n\nMensaje actual:\n${String(userMessage || '').trim()}\n\nResponde:`
-        }
-      ]
-    })
-  });
+  try {
+    const response = await fetchWithTimeout(
+      MINIMAX_ENDPOINT,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${MINIMAX_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: MINIMAX_MODEL,
+          system,
+          temperature: 0.6,
+          max_tokens: 450,
+          messages: [
+            {
+              role: 'user',
+              content: `Historial reciente:\n${history || '(sin historial)'}\n\nMensaje actual:\n${String(userMessage || '').trim()}\n\nResponde:`
+            }
+          ]
+        })
+      },
+      Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+    );
 
-  const data = await response.json().catch(() => ({}));
-  let raw = data?.content;
-  if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
-  if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-  return typeof raw === 'string' ? raw.trim() : '';
+    if (!response.ok) return '';
+    const data = await response.json().catch(() => ({}));
+    let raw = data?.content;
+    if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+    if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+    return typeof raw === 'string' ? raw.trim() : '';
+  } catch (_) {
+    return '';
+  }
 }
 
 async function handleCasualConversation({ session, chatId, text, sessionName }) {
   const ctx = session.branch_context || {};
   const userText = normalizeIncomingText(text);
-  const updatedAfterUser = await appendGlobalHistory(session.id, ctx, 'user', userText);
-  const freshCtx = updatedAfterUser?.branch_context || ctx;
+
+  let freshCtx = ctx;
+  try {
+    const updatedAfterUser = await appendGlobalHistory(session.id, ctx, 'user', userText);
+    freshCtx = updatedAfterUser?.branch_context || ctx;
+  } catch (_) {
+    freshCtx = ctx;
+  }
+
   const { history } = getGlobalState(freshCtx);
   const historyText = formatGlobalHistoryForModel(history, 10, 1800);
 
-  let answer = await minimaxCasualReply({ history: historyText, userMessage: userText });
+  let answer = '';
+  try {
+    answer = await minimaxCasualReply({ history: historyText, userMessage: userText });
+  } catch (_) {
+    answer = '';
+  }
+
   if (!answer) {
     answer = `¡Ya! 🙌 ¿Qué necesitas hacer hoy?\n\n⚖️ Asesoría legal\n📁 Crear grupo\n🤝 Compartir grupo\n📤 Subir archivo\n📋 Listar documentos/imágenes\n✍️ Crear documento\n🔍 Analizar documento`;
   } else {
     answer = `${answer}\n\nSi quieres, dime qué necesitas: ⚖️ asesoría legal, 📁 crear grupo, 📤 subir archivo, ✍️ crear documento, etc.`;
   }
 
-  const updatedAfterAssistant = await appendGlobalHistory(session.id, freshCtx, 'assistant', answer);
-  await wahaSendText(chatId, answer, sessionName, { skipRewrite: true });
+  let updatedAfterAssistant = null;
+  try {
+    updatedAfterAssistant = await appendGlobalHistory(session.id, freshCtx, 'assistant', answer);
+  } catch (_) {
+    updatedAfterAssistant = null;
+  }
+
+  try {
+    await wahaSendText(chatId, answer, sessionName, { skipRewrite: true });
+  } catch (_) {}
+
   return updatedAfterAssistant || session;
 }
 
@@ -663,20 +744,29 @@ async function searchLawsRpc(query, limit = 5) {
   const q = expandLawQuery(String(query || '').trim());
   if (!q) return [];
 
-  const response = await fetch(`${SUPABASE_LAWS_URL.replace(/\/$/, '')}/rest/v1/rpc/buscar_leyes`, {
-    method: 'POST',
-    headers: {
-      apikey: SUPABASE_LAWS_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_LAWS_ANON_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      termino_busqueda: q,
-      limite_resultados: limit
-    })
-  });
+  let response = null;
+  try {
+    response = await fetchWithTimeout(
+      `${SUPABASE_LAWS_URL.replace(/\/$/, '')}/rest/v1/rpc/buscar_leyes`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_LAWS_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_LAWS_ANON_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          termino_busqueda: q,
+          limite_resultados: limit
+        })
+      },
+      Number.isFinite(WAHA_HTTP_TIMEOUT_MS) && WAHA_HTTP_TIMEOUT_MS > 0 ? WAHA_HTTP_TIMEOUT_MS : 7000
+    );
+  } catch (_) {
+    response = null;
+  }
 
-  if (!response.ok) return [];
+  if (!response?.ok) return [];
   const data = await response.json().catch(() => []);
   return Array.isArray(data) ? data : [];
 }
@@ -1029,30 +1119,40 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
       const system = `Eres un asesor legal en WhatsApp para Brify. Responde en español, con tono humano y cercano.
 Si hay contexto legal, cita la ley/artículo de forma clara. Si falta información, haz 1-2 preguntas de aclaración.
 No inventes artículos ni números.`;
-      const response = await fetch(MINIMAX_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${MINIMAX_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: MINIMAX_MODEL,
-          system,
-          temperature: 0.4,
-          max_tokens: 700,
-          messages: [
-            {
-              role: 'user',
-              content: `Historial reciente (puede estar vacío):\n${history || '(sin historial)'}\n\nMensaje actual:\n${description}\n\nContexto de leyes (puede estar vacío):\n${lawsContext || '(sin contexto)'}\n\nResponde:`
-            }
-          ]
-        })
-      });
-      const data = await response.json().catch(() => ({}));
-      let raw = data?.content;
-      if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
-      if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-      answer = typeof raw === 'string' ? raw : '';
+      try {
+        const response = await fetchWithTimeout(
+          MINIMAX_ENDPOINT,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${MINIMAX_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: MINIMAX_MODEL,
+              system,
+              temperature: 0.4,
+              max_tokens: 700,
+              messages: [
+                {
+                  role: 'user',
+                  content: `Historial reciente (puede estar vacío):\n${history || '(sin historial)'}\n\nMensaje actual:\n${description}\n\nContexto de leyes (puede estar vacío):\n${lawsContext || '(sin contexto)'}\n\nResponde:`
+                }
+              ]
+            })
+          },
+          Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+        );
+        if (response.ok) {
+          const data = await response.json().catch(() => ({}));
+          let raw = data?.content;
+          if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+          if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+          answer = typeof raw === 'string' ? raw : '';
+        }
+      } catch (_) {
+        answer = '';
+      }
     }
 
     if (!answer) {
@@ -1087,7 +1187,9 @@ Reglas:
 - "analizar/resumir documento" => analyze_document
 - Si hay duda => unknown con baja confianza.`;
 
-  const response = await fetch(MINIMAX_ENDPOINT, {
+  const response = await fetchWithTimeout(
+    MINIMAX_ENDPOINT,
+    {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${MINIMAX_API_KEY}`,
@@ -1100,7 +1202,9 @@ Reglas:
       max_tokens: 120,
       messages: [{ role: 'user', content: t }]
     })
-  });
+    },
+    Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+  );
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -1258,7 +1362,11 @@ async function uploadFileFromUrlToDrive({ userId, parentFolderId, fileName, mime
   const headers = {
     ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
   };
-  const response = await fetch(url, { headers });
+  const response = await fetchWithTimeout(
+    url,
+    { headers },
+    Number.isFinite(WAHA_MEDIA_TIMEOUT_MS) && WAHA_MEDIA_TIMEOUT_MS > 0 ? WAHA_MEDIA_TIMEOUT_MS : 12000
+  );
   if (!response.ok) {
     const details = await response.text().catch(() => '');
     throw new Error(`No se pudo descargar el archivo desde WAHA: ${response.status} ${details}`);
@@ -1831,45 +1939,62 @@ async function handleAnalizarDocumento({ session, chatId, text, sessionName, pay
     };
 
     if (url && mimeType.startsWith('text/')) {
-      const downloaded = await fetch(url, { headers });
-      if (downloaded.ok) {
-        const content = Buffer.from(await downloaded.arrayBuffer()).toString('utf8');
-        if (MINIMAX_API_KEY) {
-          const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
+      try {
+        const downloaded = await fetchWithTimeout(
+          url,
+          { headers },
+          Number.isFinite(WAHA_MEDIA_TIMEOUT_MS) && WAHA_MEDIA_TIMEOUT_MS > 0 ? WAHA_MEDIA_TIMEOUT_MS : 12000
+        );
+        if (downloaded.ok) {
+          const content = Buffer.from(await downloaded.arrayBuffer()).toString('utf8');
+          if (MINIMAX_API_KEY) {
+            const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
 Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de aclaración si aplica.`;
-          const response = await fetch(MINIMAX_ENDPOINT, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${MINIMAX_API_KEY}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model: MINIMAX_MODEL,
-              system,
-              temperature: 0.4,
-              max_tokens: 900,
-              messages: [{ role: 'user', content: `Documento:\n${content.slice(0, 12000)}\n\nAnaliza:` }]
-            })
-          });
-          const data = await response.json().catch(() => ({}));
-          let raw = data?.content;
-          if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
-          if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-          const analysis = typeof raw === 'string' ? raw : '';
+            let analysis = '';
+            try {
+              const response = await fetchWithTimeout(
+                MINIMAX_ENDPOINT,
+                {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${MINIMAX_API_KEY}`,
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({
+                    model: MINIMAX_MODEL,
+                    system,
+                    temperature: 0.4,
+                    max_tokens: 900,
+                    messages: [{ role: 'user', content: `Documento:\n${content.slice(0, 12000)}\n\nAnaliza:` }]
+                  })
+                },
+                Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+              );
+              if (response.ok) {
+                const data = await response.json().catch(() => ({}));
+                let raw = data?.content;
+                if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+                if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+                analysis = typeof raw === 'string' ? raw : '';
+              }
+            } catch (_) {
+              analysis = '';
+            }
+
+            await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+            await wahaSendText(
+              chatId,
+              analysis || `Pude leer el documento, pero no pude generar el análisis automático.\n\n¿Quieres intentar con otro archivo o buscar una ley? Escribe "menú" 🙌`,
+              sessionName
+            );
+            return;
+          }
 
           await updateWspSession(session.id, { current_branch: null, branch_context: {} });
-          await wahaSendText(
-            chatId,
-            analysis || `Pude leer el documento, pero no pude generar el análisis automático.\n\n¿Quieres intentar con otro archivo o buscar una ley? Escribe "menú" 🙌`,
-            sessionName
-          );
+          await wahaSendText(chatId, `✅ Recibí el texto.\n\n${content.slice(0, 1200)}${content.length > 1200 ? '…' : ''}\n\n¿Quieres que lo resuma?`, sessionName);
           return;
         }
-
-        await updateWspSession(session.id, { current_branch: null, branch_context: {} });
-        await wahaSendText(chatId, `✅ Recibí el texto.\n\n${content.slice(0, 1200)}${content.length > 1200 ? '…' : ''}\n\n¿Quieres que lo resuma?`, sessionName);
-        return;
-      }
+      } catch (_) {}
     }
 
     await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -1991,25 +2116,35 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
     if (MINIMAX_API_KEY) {
       const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
 Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de aclaración si aplica.`;
-      const response = await fetch(MINIMAX_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${MINIMAX_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: MINIMAX_MODEL,
-          system,
-          temperature: 0.4,
-          max_tokens: 900,
-          messages: [{ role: 'user', content: `Documento:\n${textContent.slice(0, 12000)}\n\nAnaliza:` }]
-        })
-      });
-      const data = await response.json().catch(() => ({}));
-      let raw = data?.content;
-      if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
-      if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-      analysis = typeof raw === 'string' ? raw : '';
+      try {
+        const response = await fetchWithTimeout(
+          MINIMAX_ENDPOINT,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${MINIMAX_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: MINIMAX_MODEL,
+              system,
+              temperature: 0.4,
+              max_tokens: 900,
+              messages: [{ role: 'user', content: `Documento:\n${textContent.slice(0, 12000)}\n\nAnaliza:` }]
+            })
+          },
+          Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+        );
+        if (response.ok) {
+          const data = await response.json().catch(() => ({}));
+          let raw = data?.content;
+          if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+          if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+          analysis = typeof raw === 'string' ? raw : '';
+        }
+      } catch (_) {
+        analysis = '';
+      }
     }
 
     if (!analysis) {
@@ -2857,10 +2992,14 @@ module.exports = async (req, res) => {
       return res.status(400).json({ success: false });
     }
 
-    await wahaSendSeen(chatId, sessionName);
-    await wahaStartTyping(chatId, sessionName);
-    await handleWahaMessage({ chatId, body, payload, sessionName });
-    await wahaStopTyping(chatId, sessionName);
+    try {
+      await wahaSendSeen(chatId, sessionName);
+      await wahaStartTyping(chatId, sessionName);
+      await handleWahaMessage({ chatId, body, payload, sessionName });
+    } finally {
+      await wahaStopTyping(chatId, sessionName);
+    }
+
     return res.json({ success: true });
   } catch (error) {
     console.error('Error procesando webhook WAHA (Serverless):', error);
@@ -2870,8 +3009,9 @@ module.exports = async (req, res) => {
       const chatId = payload?._data?.key?.remoteJidAlt || payload.from || payload.chatId;
       if (chatId) {
         await wahaStopTyping(chatId, sessionName);
+        await wahaSendText(chatId, `Tuve un problema procesando tu mensaje 😕\n\nEscribe "menú" para reiniciar y lo intentamos de nuevo.`, sessionName, { skipRewrite: true });
       }
     } catch (_) {}
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(200).json({ success: true });
   }
 };
