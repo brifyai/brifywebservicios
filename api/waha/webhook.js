@@ -479,7 +479,6 @@ function isQuestionLike(text) {
     t.startsWith('puedo ') ||
     t.startsWith('debo ') ||
     t.startsWith('necesito ') ||
-    t.startsWith('quiero ') ||
     t.startsWith('me puedes ') ||
     t.startsWith('me podrias ') ||
     t.startsWith('me podrías ')
@@ -1079,14 +1078,7 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
       return;
     }
 
-    await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'case_collect' } });
-    if (threadId) await setLegalThreadType(threadId, 'case');
-    await wahaSendTextLogged({
-      threadId,
-      chatId,
-      text: `Perfecto 🙌 Cuéntame tu caso o tu duda y te oriento directo.`,
-      sessionName
-    });
+    await wahaSendTextLogged({ threadId, chatId, text: `¿Prefieres?\n\n1️⃣ 📝 Compartir mi caso\n2️⃣ 🔎 Buscar una ley`, sessionName });
     return;
   }
 
@@ -1202,112 +1194,10 @@ No inventes artículos ni números.`;
     }
 
     if (!answer) {
-      const top = Array.isArray(candidateLaws) ? candidateLaws.slice(0, 2) : [];
-      const refs = top
-        .map((law, idx) => {
-          const titulo = getLawTitle(law);
-          const numero = getLawNumber(law);
-          const snippet = buildLawSnippet(law, description);
-          const numText = numero ? ` (Ley ${numero})` : '';
-          return `${idx + 1}️⃣ 📜 ${titulo}${numText}${snippet ? `\n🧾 ${snippet}` : ''}`;
-        })
-        .join('\n\n');
-
-      answer =
-        `Te entiendo 🙌 Con lo que me cuentas, esto es lo más importante en Chile:\n\n` +
-        `✅ 1) Junta y ordena pruebas\n` +
-        `🔹 Comprobantes de pago/transferencias, depósitos, mensajes, contrato/anexos y cualquier respaldo de que has pagado.\n\n` +
-        `✅ 2) No te vayas sin una salida formal\n` +
-        `🔹 Si te están pidiendo desalojo por “no pago”, normalmente eso se discute en un procedimiento. Con respaldo de pagos, tu posición mejora.\n\n` +
-        `✅ 3) Qué hacer ahora (práctico)\n` +
-        `🔹 Responde por escrito (WhatsApp/mail) dejando constancia de pagos y pidiendo que te indiquen exactamente qué meses dicen impagos.\n` +
-        `🔹 Si existe demanda/notificación, no la ignores: hay plazos.\n\n` +
-        (refs ? `📌 Normativa relacionada que encontré:\n\n${refs}\n\n` : '') +
-        `Para afinarte la estrategia sin hacerte preguntas de más: ¿ya te llegó una notificación/demanda formal o solo fue amenaza por WhatsApp?`;
+      answer = `Gracias por el detalle 🙌\n\nPara orientarte mejor, necesito 2 datos:\n1) ¿En qué ciudad/comuna ocurrió?\n2) ¿Qué quieres lograr exactamente (cobrar, terminar contrato, demanda, etc.)?\n\nSi quieres, también puedo buscar una ley específica: dime el término o número (ej: "Ley 19.628").`;
     }
 
-    await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'case_followup' } });
-    await wahaSendTextLogged({ threadId, chatId, text: answer, sessionName });
-    return;
-  }
-
-  if (ctx.stage === 'case_followup') {
-    if (textLower.includes('buscar ley') || isLikelyLawSearch(textTrim)) {
-      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'law_search', no_results_count: 0 } });
-      if (threadId) await setLegalThreadType(threadId, 'law_search');
-      const query = extractLawQuery(textTrim);
-      if (!query || query.length < 2) {
-        await wahaSendTextLogged({ threadId, chatId, text: `Ya 👌 ¿qué término o número de ley quieres buscar?`, sessionName });
-        return;
-      }
-      const results = await searchLawsRpc(query, 7);
-      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'law_results', last_query: query, results, no_results_count: results.length ? 0 : (Number(ctx.no_results_count || 0) + 1) } });
-      await wahaSendTextLogged({ threadId, chatId, text: formatLawResults(results, query), sessionName });
-      return;
-    }
-
-    const candidateLaws = await searchLawsRpc(textTrim, 4);
-    const lawsContext = candidateLaws
-      .slice(0, 2)
-      .map((law, idx) => {
-        const titulo = getLawTitle(law);
-        const numero = getLawNumber(law) || 'No disponible';
-        const url = getLawUrl(law);
-        const contenido = getLawContent(law);
-        const fragmento = contenido ? contenido.slice(0, 650) + (contenido.length > 650 ? '…' : '') : 'Contenido no disponible';
-        return `--- Ley ${idx + 1} ---\nTítulo: ${titulo}\nNúmero: ${numero}\n${url ? `Fuente: ${url}\n` : ''}Fragmento:\n${fragmento}`;
-      })
-      .join('\n\n');
-
-    let answer = '';
-    if (MINIMAX_API_KEY) {
-      const history = threadId ? await getLegalThreadHistory(threadId, 10, 2500) : '';
-      const system = `Eres un asesor legal en WhatsApp para Brify (Chile). Responde en español chileno neutral (sin voseo), con tono humano y cercano.
-Asume que el caso ocurrió en Chile, salvo que el usuario indique otro país.
-Responde primero con una recomendación concreta (pasos). Solo haz 1 pregunta si es estrictamente necesaria para orientar la acción.
-No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
-No inventes artículos ni números.`;
-      try {
-        const response = await fetchWithTimeout(
-          MINIMAX_ENDPOINT,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${MINIMAX_API_KEY}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model: MINIMAX_MODEL,
-              system,
-              temperature: 0.4,
-              max_tokens: 700,
-              messages: [
-                {
-                  role: 'user',
-                  content: `Historial reciente (puede estar vacío):\n${history || '(sin historial)'}\n\nMensaje actual:\n${textTrim}\n\nContexto de leyes (puede estar vacío):\n${lawsContext || '(sin contexto)'}\n\nResponde:`
-                }
-              ]
-            })
-          },
-          Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
-        );
-        if (response.ok) {
-          const data = await response.json().catch(() => ({}));
-          let raw = data?.content;
-          if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
-          if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-          answer = typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
-        }
-      } catch (_) {
-        answer = '';
-      }
-    }
-
-    if (!answer) {
-      answer = `Perfecto 🙌\n\n✅ Pasos recomendados ahora:\n🔹 Deja todo por escrito (pagos, meses, contrato) y pide que te indiquen exactamente qué meses alegan impagos.\n🔹 Si te llega citación/demanda, respóndela dentro de plazo (no la ignores).\n\n¿Te llegó algo formal o solo fue una conversación/amenaza por WhatsApp?`;
-    }
-
-    await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'case_followup' } });
+    await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'choose_mode' } });
     await wahaSendTextLogged({ threadId, chatId, text: answer, sessionName });
     return;
   }
@@ -1617,7 +1507,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
       return;
     }
 
-    const rootFolderId = await ensureRootFolderIdForUser(userEmail, session.user_id);
+    const rootFolderId = await resolveRootFolderIdForUser(userEmail, session.user_id);
     if (!rootFolderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
       await wahaSendText(chatId, `No encontré tu carpeta raíz de Brify 😕 Revisa tu configuración en ${BRIFY_PROFILE_URL}`, sessionName);
@@ -1852,7 +1742,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       parentFolderId = ctx.selectedGroup.folder_id;
     } else {
-      parentFolderId = await ensureRootFolderIdForUser(user.email, session.user_id);
+      parentFolderId = await resolveRootFolderIdForUser(user.email, session.user_id);
     }
     if (!parentFolderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -1987,7 +1877,7 @@ async function handleListarArchivos({ session, chatId, text, sessionName }) {
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       folderId = ctx.selectedGroup.folder_id;
     } else {
-      folderId = await ensureRootFolderIdForUser(user.email, session.user_id);
+      folderId = await resolveRootFolderIdForUser(user.email, session.user_id);
     }
     if (!folderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -2221,7 +2111,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
 
     let folderId = null;
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) folderId = ctx.selectedGroup.folder_id;
-    else folderId = await ensureRootFolderIdForUser(user.email, session.user_id);
+    else folderId = await resolveRootFolderIdForUser(user.email, session.user_id);
 
     if (!folderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -2519,74 +2409,16 @@ async function getDriveClientForUser(userId) {
 }
 
 async function resolveRootFolderIdForUser(userEmail, userId) {
-  const email = String(userEmail || '').trim().toLowerCase();
-  if (!email && !userId) return null;
-
   const { data: adminFolder, error } = await supabase
     .from('carpeta_administrador')
     .select('id_drive_carpeta')
-    .or(`user_id.eq.${userId},correo.eq.${email}`)
+    .or(`user_id.eq.${userId},correo.eq.${userEmail}`)
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (!error && adminFolder?.id_drive_carpeta) return adminFolder.id_drive_carpeta;
-
-  const { data: adminFolder2, error: error2 } = await supabase
-    .from('carpeta_administrador')
-    .select('id_drive_carpeta')
-    .ilike('correo', email)
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error2 || !adminFolder2?.id_drive_carpeta) return null;
-  return adminFolder2.id_drive_carpeta;
-}
-
-async function ensureRootFolderIdForUser(userEmail, userId) {
-  const email = String(userEmail || '').trim().toLowerCase();
-  const existing = await resolveRootFolderIdForUser(email, userId);
-  if (existing) return existing;
-  if (!userId) return null;
-
-  try {
-    const drive = await getDriveClientForUser(userId);
-    const list = await drive.files.list({
-      q: `name='Master - Brify' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false`,
-      pageSize: 1,
-      fields: 'files(id,name,createdTime)'
-    });
-    const foundId = Array.isArray(list?.data?.files) && list.data.files.length ? list.data.files[0].id : null;
-
-    let folderId = foundId;
-    if (!folderId) {
-      const created = await drive.files.create({
-        requestBody: { name: 'Master - Brify', mimeType: 'application/vnd.google-apps.folder' },
-        fields: 'id'
-      });
-      folderId = created?.data?.id || null;
-    }
-
-    if (!folderId) return null;
-
-    await supabase
-      .from('carpeta_administrador')
-      .upsert(
-        {
-          user_id: userId,
-          correo: email,
-          telegram_id: null,
-          id_drive_carpeta: folderId,
-          updated_at: new Date().toISOString()
-        },
-        { onConflict: 'correo' }
-      );
-
-    return folderId;
-  } catch (_) {
-    return null;
-  }
+  if (error || !adminFolder?.id_drive_carpeta) return null;
+  return adminFolder.id_drive_carpeta;
 }
 
 async function createHtmlFileInDrive({ userId, parentFolderId, fileName, html }) {
@@ -2921,7 +2753,7 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       parentFolderId = ctx.selectedGroup.folder_id;
     } else {
-      parentFolderId = await ensureRootFolderIdForUser(user.email, user.id);
+      parentFolderId = await resolveRootFolderIdForUser(user.email, user.id);
     }
 
     if (!parentFolderId) {
@@ -3020,11 +2852,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
         return;
       }
 
-      const wssp = phoneNumber ? `+${phoneNumber}` : null;
-      await supabase
-        .from('users')
-        .update({ phone_number: phoneNumber, phone_verified: true, wssp, updated_at: new Date().toISOString() })
-        .eq('id', byEmail.id);
+      await supabase.from('users').update({ phone_number: phoneNumber, phone_verified: true, updated_at: new Date().toISOString() }).eq('id', byEmail.id);
       session = await updateWspSession(session.id, { user_id: byEmail.id, current_branch: null, branch_context: {} });
     }
   }

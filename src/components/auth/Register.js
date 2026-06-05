@@ -11,6 +11,7 @@ const Register = () => {
     email: '',
     password: '',
     confirmPassword: '',
+    telegramId: '',
     whatsapp: ''
   })
   const [showPassword, setShowPassword] = useState(false)
@@ -39,26 +40,16 @@ const Register = () => {
 
   const formatWhatsappNumber = (number) => {
     if (!number) return null
-    const cleaned = String(number).replace(/\D/g, '')
-
-    let digits = cleaned
-    if (digits.length === 8) digits = `569${digits}`
-    else if (digits.length === 9 && digits.startsWith('9')) digits = `56${digits}`
-
-    if (digits.length === 11 && digits.startsWith('569')) return `+${digits}`
-    if (digits.length === 11 && digits.startsWith('56') && digits[2] === '9') return `+${digits}`
-
-    return null
-  }
-
-  const handleWhatsappBlur = () => {
-    const formatted = formatWhatsappNumber(formData.whatsapp)
-    if (!formatted) return
-    if (formatted === formData.whatsapp) return
-    setFormData(prev => ({ ...prev, whatsapp: formatted }))
-    if (errors.whatsapp) {
-      setErrors(prev => ({ ...prev, whatsapp: '' }))
-    }
+    const cleaned = number.replace(/\D/g, '')
+    
+    // Caso: 8 dígitos (ej: 96406106 o 50128073) -> Agregar 569
+    if (cleaned.length === 8) return `569${cleaned}`
+    // Caso: 9 dígitos y empieza con 9 (ej: 996406106) -> Agregar 56
+    if (cleaned.length === 9 && cleaned.startsWith('9')) return `56${cleaned}`
+    // Caso: 11 dígitos y empieza con 569 -> Dejar igual
+    if (cleaned.length === 11 && cleaned.startsWith('569')) return cleaned
+    
+    return cleaned
   }
 
   const validateForm = () => {
@@ -88,11 +79,17 @@ const Register = () => {
       newErrors.confirmPassword = 'Las contraseñas no coinciden'
     }
     
+    // Telegram ID es opcional, pero si se proporciona debe ser válido
+    if (formData.telegramId && !/^\d+$/.test(formData.telegramId)) {
+      newErrors.telegramId = 'El ID de Telegram debe contener solo números'
+    }
+
     // Whatsapp es opcional
     if (formData.whatsapp) {
       const formatted = formatWhatsappNumber(formData.whatsapp)
-      if (!formatted) {
-        newErrors.whatsapp = 'Formato inválido. Ejemplos: +56996406106, 996406106 o 96406106'
+      // Validar que el resultado final sea un formato válido de 11 dígitos empezando con 569
+      if (!formatted || formatted.length !== 11 || !formatted.startsWith('569')) {
+        newErrors.whatsapp = 'Formato inválido. Ejemplos: +56996406106, 96406106 o 50128073'
       }
     }
 
@@ -112,6 +109,7 @@ const Register = () => {
     try {
       const userData = {
         name: formData.name.trim(),
+        telegram_id: formData.telegramId || null,
         wssp: formatWhatsappNumber(formData.whatsapp) || null
       }
       
@@ -348,6 +346,40 @@ const Register = () => {
               )}
             </div>
 
+            {/* Telegram ID */}
+            <div>
+              <label htmlFor="telegramId" className="block text-sm font-semibold text-white mb-2">
+                ID de Telegram <span className="text-gray-300">(Opcional)</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                </div>
+                <input
+                  id="telegramId"
+                  name="telegramId"
+                  type="text"
+                  className={`w-full pl-12 pr-4 py-4 border ${errors.telegramId ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 'border-gray-200 focus:border-purple-500 focus:ring-purple-500'} rounded-2xl focus:ring-2 focus:outline-none transition-all duration-200 bg-white text-gray-900 placeholder-gray-400`}
+                  placeholder="123456789"
+                  value={formData.telegramId}
+                  onChange={handleChange}
+                />
+              </div>
+              {errors.telegramId && (
+                <p className="mt-2 text-sm text-red-600 flex items-center">
+                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {errors.telegramId}
+                </p>
+              )}
+              <p className="mt-1 text-xs text-gray-500">
+                Puedes encontrar tu ID de Telegram contactando a @userinfobot
+              </p>
+            </div>
+
             {/* Whatsapp */}
             <div>
               <label htmlFor="whatsapp" className="block text-sm font-semibold text-white mb-2">
@@ -362,10 +394,9 @@ const Register = () => {
                   name="whatsapp"
                   type="text"
                   className={`w-full pl-12 pr-4 py-4 border ${errors.whatsapp ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 'border-gray-200 focus:border-purple-500 focus:ring-purple-500'} rounded-2xl focus:ring-2 focus:outline-none transition-all duration-200 bg-white text-gray-900 placeholder-gray-400`}
-                  placeholder="+56912345678"
+                  placeholder="Número de Whatsapp"
                   value={formData.whatsapp}
                   onChange={handleChange}
-                  onBlur={handleWhatsappBlur}
                 />
               </div>
               {errors.whatsapp && (
@@ -376,9 +407,6 @@ const Register = () => {
                   {errors.whatsapp}
                 </p>
               )}
-              <p className="mt-1 text-xs text-gray-400">
-                Si no escribes el +56, lo agrego automáticamente.
-              </p>
             </div>
 
             {/* Password */}
