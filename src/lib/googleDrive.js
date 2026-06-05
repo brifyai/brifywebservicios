@@ -246,9 +246,25 @@ class GoogleDriveService {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return null
 
+      let wsp = null
+      try {
+        const { data: userRow } = await supabase.from('users').select('wssp, phone_number').eq('id', user.id).maybeSingle()
+        wsp = userRow?.wssp || (userRow?.phone_number ? `+${String(userRow.phone_number).replace(/[^\d]/g, '')}` : null)
+      } catch (_) {
+        wsp = null
+      }
+
       const existing = await db.adminFolders.getByUser(user.id)
       const existingFolderId = existing?.data?.[0]?.id_drive_carpeta
       if (existingFolderId) {
+        if (wsp) {
+          try {
+            await supabase
+              .from('carpeta_administrador')
+              .update({ wsp, updated_at: new Date().toISOString() })
+              .eq('correo', user.email)
+          } catch (_) {}
+        }
         return existingFolderId
       }
 
@@ -256,11 +272,21 @@ class GoogleDriveService {
       const newFolderId = appFolder?.id
 
       if (newFolderId) {
-        await db.adminFolders.create({
+        const payload = {
           user_id: user.id,
           correo: user.email,
           id_drive_carpeta: newFolderId
-        })
+        }
+        if (wsp) payload.wsp = wsp
+
+        const created = await db.adminFolders.create(payload)
+        if (created?.error && wsp) {
+          await db.adminFolders.create({
+            user_id: user.id,
+            correo: user.email,
+            id_drive_carpeta: newFolderId
+          })
+        }
       }
 
       return newFolderId
@@ -428,4 +454,3 @@ const googleDriveService = new GoogleDriveService()
 
 export default googleDriveService
 export { GoogleDriveService }
-

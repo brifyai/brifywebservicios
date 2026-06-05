@@ -61,6 +61,67 @@ function sanitizeWhatsAppText(text) {
   return s.trim();
 }
 
+function getSystemPromptRewrite() {
+  return `Eres el asistente oficial de Brify en WhatsApp. Escribe en español chileno neutral (sin voseo). Reescribe el mensaje para que suene humano, cálido y lúdico, usando emojis con moderación. Mantén EXACTAMENTE el significado y no inventes información.
+Reglas estrictas:
+- Conserva links, números, IDs, rutas y tokens tal cual.
+- Mantén intacta la estructura de menús/listas (por ejemplo: "1️⃣", "2️⃣", saltos de línea).
+- No agregues pasos nuevos ni cambies opciones.
+- No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras).
+- Evita argentinismos como "escribí", "vos", "che".
+- Máximo 1–2 emojis por bloque.`;
+}
+
+function getSystemPromptStageRouter() {
+  return `Clasifica la intención del usuario dentro de un paso conversacional de WhatsApp.
+Devuelve SOLO JSON válido (sin texto extra) con el formato:
+{"option_id":"...","confidence":0.0}
+Reglas:
+- option_id debe ser uno de los ids listados.
+- confidence entre 0 y 1.
+- Si no estás seguro, devuelve confidence baja (<0.5).`;
+}
+
+function getSystemPromptMenuRouter() {
+  return `Clasifica la intención del usuario para un menú de WhatsApp de Brify.
+Devuelve SOLO JSON válido con este formato:
+{"intent":"menu|legal|create_group|share_group|upload_file|list_files|create_document|analyze_document|unknown","confidence":0.0}
+Reglas:
+- No agregues texto fuera del JSON.
+- Si el usuario pide "asesor legal/abogado/ley" => legal
+- "crear grupo/carpeta" => create_group
+- "compartir grupo/dar acceso" => share_group
+- "subir/adjuntar archivo" => upload_file
+- "ver/listar documentos/imagenes" => list_files
+- "crear documento/plantilla" => create_document
+- "analizar/resumir documento" => analyze_document
+- Si hay duda => unknown con baja confianza.`;
+}
+
+function getSystemPromptCasual() {
+  return `Eres Brify en WhatsApp (Chile). Responde en español chileno neutral (sin voseo), humano y cercano.
+Objetivo: mantener una conversación breve y útil, sin perder el hilo.
+Reglas:
+- Si el usuario solo saluda o conversa, responde amable y pregunta qué necesita.
+- Si el usuario expresa una intención (asesoría legal, crear/compartir grupo, subir/listar/analizar/crear documento), invítalo a decirlo tal cual (sin exigir número).
+- No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
+- No inventes datos.`;
+}
+
+function getSystemPromptLegalCase() {
+  return `Eres un asesor legal en WhatsApp para Brify (Chile). Responde en español chileno neutral (sin voseo), con tono humano y cercano.
+Asume que el caso ocurrió en Chile, salvo que el usuario indique otro país. No preguntes por el país; pregunta por comuna/ciudad y región si hace falta.
+Si hay contexto legal, cita la ley/artículo de forma clara. Si falta información, haz 1-2 preguntas de aclaración.
+No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
+No inventes artículos ni números.`;
+}
+
+function getSystemPromptDocAnalyze() {
+  return `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
+No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
+Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de aclaración si aplica.`;
+}
+
 function normalizeIncomingText(text) {
   if (!text) return '';
   return String(text).trim();
@@ -123,14 +184,7 @@ async function minimaxRewriteForWhatsApp(text) {
   if (!input.trim()) return input;
   if (input.length > 3500) return input;
 
-  const system = `Eres el asistente oficial de Brify en WhatsApp. Escribe en español chileno neutral (sin voseo). Reescribe el mensaje para que suene humano, cálido y lúdico, usando emojis con moderación. Mantén EXACTAMENTE el significado y no inventes información.
-Reglas estrictas:
-- Conserva links, números, IDs, rutas y tokens tal cual.
-- Mantén intacta la estructura de menús/listas (por ejemplo: "1️⃣", "2️⃣", saltos de línea).
-- No agregues pasos nuevos ni cambies opciones.
-- No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras).
-- Evita argentinismos como "escribí", "vos", "che".
-- Máximo 1–2 emojis por bloque.`;
+  const system = getSystemPromptRewrite();
 
   const response = await fetchWithTimeout(
     MINIMAX_ENDPOINT,
@@ -361,13 +415,7 @@ async function routeStageWithAI({ branch, stage, text, options }) {
 
   if (!safeOptions.length) return null;
 
-  const system = `Clasifica la intención del usuario dentro de un paso conversacional de WhatsApp.
-Devuelve SOLO JSON válido (sin texto extra) con el formato:
-{"option_id":"...","confidence":0.0}
-Reglas:
-- option_id debe ser uno de los ids listados.
-- confidence entre 0 y 1.
-- Si no estás seguro, devuelve confidence baja (<0.5).`;
+  const system = getSystemPromptStageRouter();
 
   const response = await fetchWithTimeout(
     MINIMAX_ENDPOINT,
@@ -560,13 +608,7 @@ function formatGlobalHistoryForModel(history, maxItems = 10, maxChars = 1800) {
 
 async function minimaxCasualReply({ history, userMessage }) {
   if (!MINIMAX_API_KEY) return '';
-  const system = `Eres Brify en WhatsApp (Chile). Responde en español chileno neutral (sin voseo), humano y cercano.
-Objetivo: mantener una conversación breve y útil, sin perder el hilo.
-Reglas:
-- Si el usuario solo saluda o conversa, responde amable y pregunta qué necesita.
-- Si el usuario expresa una intención (asesoría legal, crear/compartir grupo, subir/listar/analizar/crear documento), invítalo a decirlo tal cual (sin exigir número).
-- No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
-- No inventes datos.`;
+  const system = getSystemPromptCasual();
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -1152,11 +1194,7 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
     let answer = '';
     if (MINIMAX_API_KEY) {
       const history = threadId ? await getLegalThreadHistory(threadId, 10, 2500) : '';
-      const system = `Eres un asesor legal en WhatsApp para Brify (Chile). Responde en español chileno neutral (sin voseo), con tono humano y cercano.
-Asume que el caso ocurrió en Chile, salvo que el usuario indique otro país. No preguntes por el país; pregunta por comuna/ciudad y región si hace falta.
-Si hay contexto legal, cita la ley/artículo de forma clara. Si falta información, haz 1-2 preguntas de aclaración.
-No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
-No inventes artículos ni números.`;
+      const system = getSystemPromptLegalCase();
       try {
         const response = await fetchWithTimeout(
           MINIMAX_ENDPOINT,
@@ -1211,19 +1249,7 @@ async function detectIntentWithAI(text) {
   const t = normalizeIncomingText(text);
   if (!t) return { intent: 'unknown', confidence: 0 };
 
-  const system = `Clasifica la intención del usuario para un menú de WhatsApp de Brify.
-Devuelve SOLO JSON válido con este formato:
-{"intent":"menu|legal|create_group|share_group|upload_file|list_files|create_document|analyze_document|unknown","confidence":0.0}
-Reglas:
-- No agregues texto fuera del JSON.
-- Si el usuario pide "asesor legal/abogado/ley" => legal
-- "crear grupo/carpeta" => create_group
-- "compartir grupo/dar acceso" => share_group
-- "subir/adjuntar archivo" => upload_file
-- "ver/listar documentos/imagenes" => list_files
-- "crear documento/plantilla" => create_document
-- "analizar/resumir documento" => analyze_document
-- Si hay duda => unknown con baja confianza.`;
+  const system = getSystemPromptMenuRouter();
 
   const response = await fetchWithTimeout(
     MINIMAX_ENDPOINT,
@@ -1986,9 +2012,7 @@ async function handleAnalizarDocumento({ session, chatId, text, sessionName, pay
         if (downloaded.ok) {
           const content = Buffer.from(await downloaded.arrayBuffer()).toString('utf8');
           if (MINIMAX_API_KEY) {
-            const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
-No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
-Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de aclaración si aplica.`;
+            const system = getSystemPromptDocAnalyze();
             let analysis = '';
             try {
               const response = await fetchWithTimeout(
@@ -2153,9 +2177,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
 
     let analysis = '';
     if (MINIMAX_API_KEY) {
-      const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
-No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
-Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de aclaración si aplica.`;
+      const system = getSystemPromptDocAnalyze();
       try {
         const response = await fetchWithTimeout(
           MINIMAX_ENDPOINT,
