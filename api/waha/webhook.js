@@ -357,7 +357,7 @@ function buildMainMenu(nombre, meta = {}) {
     header = `Hola${displayName} 👋 ¿En qué te puedo ayudar?`;
   }
 
-  return `${header}\n\nEstoy en modo conversacional, así que puedes hablarme natural y yo intento resolverlo o activar la herramienta correcta.\n\nPor ejemplo: "crear grupo Marketing", "compartir grupo Ventas con correo@empresa.com" o simplemente hacer una pregunta.\n\nSi prefieres, también puedes usar estas opciones:\n\n1️⃣ ⚖️ Asesor legal\n2️⃣ 📁 Crear grupo\n3️⃣ 🤝 Compartir grupo\n4️⃣ 📤 Subir archivo\n5️⃣ 📋 Listar archivos\n6️⃣ ✍️ Crear documento\n7️⃣ 🔍 Analizar documento`;
+  return `${header}\n\nPuedes decirme directamente lo que necesitas.\n\nPor ejemplo: "crear grupo Marketing", "compartir grupo Ventas con correo@empresa.com" o simplemente hacer una pregunta.\n\nSi prefieres, también puedes usar estas opciones:\n\n1️⃣ ⚖️ Asesor legal\n2️⃣ 📁 Crear grupo\n3️⃣ 🤝 Compartir grupo\n4️⃣ 📤 Subir archivo\n5️⃣ 📋 Listar archivos\n6️⃣ ✍️ Crear documento\n7️⃣ 🔍 Analizar documento`;
 }
 
 async function showMainMenu({ session, chatId, sessionName }) {
@@ -1616,6 +1616,69 @@ Reglas:
   }
 }
 
+async function minimaxParseCreateGroupUserAction(text) {
+  if (!WAHA_MINIMAX_ENABLED) return null;
+  if (!MINIMAX_API_KEY) return null;
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+
+  const system = `Clasifica la respuesta del usuario dentro del paso de confirmación para crear y compartir un grupo.
+Devuelve SOLO JSON válido.
+Formato:
+{"action":"confirm|cancel|no_share|add_emails|edit_name|unknown","name":string|null,"emails":string[]}
+Reglas:
+- confirm: cuando el usuario aprueba continuar.
+- cancel: cuando el usuario quiere detener o anular.
+- no_share: cuando quiere crear el grupo pero no compartirlo por ahora.
+- add_emails: cuando agrega uno o más correos para compartir.
+- edit_name: cuando quiere cambiar el nombre del grupo.
+- unknown: si no está claro.
+- name: solo el nuevo nombre si aplica.
+- emails: correos únicos en minúscula.
+- No inventes datos.`;
+
+  try {
+    const response = await fetchWithTimeout(
+      MINIMAX_ENDPOINT,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${MINIMAX_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: MINIMAX_MODEL,
+          system,
+          temperature: 0,
+          max_tokens: 180,
+          messages: [{ role: 'user', content: raw }]
+        })
+      },
+      Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+    );
+
+    if (!response.ok) return null;
+    const data = await response.json().catch(() => ({}));
+    let content = data?.content;
+    if (Array.isArray(content)) content = content.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+    if (typeof content !== 'string') content = data?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string') return null;
+
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    const allowed = new Set(['confirm', 'cancel', 'no_share', 'add_emails', 'edit_name', 'unknown']);
+    const action = allowed.has(String(parsed?.action || '').trim()) ? String(parsed.action).trim() : 'unknown';
+    const name = typeof parsed?.name === 'string' ? parsed.name.trim() : null;
+    const emails = Array.isArray(parsed?.emails)
+      ? Array.from(new Set(parsed.emails.map((e) => String(e || '').toLowerCase().trim()).filter(Boolean)))
+      : [];
+    return { action, name: name || null, emails };
+  } catch (_) {
+    return null;
+  }
+}
+
 function parseCreateGroupUserAction(text) {
   const t = normalizeForIntent(text);
   const raw = String(text || '').trim();
@@ -1674,7 +1737,7 @@ function formatCreateGroupSummary({ groupName, emails }) {
   const n = String(groupName || '').trim();
   const e = Array.isArray(emails) ? emails : [];
   const emailLine = e.length ? `🤝 Compartir con: ${e.join(', ')}` : `🤝 Compartir: (por ahora nadie)`;
-  return `Entendí esto 👇\n📁 Grupo: ${n || '(sin nombre)'}\n${emailLine}`;
+  return `Captado esto 👇\n📁 Grupo: ${n || '(sin nombre)'}\n${emailLine}`;
 }
 
 function parseEmails(text) {
@@ -2318,18 +2381,29 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
       });
       await wahaSendText(
         chatId,
-        `${summary}\n\n¿Le damos? 🙌\n\nResponde por ejemplo:\n✅ "dale"\n✏️ "cambia el nombre a Medicinas 2026"\n📧 "agrega seba@empresa.com"\n🚫 "no lo compartas"\n🛑 "cancelar"`,
-        sessionName
+        `${summary}\n\n¿Lo compartimos? 🙌`,
+        sessionName,
+        { skipRewrite: true }
       );
       return;
     }
 
-    const action = parseCreateGroupUserAction(textTrim);
+    let action = parseCreateGroupUserAction(textTrim);
+    if (action.action === 'unknown') {
+      const aiAction = await minimaxParseCreateGroupUserAction(textTrim);
+      if (aiAction?.action && aiAction.action !== 'unknown') {
+        action = {
+          ...action,
+          ...aiAction,
+          emails: Array.from(new Set([...(action.emails || []), ...(aiAction.emails || [])]))
+        };
+      }
+    }
     const mergedEmails = action.emails?.length ? Array.from(new Set([...prefilledEmails, ...action.emails])) : prefilledEmails;
 
     if (action.action === 'cancel') {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
-      await wahaSendText(chatId, `Listo 🙌 Quedamos en el menú conversacional. ¿Qué necesitas ahora?`, sessionName);
+      await wahaSendText(chatId, `Listo 🙌 ¿Qué necesitas ahora?`, sessionName, { skipRewrite: true });
       return;
     }
 
@@ -2350,7 +2424,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
     if (action.action === 'edit_name') {
       const nextName = String(action.name || '').trim();
       if (!nextName || nextName.length < 2) {
-        await wahaSendText(chatId, `Dime el nombre nuevo del grupo 📁 (si quieres, entre comillas).`, sessionName);
+        await wahaSendText(chatId, `Dime el nombre nuevo del grupo 📁`, sessionName, { skipRewrite: true });
         return;
       }
       const nextCtx = { ...ctx, group_name: nextName, prompted: false };
@@ -2360,7 +2434,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
     }
 
     if (action.action !== 'confirm') {
-      await wahaSendText(chatId, `¿Le damos a crear el grupo o quieres cambiar algo? 🙌\n\nPuedes decir: "dale", "cambia nombre a X", "agrega correo@..." o "cancelar".`, sessionName);
+      await wahaSendText(chatId, `¿Quieres que lo cree así o prefieres cambiar algo? 🙌`, sessionName, { skipRewrite: true });
       return;
     }
 
@@ -2399,7 +2473,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
       try {
         await shareDriveFolder({ userId: session.user_id, folderId: folder.id, emails: mergedEmails, role });
         await updateWspSession(session.id, { current_branch: null, branch_context: {} });
-        await wahaSendText(chatId, `¡Listo! 🎉 Creé "${finalGroupName}" y lo compartí con: ${mergedEmails.join(', ')}\n\n¿Algo más?`, sessionName);
+        await wahaSendText(chatId, `¡Listo! 🎉 Creé "${finalGroupName}" y lo compartí con: ${mergedEmails.join(', ')}\n\n¿Algo más?`, sessionName, { skipRewrite: true });
         return;
       } catch (_) {
         await updateWspSession(session.id, {
@@ -2409,7 +2483,8 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
         await wahaSendText(
           chatId,
           `Creé "${finalGroupName}" ✅\n\nNo pude compartirlo todavía 😕\nPásame los correos (separados por coma) o escribe "no".`,
-          sessionName
+          sessionName,
+          { skipRewrite: true }
         );
         return;
       }
@@ -2419,7 +2494,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
       current_branch: 'crear_grupo',
       branch_context: { stage: 'ask_share', folder_id: folder.id, group_name: finalGroupName }
     });
-    await wahaSendText(chatId, `¡Listo! 🎉 Creé "${finalGroupName}".\n\n¿Con quién lo compartimos? Puedes mandarme uno o varios correos, o decir "no".`, sessionName);
+    await wahaSendText(chatId, `¡Listo! 🎉 Creé "${finalGroupName}".\n\n¿Con quién lo compartimos?`, sessionName, { skipRewrite: true });
     return;
   }
 
