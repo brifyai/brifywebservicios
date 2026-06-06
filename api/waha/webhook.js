@@ -260,7 +260,12 @@ function normalizePhoneFromChatId(chatId) {
   const raw = String(chatId);
   const base = raw.includes('@') ? raw.split('@')[0] : raw;
   const digits = base.replace(/[^\d]/g, '');
-  return digits || null;
+  if (!digits) return null;
+  if (digits.length === 8) return `569${digits}`;
+  if (digits.length === 9 && digits.startsWith('9')) return `56${digits}`;
+  if (digits.length === 11 && digits.startsWith('569')) return digits;
+  if (digits.length === 12 && digits.startsWith('00569')) return digits.slice(2);
+  return digits;
 }
 
 function normalizeChatIdForSend(chatId) {
@@ -3402,21 +3407,67 @@ async function updateWspSession(sessionId, patch) {
 async function getUserByPhone(phoneNumber) {
   const phone = String(phoneNumber || '').trim();
   if (!phone) return null;
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .or(`phone_number.eq.${phone},wssp.eq.${phone}`)
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) return null;
-  return data || null;
+  const variants = Array.from(
+    new Set([
+      phone,
+      `+${phone}`,
+      phone.startsWith('569') && phone.length === 11 ? phone.slice(2) : null,
+      phone.startsWith('569') && phone.length === 11 ? phone.slice(3) : null,
+      phone.startsWith('56') && phone.length === 11 ? `+${phone}` : null
+    ].filter(Boolean))
+  );
+
+  try {
+    const { data } = await supabase
+      .from('users')
+      .select('*')
+      .in('wssp', variants)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data) return data;
+  } catch (_) {}
+
+  try {
+    const { data } = await supabase
+      .from('users')
+      .select('*')
+      .in('phone_number', variants)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data) return data;
+  } catch (_) {}
+
+  return null;
 }
 
 async function getUserByEmail(email) {
   const { data, error } = await supabase.from('users').select('*').eq('email', email).single();
   if (error) return null;
   return data;
+}
+
+async function safeUpdateUserPhone(userId, phoneNumber) {
+  const uid = String(userId || '').trim();
+  if (!uid) return false;
+  const phone = String(phoneNumber || '').trim();
+  if (!phone) return false;
+
+  try {
+    const { error } = await supabase
+      .from('users')
+      .update({ phone_number: phone, wssp: phone, phone_verified: true, updated_at: new Date().toISOString() })
+      .eq('id', uid);
+    if (!error) return true;
+  } catch (_) {}
+
+  try {
+    const { error } = await supabase.from('users').update({ wssp: phone, updated_at: new Date().toISOString() }).eq('id', uid);
+    if (!error) return true;
+  } catch (_) {}
+
+  return false;
 }
 
 async function getUserFromAdminFolderByWsp(phoneNumber) {
@@ -4084,10 +4135,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       const userByAdminWsp = await getUserFromAdminFolderByWsp(phoneNumber);
       if (userByAdminWsp) {
         try {
-          await supabase
-            .from('users')
-            .update({ phone_number: phoneNumber, wssp: phoneNumber, phone_verified: true, updated_at: new Date().toISOString() })
-            .eq('id', userByAdminWsp.id);
+          await safeUpdateUserPhone(userByAdminWsp.id, phoneNumber);
         } catch (_) {}
         try {
           await tryAttachWspToAdminFolder({ userId: userByAdminWsp.id, userEmail: userByAdminWsp.email, phoneNumber });
@@ -4117,10 +4165,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       const userByAdminWsp = await getUserFromAdminFolderByWsp(phoneNumber);
       if (userByAdminWsp) {
         try {
-          await supabase
-            .from('users')
-            .update({ phone_number: phoneNumber, wssp: phoneNumber, phone_verified: true, updated_at: new Date().toISOString() })
-            .eq('id', userByAdminWsp.id);
+          await safeUpdateUserPhone(userByAdminWsp.id, phoneNumber);
         } catch (_) {}
         try {
           await tryAttachWspToAdminFolder({ userId: userByAdminWsp.id, userEmail: userByAdminWsp.email, phoneNumber });
@@ -4143,10 +4188,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       }
 
       try {
-        await supabase
-          .from('users')
-          .update({ phone_number: phoneNumber, wssp: phoneNumber, phone_verified: true, updated_at: new Date().toISOString() })
-          .eq('id', byEmail.id);
+        await safeUpdateUserPhone(byEmail.id, phoneNumber);
       } catch (_) {}
       try {
         await tryAttachWspToAdminFolder({ userId: byEmail.id, userEmail: byEmail.email, phoneNumber });

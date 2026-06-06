@@ -745,12 +745,21 @@ const Dashboard = () => {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => {
+                  if (!isGoogleDriveConnected) {
+                    e.preventDefault()
+                    toast.error('Primero conecta tu Google Drive para usar WhatsApp')
+                    return
+                  }
                   if (!hasActivePlan()) {
                     e.preventDefault()
                     toast.error('Debes comprar un plan activo para usar WhatsApp')
                   }
                 }}
-                className="inline-flex items-center px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-base"
+                className={`inline-flex items-center px-4 py-2 text-white font-medium rounded-xl transition-all duration-200 shadow-lg transform text-base ${
+                  isGoogleDriveConnected
+                    ? 'bg-green-500 hover:bg-green-600 hover:shadow-xl hover:-translate-y-0.5'
+                    : 'bg-gray-300 cursor-not-allowed opacity-70'
+                }`}
               >
                 <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12.001 2.002c-5.523 0-9.999 4.476-9.999 9.999 0 1.763.47 3.418 1.289 4.871L2 22l5.253-1.274c1.41.771 3.018 1.214 4.748 1.214 5.523 0 9.999-4.476 9.999-9.999s-4.476-9.999-9.999-9.999zm0 2c4.411 0 8 3.589 8 8 0 4.411-3.589 8-8 8-1.507 0-2.919-.43-4.122-1.17l-.295-.18-3.09.75.792-3.022-.193-.311C3.62 14.996 3 13.558 3 12.002c0-4.411 3.589-8 8.001-8zm4.916 10.22c-.206-.103-1.215-.598-1.403-.665-.188-.068-.325-.103-.463.103-.137.206-.531.664-.651.802-.12.137-.24.154-.446.051-.206-.103-.871-.321-1.659-1.024-.613-.546-1.027-1.221-1.147-1.427-.12-.206-.013-.317.09-.42.094-.094.206-.24.309-.36.103-.12.137-.206.206-.343.068-.137.034-.257-.017-.36-.051-.103-.463-1.116-.634-1.529-.166-.398-.336-.344-.463-.35-.12-.006-.257-.006-.394-.006-.137 0-.36.051-.55.257-.188.206-.719.703-.719 1.712s.737 1.986.84 2.12c.103.137 1.452 2.218 3.515 3.104.492.212.875.339 1.173.434.492.157.94.135 1.294.082.395-.058 1.215-.497 1.387-.978.171-.48.171-.891.12-.978-.051-.086-.188-.137-.394-.24z"/>
@@ -810,12 +819,21 @@ const Dashboard = () => {
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={(e) => {
+                    if (!isGoogleDriveConnected) {
+                      e.preventDefault()
+                      toast.error('Primero conecta tu Google Drive para usar WhatsApp')
+                      return
+                    }
                     if (!hasActivePlan()) {
                       e.preventDefault()
                       toast.error('Debes comprar un plan activo para usar WhatsApp')
                     }
                   }}
-                  className="inline-flex items-center px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-xs"
+                  className={`inline-flex items-center px-3 py-1.5 text-white font-medium rounded-xl transition-all duration-200 shadow-lg transform text-xs ${
+                    isGoogleDriveConnected
+                      ? 'bg-green-500 hover:bg-green-600 hover:shadow-xl hover:-translate-y-0.5'
+                      : 'bg-gray-300 cursor-not-allowed opacity-70'
+                  }`}
                 >
                   <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12.001 2.002c-5.523 0-9.999 4.476-9.999 9.999 0 1.763.47 3.418 1.289 4.871L2 22l5.253-1.274c1.41.771 3.018 1.214 4.748 1.214 5.523 0 9.999-4.476 9.999-9.999s-4.476-9.999-9.999-9.999zm0 2c4.411 0 8 3.589 8 8 0 4.411-3.589 8-8 8-1.507 0-2.919-.43-4.122-1.17l-.295-.18-3.09.75.792-3.022-.193-.311C3.62 14.996 3 13.558 3 12.002c0-4.411 3.589-8 8.001-8zm4.916 10.22c-.206-.103-1.215-.598-1.403-.665-.188-.068-.325-.103-.463.103-.137.206-.531.664-.651.802-.12.137-.24.154-.446.051-.206-.103-.871-.321-1.659-1.024-.613-.546-1.027-1.221-1.147-1.427-.12-.206-.013-.317.09-.42.094-.094.206-.24.309-.36.103-.12.137-.206.206-.343.068-.137.034-.257-.017-.36-.051-.103-.463-1.116-.634-1.529-.166-.398-.336-.344-.463-.35-.12-.006-.257-.006-.394-.006-.137 0-.36.051-.55.257-.188.206-.719.703-.719 1.712s.737 1.986.84 2.12c.103.137 1.452 2.218 3.515 3.104.492.212.875.339 1.173.434.492.157.94.135 1.294.082.395-.058 1.215-.497 1.387-.978.171-.48.171-.891.12-.978-.051-.086-.188-.137-.394-.24z"/>
@@ -874,12 +892,21 @@ const Dashboard = () => {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => {
+                  if (!isGoogleDriveConnected) {
+                    e.preventDefault()
+                    toast.error('Primero conecta tu Google Drive para usar WhatsApp')
+                    return
+                  }
                   if (!hasActivePlan()) {
                     e.preventDefault()
                     toast.error('Debes comprar un plan activo para usar WhatsApp')
                   }
                 }}
-                className="inline-flex items-center px-3 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm"
+                className={`inline-flex items-center px-3 py-2 text-white font-medium rounded-xl transition-all duration-200 shadow-lg transform text-sm ${
+                  isGoogleDriveConnected
+                    ? 'bg-green-500 hover:bg-green-600 hover:shadow-xl hover:-translate-y-0.5'
+                    : 'bg-gray-300 cursor-not-allowed opacity-70'
+                }`}
               >
                 <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12.001 2.002c-5.523 0-9.999 4.476-9.999 9.999 0 1.763.47 3.418 1.289 4.871L2 22l5.253-1.274c1.41.771 3.018 1.214 4.748 1.214 5.523 0 9.999-4.476 9.999-9.999s-4.476-9.999-9.999-9.999zm0 2c4.411 0 8 3.589 8 8 0 4.411-3.589 8-8 8-1.507 0-2.919-.43-4.122-1.17l-.295-.18-3.09.75.792-3.022-.193-.311C3.62 14.996 3 13.558 3 12.002c0-4.411 3.589-8 8.001-8zm4.916 10.22c-.206-.103-1.215-.598-1.403-.665-.188-.068-.325-.103-.463.103-.137.206-.531.664-.651.802-.12.137-.24.154-.446.051-.206-.103-.871-.321-1.659-1.024-.613-.546-1.027-1.221-1.147-1.427-.12-.206-.013-.317.09-.42.094-.094.206-.24.309-.36.103-.12.137-.206.206-.343.068-.137.034-.257-.017-.36-.051-.103-.463-1.116-.634-1.529-.166-.398-.336-.344-.463-.35-.12-.006-.257-.006-.394-.006-.137 0-.36.051-.55.257-.188.206-.719.703-.719 1.712s.737 1.986.84 2.12c.103.137 1.452 2.218 3.515 3.104.492.212.875.339 1.173.434.492.157.94.135 1.294.082.395-.058 1.215-.497 1.387-.978.171-.48.171-.891.12-.978-.051-.086-.188-.137-.394-.24z"/>
