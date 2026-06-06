@@ -3369,6 +3369,62 @@ async function enterBranch(session, chatId, sessionName, branch) {
   return false;
 }
 
+async function startCreateGroupFlow({ session, chatId, text, sessionName }) {
+  const textTrim = normalizeIncomingText(text);
+  const directEmails = parseEmails(textTrim);
+  let groupName = guessGroupName(textTrim);
+  const normalizedGroupName = normalizeForIntent(groupName);
+  const suspicious =
+    groupName &&
+    (normalizedGroupName.startsWith('necesito ') ||
+      normalizedGroupName.startsWith('quiero ') ||
+      normalizedGroupName.includes('compart') ||
+      normalizedGroupName.includes('invit') ||
+      normalizedGroupName.includes('@'));
+
+  if (directEmails.length && (!groupName || suspicious)) {
+    const extracted = await minimaxExtractCreateGroupDetails(textTrim);
+    if (extracted?.group_name) groupName = extracted.group_name;
+    const extraEmails = Array.isArray(extracted?.emails) ? extracted.emails : [];
+    const mergedEmails = Array.from(new Set([...directEmails, ...extraEmails]));
+    const updated = await updateWspSession(session.id, {
+      current_branch: 'crear_grupo',
+      branch_context: {
+        stage: groupName ? 'confirm_details' : 'ask_name',
+        group_name: groupName || null,
+        prefilled_emails: mergedEmails,
+        prompted: false
+      }
+    });
+    await handleCrearGrupo({ session: updated, chatId, text: groupName ? '' : textTrim, sessionName });
+    return true;
+  }
+
+  const updated = await updateWspSession(session.id, {
+    current_branch: 'crear_grupo',
+    branch_context: {
+      stage: groupName ? 'confirm_details' : 'ask_name',
+      group_name: groupName || null,
+      prefilled_emails: directEmails,
+      prompted: false
+    }
+  });
+  await handleCrearGrupo({ session: updated, chatId, text: groupName ? '' : textTrim, sessionName });
+  return true;
+}
+
+async function startShareGroupFlow({ session, chatId, text, sessionName }) {
+  const textTrim = normalizeIncomingText(text);
+  const directEmails = parseEmails(textTrim);
+  const groupNameHint = extractGroupNameForShare(textTrim);
+  const updated = await updateWspSession(session.id, {
+    current_branch: 'compartir_grupo',
+    branch_context: { stage: 'start', prefilled_emails: directEmails, prefilled_group_name: groupNameHint || null }
+  });
+  await handleCompartirGrupo({ session: updated, chatId, text: groupNameHint || textTrim, sessionName });
+  return true;
+}
+
 async function getOrCreateWspSession(phoneNumber, patch = {}) {
   const { data: existing, error } = await supabase
     .from('wsp_sessions')
@@ -4271,6 +4327,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
 
   const textTrim = normalizeIncomingText(body);
   const textLower = normalizeForIntent(textTrim);
+  const explicitIntent = detectIntentRuleBased(textTrim);
 
   if (isMenuTrigger(textLower)) {
     if (!session.user_id) {
@@ -4389,6 +4446,16 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     }
   }
 
+  if (session.current_branch && explicitIntent.intent === 'create_group' && session.current_branch !== 'crear_grupo') {
+    await startCreateGroupFlow({ session, chatId, text: textTrim, sessionName });
+    return;
+  }
+
+  if (session.current_branch && explicitIntent.intent === 'share_group' && session.current_branch !== 'compartir_grupo') {
+    await startShareGroupFlow({ session, chatId, text: textTrim, sessionName });
+    return;
+  }
+
   if (session.current_branch === 'asesor_legal') {
     await handleAsesorLegal({ session, chatId, text: textTrim, sessionName });
     return;
@@ -4452,9 +4519,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       await wahaSendText(chatId, `Para crear grupos necesito que vincules tu Google Drive: ${BRIFY_PROFILE_URL}`, sessionName);
       return;
     }
-
-    session = await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'ask_name' } });
-    await handleCrearGrupo({ session, chatId, text: textTrim, sessionName });
+    await startCreateGroupFlow({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
@@ -4555,13 +4620,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       await wahaSendText(chatId, `Para compartir grupos necesito que vincules tu Google Drive: ${BRIFY_PROFILE_URL}`, sessionName);
       return;
     }
-
-    const groupNameHint = extractGroupNameForShare(textTrim);
-    session = await updateWspSession(session.id, {
-      current_branch: 'compartir_grupo',
-      branch_context: { stage: 'start', prefilled_emails: directEmails, prefilled_group_name: groupNameHint || null }
-    });
-    await handleCompartirGrupo({ session, chatId, text: groupNameHint || textTrim, sessionName });
+    await startShareGroupFlow({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
@@ -4631,43 +4690,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       await wahaSendText(chatId, `Para crear grupos necesito que vincules tu Google Drive: ${BRIFY_PROFILE_URL}`, sessionName);
       return;
     }
-    const directEmails = parseEmails(textTrim);
-    let groupName = guessGroupName(textTrim);
-    const suspicious =
-      groupName &&
-      (normalizeForIntent(groupName).startsWith('necesito ') ||
-        normalizeForIntent(groupName).startsWith('quiero ') ||
-        normalizeForIntent(groupName).includes('compart') ||
-        normalizeForIntent(groupName).includes('@'));
-
-    if (directEmails.length && (!groupName || suspicious)) {
-      const extracted = await minimaxExtractCreateGroupDetails(textTrim);
-      if (extracted?.group_name) groupName = extracted.group_name;
-      const extraEmails = Array.isArray(extracted?.emails) ? extracted.emails : [];
-      const mergedEmails = Array.from(new Set([...directEmails, ...extraEmails]));
-      session = await updateWspSession(session.id, {
-        current_branch: 'crear_grupo',
-        branch_context: {
-          stage: groupName ? 'confirm_details' : 'ask_name',
-          group_name: groupName || null,
-          prefilled_emails: mergedEmails,
-          prompted: false
-        }
-      });
-      await handleCrearGrupo({ session, chatId, text: groupName ? '' : textTrim, sessionName });
-      return;
-    }
-
-    session = await updateWspSession(session.id, {
-      current_branch: 'crear_grupo',
-      branch_context: {
-        stage: groupName ? 'confirm_details' : 'ask_name',
-        group_name: groupName || null,
-        prefilled_emails: directEmails,
-        prompted: false
-      }
-    });
-    await handleCrearGrupo({ session, chatId, text: groupName ? '' : textTrim, sessionName });
+    await startCreateGroupFlow({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
@@ -4677,8 +4700,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       await wahaSendText(chatId, `Para compartir grupos necesito que vincules tu Google Drive: ${BRIFY_PROFILE_URL}`, sessionName);
       return;
     }
-    session = await updateWspSession(session.id, { current_branch: 'compartir_grupo', branch_context: { stage: 'start' } });
-    await handleCompartirGrupo({ session, chatId, text: textTrim, sessionName });
+    await startShareGroupFlow({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
