@@ -11,6 +11,15 @@ const supabaseServiceKey =
 const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey);
 
+if (!supabaseUrl) {
+  console.error('[WAHA webhook] Falta REACT_APP_SUPABASE_URL');
+}
+if (!supabaseServiceKey) {
+  console.warn(
+    '[WAHA webhook] SUPABASE_SERVICE_ROLE_KEY no configurado: se usará ANON key y la búsqueda en users puede fallar por RLS (terminará pidiendo correo).'
+  );
+}
+
 const WAHA_BASE_URL = process.env.WAHA_BASE_URL || '';
 const WAHA_API_KEY = process.env.WAHA_API_KEY || '';
 const DEFAULT_WAHA_SESSION = process.env.WAHA_SESSION || 'default';
@@ -3437,24 +3446,40 @@ async function getUserByPhone(phoneNumber) {
   );
 
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('users')
       .select('*')
       .in('wssp', variants)
       .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (error) {
+      console.error('[WAHA webhook] getUserByPhone (users.wssp) error:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+    }
     if (data) return data;
   } catch (_) {}
 
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('users')
       .select('*')
       .in('phone_number', variants)
       .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (error) {
+      console.error('[WAHA webhook] getUserByPhone (users.phone_number) error:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+    }
     if (data) return data;
   } catch (_) {}
 
@@ -3465,13 +3490,21 @@ async function getUserByPhone(phoneNumber) {
       .flatMap((p) => [`wssp.ilike.%${p}%`, `phone_number.ilike.%${p}%`])
       .join(',');
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('users')
         .select('*')
         .or(orFilters)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+      if (error) {
+        console.error('[WAHA webhook] getUserByPhone (users.or ilike) error:', {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint
+        });
+      }
       if (data) return data;
     } catch (_) {}
   }
