@@ -4121,7 +4121,13 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
 }
 
 async function handleWahaMessage({ chatId, body, payload, sessionName }) {
-  const phoneNumber = normalizePhoneFromChatId(chatId);
+  const phoneSource =
+    payload?._data?.key?.remoteJidAlt ||
+    payload?._data?.key?.remoteJid ||
+    payload?.from ||
+    payload?.chatId ||
+    chatId;
+  const phoneNumber = normalizePhoneFromChatId(phoneSource);
   if (!phoneNumber) return;
 
   let session = await getOrCreateWspSession(phoneNumber);
