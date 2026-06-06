@@ -3548,6 +3548,53 @@ async function probeUserLookupByPhone(phoneNumber) {
   }
 }
 
+async function linkSessionUserByPhone(session, phoneNumber) {
+  if (!session?.id) return session;
+  const normalizedPhone = normalizePhoneFromChatId(phoneNumber || session.phone_number);
+  if (!normalizedPhone) return session;
+
+  if (session.user_id) {
+    if (session.phone_number !== normalizedPhone) {
+      return updateWspSession(session.id, { phone_number: normalizedPhone });
+    }
+    return session;
+  }
+
+  let matchedUser = await getUserByPhone(normalizedPhone);
+  let matchedByAdminFolder = false;
+
+  if (!matchedUser) {
+    matchedUser = await getUserFromAdminFolderByWsp(normalizedPhone);
+    matchedByAdminFolder = Boolean(matchedUser);
+  }
+
+  if (!matchedUser?.id) {
+    if (session.phone_number !== normalizedPhone) {
+      return updateWspSession(session.id, { phone_number: normalizedPhone });
+    }
+    return session;
+  }
+
+  try {
+    await safeUpdateUserPhone(matchedUser.id, normalizedPhone);
+  } catch (_) {}
+
+  try {
+    await tryAttachWspToAdminFolder({
+      userId: matchedUser.id,
+      userEmail: matchedUser.email,
+      phoneNumber: normalizedPhone
+    });
+  } catch (_) {}
+
+  return updateWspSession(session.id, {
+    user_id: matchedUser.id,
+    phone_number: normalizedPhone,
+    current_branch: null,
+    branch_context: matchedByAdminFolder ? { linked_via: 'admin_folder' } : {}
+  });
+}
+
 async function getUserByEmail(email) {
   const { data, error } = await supabase.from('users').select('*').eq('email', email).single();
   if (error) return null;
@@ -4219,10 +4266,11 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
 }
 
 async function handleWahaMessage({ chatId, body, payload, sessionName }) {
-  const phoneNumber = normalizePhoneFromChatId(payload?._data?.key?.remoteJidAlt);
+  const phoneNumber = normalizePhoneFromChatId(payload?._data?.key?.remoteJidAlt || chatId);
   if (!phoneNumber) return;
 
   let session = await getOrCreateWspSession(phoneNumber);
+  session = await linkSessionUserByPhone(session, phoneNumber);
   const textTrim = normalizeIncomingText(body);
   const textLower = normalizeForIntent(textTrim);
 

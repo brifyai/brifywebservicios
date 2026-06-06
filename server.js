@@ -96,16 +96,7 @@ function normalizePhoneFromChatId(chatId) {
   const raw = String(chatId);
   const base = raw.includes('@') ? raw.split('@')[0] : raw;
   const digits = base.replace(/[^\d]/g, '');
-  if (!digits) return null;
-  if (digits.length > 11) {
-    if (digits.startsWith('569')) return digits.slice(0, 11);
-    if (digits.startsWith('56') && digits.length >= 11 && digits[2] === '9') return digits.slice(0, 11);
-  }
-  if (digits.length === 8) return `569${digits}`;
-  if (digits.length === 9 && digits.startsWith('9')) return `56${digits}`;
-  if (digits.length === 11 && digits.startsWith('569')) return digits;
-  if (digits.length === 12 && digits.startsWith('00569')) return digits.slice(2);
-  return digits;
+  return digits || null;
 }
 
 async function wahaSendText(chatId, text) {
@@ -198,50 +189,14 @@ async function updateWspSession(sessionId, patch) {
 }
 
 async function getUserByPhone(phoneNumber) {
-  const phone = String(phoneNumber || '').trim();
-  if (!phone) return null;
-  const digits = phone.replace(/[^\d]/g, '');
-  const tail11 = digits.length >= 11 ? digits.slice(-11) : digits;
-  const tail9 = digits.length >= 9 ? digits.slice(-9) : digits;
-  const tail8 = digits.length >= 8 ? digits.slice(-8) : digits;
-  const variants = Array.from(
-    new Set([
-      phone,
-      digits || null,
-      tail11 || null,
-      tail9 || null,
-      tail8 || null,
-      `+${digits || phone}`,
-      tail11 && `+${tail11}`,
-      digits.startsWith('569') && digits.length >= 11 ? digits.slice(0, 11) : null,
-      digits.startsWith('569') && digits.length >= 11 ? digits.slice(2, 11) : null,
-      digits.startsWith('569') && digits.length >= 11 ? digits.slice(3, 11) : null
-    ].filter(Boolean))
-  );
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('phone_number', phoneNumber)
+    .single();
 
-  try {
-    const { data } = await supabase
-      .from('users')
-      .select('*')
-      .in('wssp', variants)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (data) return data;
-  } catch (_) {}
-
-  try {
-    const { data } = await supabase
-      .from('users')
-      .select('*')
-      .in('phone_number', variants)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (data) return data;
-  } catch (_) {}
-
-  return null;
+  if (error) return null;
+  return data;
 }
 
 async function getUserByEmail(email) {
@@ -672,9 +627,8 @@ async function handleCrearDocumento({ session, chatId, text }) {
   }
 }
 
-async function handleWahaMessage({ chatId, body, payload }) {
-  const phoneLookupId = payload?._data?.key?.remoteJidAlt || payload?._data?.key?.remoteJidAlt?.toString?.() || payload?._data?.key?.remoteJid || payload?.from || chatId;
-  const phoneNumber = normalizePhoneFromChatId(phoneLookupId);
+async function handleWahaMessage({ chatId, body }) {
+  const phoneNumber = normalizePhoneFromChatId(chatId);
   if (!phoneNumber) return;
 
   let session = await getOrCreateWspSession(phoneNumber);
@@ -720,10 +674,7 @@ async function handleWahaMessage({ chatId, body, payload }) {
         return;
       }
 
-      await supabase
-        .from('users')
-        .update({ phone_number: phoneNumber, wssp: phoneNumber, phone_verified: true, updated_at: new Date().toISOString() })
-        .eq('id', byEmail.id);
+      await supabase.from('users').update({ phone_number: phoneNumber, phone_verified: true, updated_at: new Date().toISOString() }).eq('id', byEmail.id);
       session = await updateWspSession(session.id, { user_id: byEmail.id, current_branch: null, branch_context: {} });
     }
   }
@@ -1078,7 +1029,7 @@ app.post('/api/waha/webhook', async (req, res) => {
       return res.status(400).json({ success: false });
     }
 
-    await handleWahaMessage({ chatId, body, payload });
+    await handleWahaMessage({ chatId, body });
     res.json({ success: true });
   } catch (error) {
     console.error('Error procesando webhook WAHA:', error);
