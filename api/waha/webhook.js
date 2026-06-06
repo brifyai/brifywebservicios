@@ -38,6 +38,10 @@ const GEMINI_EMBEDDINGS_MODEL =
   process.env.GEMINI_EMBEDDINGS_MODEL ||
   process.env.REACT_APP_GEMINI_EMBEDDINGS_MODEL ||
   'text-embedding-004';
+const GEMINI_VISION_MODEL =
+  process.env.GEMINI_VISION_MODEL ||
+  process.env.REACT_APP_GEMINI_VISION_MODEL ||
+  'gemini-1.5-flash';
 const WAHA_MINIMAX_ENABLED = (process.env.WAHA_MINIMAX_ENABLED || 'true').toLowerCase() === 'true';
 const WAHA_MINIMAX_TEMPERATURE = Number(process.env.WAHA_MINIMAX_TEMPERATURE || '0.7');
 const WAHA_ROUTER_ENABLED = (process.env.WAHA_ROUTER_ENABLED || 'true').toLowerCase() === 'true';
@@ -50,6 +54,8 @@ const WAHA_MEDIA_TIMEOUT_MS = Number(process.env.WAHA_MEDIA_TIMEOUT_MS || '12000
 const WAHA_EMBEDDINGS_ENABLED = (process.env.WAHA_EMBEDDINGS_ENABLED || 'true').toLowerCase() === 'true';
 const WAHA_EMBEDDINGS_TIMEOUT_MS = Number(process.env.WAHA_EMBEDDINGS_TIMEOUT_MS || '15000');
 const WAHA_EMBEDDINGS_MAX_CHUNKS = Number(process.env.WAHA_EMBEDDINGS_MAX_CHUNKS || '24');
+const WAHA_VISION_ENABLED = (process.env.WAHA_VISION_ENABLED || 'true').toLowerCase() === 'true';
+const WAHA_VISION_TIMEOUT_MS = Number(process.env.WAHA_VISION_TIMEOUT_MS || '20000');
 
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
@@ -122,6 +128,50 @@ async function geminiEmbedTexts(texts, taskType = 'RETRIEVAL_DOCUMENT') {
   }
 
   return out.length ? out : null;
+}
+
+async function geminiGenerateText({ modelName, prompt, timeoutMs }) {
+  if (!GEMINI_API_KEY) return '';
+  const { GoogleGenerativeAI } = require('@google/generative-ai');
+  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: modelName });
+
+  const t = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 20000;
+  const result = await Promise.race([
+    model.generateContent(prompt),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini timeout')), t))
+  ]).catch(() => null);
+
+  const text = result?.response?.text ? result.response.text() : '';
+  return typeof text === 'string' ? sanitizeWhatsAppText(text) : '';
+}
+
+async function geminiAnalyzeImage({ imageBuffer, mimeType, userMessage }) {
+  if (!WAHA_VISION_ENABLED) return '';
+  if (!GEMINI_API_KEY) return '';
+  if (!imageBuffer || !Buffer.isBuffer(imageBuffer)) return '';
+  const mt = String(mimeType || '').trim() || 'image/jpeg';
+  const base64 = imageBuffer.toString('base64');
+
+  const promptText = `Analiza la imagen que adjunta el usuario.
+Entrega:
+1) Qué se ve (descripción breve)
+2) Texto detectado si aplica (OCR)
+3) Si parece un documento/boleta/contrato, sugiere qué información clave extraer
+Reglas: no uses Markdown.`;
+
+  const prompt = [
+    { text: promptText },
+    { inlineData: { data: base64, mimeType: mt } },
+    ...(userMessage ? [{ text: `\nContexto del usuario: ${String(userMessage).trim()}` }] : [])
+  ];
+
+  const answer = await geminiGenerateText({
+    modelName: GEMINI_VISION_MODEL,
+    prompt,
+    timeoutMs: Number.isFinite(WAHA_VISION_TIMEOUT_MS) && WAHA_VISION_TIMEOUT_MS > 0 ? WAHA_VISION_TIMEOUT_MS : 20000
+  });
+  return answer;
 }
 
 function sanitizeWhatsAppText(text) {
@@ -837,16 +887,22 @@ async function handleCasualConversation({ session, chatId, text, sessionName }) 
   const historyText = formatGlobalHistoryForModel(history, 10, 1800);
 
   let answer = '';
-  try {
-    answer = await minimaxCasualReply({ history: historyText, userMessage: userText });
-  } catch (_) {
-    answer = '';
+  if (WAHA_MINIMAX_ENABLED && MINIMAX_API_KEY) {
+    try {
+      answer = await minimaxCasualReply({ history: historyText, userMessage: userText });
+    } catch (_) {
+      answer = '';
+    }
   }
 
   if (!answer) {
-    answer = `¡Ya! 🙌 ¿Qué necesitas hacer hoy?\n\n⚖️ Asesoría legal\n📁 Crear grupo\n🤝 Compartir grupo\n📤 Subir archivo\n📋 Listar documentos/imágenes\n✍️ Crear documento\n🔍 Analizar documento`;
+    if (!WAHA_MINIMAX_ENABLED || !MINIMAX_API_KEY) {
+      answer = `Te leo 🙌\n\nAhora mismo no tengo el chat inteligente habilitado, pero igual puedo ayudarte con acciones.\n\nDime qué necesitas hacer:\n📤 Subir archivos\n📋 Listar archivos\n📁 Crear grupos\n🤝 Compartir grupos\n\nSi quieres reiniciar, escribe "menú".`;
+    } else {
+      answer = `Tuve un problema respondiendo 😕\n\nPrueba de nuevo en unos segundos.\n\nSi quieres hacer una acción, dime algo como:\n📁 "crear grupo Marketing"\n🤝 "compartir grupo Ventas con correo@empresa.com"\n📤 "subir archivo"\n📋 "listar archivos"\n\nO escribe "menú".`;
+    }
   } else {
-    answer = `${sanitizeWhatsAppText(answer)}\n\nSi quieres, dime qué necesitas: ⚖️ asesoría legal, 📁 crear grupo, 📤 subir archivo, ✍️ crear documento, etc.`;
+    answer = `${sanitizeWhatsAppText(answer)}\n\nSi quieres, dime qué necesitas hacer (crear/compartir grupo, subir/listar archivos, etc.)`;
   }
 
   let updatedAfterAssistant = null;
@@ -1618,6 +1674,19 @@ async function uploadFileFromUrlToDrive({ userId, parentFolderId, fileName, mime
   return created.data;
 }
 
+async function downloadWahaMediaBuffer(url) {
+  const headers = {
+    ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
+  };
+  const response = await fetchWithTimeout(
+    url,
+    { headers },
+    Number.isFinite(WAHA_MEDIA_TIMEOUT_MS) && WAHA_MEDIA_TIMEOUT_MS > 0 ? WAHA_MEDIA_TIMEOUT_MS : 12000
+  );
+  if (!response.ok) return null;
+  return Buffer.from(await response.arrayBuffer());
+}
+
 function escapeDriveQueryString(value) {
   return String(value || '')
     .replace(/\\/g, '\\\\')
@@ -1874,6 +1943,111 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
         vectorized_at: new Date().toISOString(),
         chunk_count: chunks.length
       }
+    }
+  });
+
+  return { ok: true, chunks: chunks.length };
+}
+
+async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mimeType, fileSize, text, source }) {
+  if (!userEmail || !fileId) return { ok: false, reason: 'missing_params' };
+
+  const contentText = String(text || '').trim();
+  if (!contentText) {
+    await upsertDocumentoAdministradorByFile({
+      userEmail,
+      fileId,
+      patch: { pendiente: true, metadata: { vector_status: 'pending_no_text', source: source || 'text' } }
+    });
+    return { ok: false, reason: 'no_text' };
+  }
+
+  await upsertDocumentoAdministradorByFile({
+    userEmail,
+    fileId,
+    patch: {
+      name: fileName || null,
+      file_type: mimeType || null,
+      file_size: Number.isFinite(Number(fileSize)) ? Number(fileSize) : null,
+      servicio: 'general',
+      pendiente: true,
+      metadata: { source: source || 'text', vector_status: 'pending' },
+      nombre_limpio: String(fileName || '').toLowerCase().replace(/[^a-z0-9]/g, '_')
+    }
+  });
+
+  if (!WAHA_EMBEDDINGS_ENABLED) {
+    await upsertDocumentoAdministradorByFile({
+      userEmail,
+      fileId,
+      patch: { content: contentText.slice(0, 12000), pendiente: true, metadata: { vector_status: 'pending_embed_disabled' } }
+    });
+    return { ok: false, reason: 'embed_disabled' };
+  }
+
+  const trimmed = contentText.length > 90000 ? contentText.slice(0, 90000) : contentText;
+  const chunks = splitTextIntoChunks(trimmed, 2200, 200).slice(
+    0,
+    Number.isFinite(WAHA_EMBEDDINGS_MAX_CHUNKS) ? WAHA_EMBEDDINGS_MAX_CHUNKS : 24
+  );
+  if (!chunks.length) {
+    await upsertDocumentoAdministradorByFile({
+      userEmail,
+      fileId,
+      patch: { pendiente: true, metadata: { vector_status: 'pending_empty_text', source: source || 'text' } }
+    });
+    return { ok: false, reason: 'empty_text' };
+  }
+
+  const embeddings = await geminiEmbedTexts(chunks, 'RETRIEVAL_DOCUMENT');
+  if (!embeddings || embeddings.length !== chunks.length) {
+    await upsertDocumentoAdministradorByFile({
+      userEmail,
+      fileId,
+      patch: { pendiente: true, metadata: { vector_status: 'pending_embed_error', source: source || 'text' } }
+    });
+    return { ok: false, reason: 'embed_failed' };
+  }
+
+  try {
+    await supabase.from('documentos_entrenador').delete().eq('entrenador', userEmail).eq('metadata->>file_id', fileId);
+  } catch (_) {}
+
+  const rows = chunks.map((c, idx) => ({
+    content: c,
+    embedding: embeddings[idx],
+    entrenador: userEmail,
+    folder_id: null,
+    metadata: {
+      file_id: fileId,
+      file_name: fileName || null,
+      chunk_type: 'chunk',
+      chunk_index: idx,
+      chunk_of_total: chunks.length,
+      source: source || 'text'
+    },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }));
+
+  const { error: insertError } = await supabase.from('documentos_entrenador').insert(rows);
+  if (insertError) {
+    await upsertDocumentoAdministradorByFile({
+      userEmail,
+      fileId,
+      patch: { pendiente: true, metadata: { vector_status: 'pending_chunk_insert_error', source: source || 'text' } }
+    });
+    return { ok: false, reason: 'chunk_insert_failed' };
+  }
+
+  await upsertDocumentoAdministradorByFile({
+    userEmail,
+    fileId,
+    patch: {
+      content: trimmed.slice(0, 12000),
+      embedding: embeddings[0],
+      pendiente: false,
+      metadata: { vector_status: 'ready', vectorized_at: new Date().toISOString(), chunk_count: chunks.length, source: source || 'text' }
     }
   });
 
@@ -2252,6 +2426,66 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
       const isLight = mt === 'application/vnd.google-apps.document' || mt.startsWith('text/');
 
       if (!WAHA_EMBEDDINGS_ENABLED) return;
+
+      if (mt.startsWith('image/')) {
+        try {
+          const buf = await downloadWahaMediaBuffer(pending.url);
+          const analysis = buf
+            ? await geminiAnalyzeImage({
+                imageBuffer: buf,
+                mimeType: mt,
+                userMessage: ''
+              })
+            : '';
+
+          if (analysis) {
+            await vectorizeTextToSupabaseForFile({
+              userEmail: user.email,
+              fileId: file.id,
+              fileName: file.name,
+              mimeType: mt || null,
+              fileSize: file.size || null,
+              text: analysis,
+              source: 'waha_image_analysis'
+            });
+
+            await wahaSendText(chatId, `🖼️ Análisis de la imagen:\n\n${sanitizeWhatsAppText(analysis)}`, sessionName, {
+              skipRewrite: true
+            });
+          } else {
+            await upsertDocumentoAdministradorByFile({
+              userEmail: user.email,
+              fileId: file.id,
+              patch: {
+                name: file.name,
+                file_type: mt || null,
+                file_size: file.size || null,
+                servicio: 'general',
+                pendiente: true,
+                metadata: { source: 'waha', action: 'upload_file', vector_status: 'pending_image_analysis_failed' },
+                nombre_limpio: String(file.name || '').toLowerCase().replace(/[^a-z0-9]/g, '_')
+              }
+            });
+          }
+        } catch (_) {
+          try {
+            await upsertDocumentoAdministradorByFile({
+              userEmail: user.email,
+              fileId: file.id,
+              patch: {
+                name: file.name,
+                file_type: mt || null,
+                file_size: file.size || null,
+                servicio: 'general',
+                pendiente: true,
+                metadata: { source: 'waha', action: 'upload_file', vector_status: 'pending_image_analysis_error' },
+                nombre_limpio: String(file.name || '').toLowerCase().replace(/[^a-z0-9]/g, '_')
+              }
+            });
+          } catch (_) {}
+        }
+        return;
+      }
 
       if (!isLight) {
         try {
