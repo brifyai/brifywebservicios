@@ -3512,6 +3512,42 @@ async function getUserByPhone(phoneNumber) {
   return null;
 }
 
+async function probeUserLookupByPhone(phoneNumber) {
+  const input = String(phoneNumber || '').trim();
+  const digits = input.replace(/[^\d]/g, '');
+  const normalized = normalizePhoneFromChatId(digits) || digits || input;
+  const candidates = Array.from(new Set([normalized, digits, input].filter((v) => typeof v === 'string' && v.trim().length > 0)));
+  const orParts = candidates.flatMap((c) => [`wssp.eq.${c}`, `phone_number.eq.${c}`]);
+  const startedAt = Date.now();
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id,email,wssp,phone_number,updated_at')
+      .or(orParts.join(','))
+      .order('updated_at', { ascending: false })
+      .limit(1);
+    return {
+      ok: !error,
+      hasServiceRole: Boolean(supabaseServiceKey),
+      candidates,
+      found: Array.isArray(data) && data.length > 0,
+      sample: Array.isArray(data) && data[0] ? { id: data[0].id, email: data[0].email, wssp: data[0].wssp, phone_number: data[0].phone_number } : null,
+      error: error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null,
+      ms: Date.now() - startedAt
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      hasServiceRole: Boolean(supabaseServiceKey),
+      candidates,
+      found: false,
+      sample: null,
+      error: { message: e?.message ? String(e.message) : String(e || 'probe error') },
+      ms: Date.now() - startedAt
+    };
+  }
+}
+
 async function getUserByEmail(email) {
   const { data, error } = await supabase.from('users').select('*').eq('email', email).single();
   if (error) return null;
@@ -4215,7 +4251,8 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     }
 
     if (!session.user_id) {
-      await updateWspSession(session.id, { current_branch: 'verify_phone', branch_context: { awaiting_email: true } });
+      const probe = await probeUserLookupByPhone(phoneNumber);
+      await updateWspSession(session.id, { current_branch: 'verify_phone', branch_context: { awaiting_email: true, _global: { last_user_lookup: probe } } });
       await wahaSendText(chatId, `¡Hola! No encontré una cuenta asociada a este número 😊 ¿Me puedes indicar el correo con el que te registraste en Brify?`, sessionName);
       return;
     }
@@ -4244,7 +4281,8 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       } else {
       const awaitingEmail = Boolean(session.branch_context?.awaiting_email);
       if (!awaitingEmail) {
-        session = await updateWspSession(session.id, { current_branch: 'verify_phone', branch_context: { awaiting_email: true } });
+        const probe = await probeUserLookupByPhone(phoneNumber);
+        session = await updateWspSession(session.id, { current_branch: 'verify_phone', branch_context: { awaiting_email: true, _global: { last_user_lookup: probe } } });
         await wahaSendText(chatId, `¡Hola! No encontré una cuenta asociada a este número 😊 ¿Me puedes indicar el correo con el que te registraste en Brify?`, sessionName);
         return;
       }
