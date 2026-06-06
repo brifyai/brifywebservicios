@@ -11,7 +11,6 @@ const Register = () => {
     email: '',
     password: '',
     confirmPassword: '',
-    telegramId: '',
     whatsapp: ''
   })
   const [showPassword, setShowPassword] = useState(false)
@@ -79,11 +78,6 @@ const Register = () => {
       newErrors.confirmPassword = 'Las contraseñas no coinciden'
     }
     
-    // Telegram ID es opcional, pero si se proporciona debe ser válido
-    if (formData.telegramId && !/^\d+$/.test(formData.telegramId)) {
-      newErrors.telegramId = 'El ID de Telegram debe contener solo números'
-    }
-
     // Whatsapp es opcional
     if (formData.whatsapp) {
       const formatted = formatWhatsappNumber(formData.whatsapp)
@@ -107,10 +101,11 @@ const Register = () => {
     setIsLoading(true)
     
     try {
+      const formattedWhatsapp = formatWhatsappNumber(formData.whatsapp)
       const userData = {
         name: formData.name.trim(),
-        telegram_id: formData.telegramId || null,
-        wssp: formatWhatsappNumber(formData.whatsapp) || null
+        phone_number: formattedWhatsapp || null,
+        wssp: formattedWhatsapp || null
       }
       
       const { error } = await signUp(formData.email, formData.password, userData)
@@ -346,40 +341,6 @@ const Register = () => {
               )}
             </div>
 
-            {/* Telegram ID */}
-            <div>
-              <label htmlFor="telegramId" className="block text-sm font-semibold text-white mb-2">
-                ID de Telegram <span className="text-gray-300">(Opcional)</span>
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                  </svg>
-                </div>
-                <input
-                  id="telegramId"
-                  name="telegramId"
-                  type="text"
-                  className={`w-full pl-12 pr-4 py-4 border ${errors.telegramId ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 'border-gray-200 focus:border-purple-500 focus:ring-purple-500'} rounded-2xl focus:ring-2 focus:outline-none transition-all duration-200 bg-white text-gray-900 placeholder-gray-400`}
-                  placeholder="123456789"
-                  value={formData.telegramId}
-                  onChange={handleChange}
-                />
-              </div>
-              {errors.telegramId && (
-                <p className="mt-2 text-sm text-red-600 flex items-center">
-                  <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  {errors.telegramId}
-                </p>
-              )}
-              <p className="mt-1 text-xs text-gray-500">
-                Puedes encontrar tu ID de Telegram contactando a @userinfobot
-              </p>
-            </div>
-
             {/* Whatsapp */}
             <div>
               <label htmlFor="whatsapp" className="block text-sm font-semibold text-white mb-2">
@@ -394,7 +355,7 @@ const Register = () => {
                   name="whatsapp"
                   type="text"
                   className={`w-full pl-12 pr-4 py-4 border ${errors.whatsapp ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 'border-gray-200 focus:border-purple-500 focus:ring-purple-500'} rounded-2xl focus:ring-2 focus:outline-none transition-all duration-200 bg-white text-gray-900 placeholder-gray-400`}
-                  placeholder="Número de Whatsapp"
+                  placeholder="+56996406106 o 96406106"
                   value={formData.whatsapp}
                   onChange={handleChange}
                 />
@@ -407,6 +368,9 @@ const Register = () => {
                   {errors.whatsapp}
                 </p>
               )}
+              <p className="mt-1 text-xs text-gray-500">
+                Si lo agregas, Brify lo guarda normalizado para que WhatsApp funcione con menos pasos.
+              </p>
             </div>
 
             {/* Password */}

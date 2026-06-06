@@ -2330,7 +2330,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
       return;
     }
 
-    const rootFolderId = await resolveRootFolderIdForUser(userEmail, session.user_id);
+    const rootFolderId = await resolveRootFolderIdForUser(userEmail, session.user_id, session.phone_number);
     if (!rootFolderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
       await wahaSendText(chatId, `No encontré tu carpeta raíz de Brify 😕 Revisa tu configuración en ${BRIFY_PROFILE_URL}`, sessionName);
@@ -2660,7 +2660,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       parentFolderId = ctx.selectedGroup.folder_id;
     } else {
-      parentFolderId = await resolveRootFolderIdForUser(user.email, session.user_id);
+      parentFolderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number);
     }
     if (!parentFolderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -2802,7 +2802,7 @@ async function handleListarArchivos({ session, chatId, text, sessionName }) {
 
     let folderId = null;
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) folderId = ctx.selectedGroup.folder_id;
-    else folderId = await resolveRootFolderIdForUser(user.email, session.user_id);
+    else folderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number);
 
     if (!folderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -2940,7 +2940,7 @@ async function handleListarArchivos({ session, chatId, text, sessionName }) {
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       folderId = ctx.selectedGroup.folder_id;
     } else {
-      folderId = await resolveRootFolderIdForUser(user.email, session.user_id);
+      folderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number);
     }
     if (!folderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -3172,7 +3172,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
 
     let folderId = null;
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) folderId = ctx.selectedGroup.folder_id;
-    else folderId = await resolveRootFolderIdForUser(user.email, session.user_id);
+    else folderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number);
 
     if (!folderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -3400,15 +3400,72 @@ async function updateWspSession(sessionId, patch) {
 }
 
 async function getUserByPhone(phoneNumber) {
-  const { data, error } = await supabase.from('users').select('*').eq('phone_number', phoneNumber).single();
+  const phone = String(phoneNumber || '').trim();
+  if (!phone) return null;
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .or(`phone_number.eq.${phone},wssp.eq.${phone}`)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
   if (error) return null;
-  return data;
+  return data || null;
 }
 
 async function getUserByEmail(email) {
   const { data, error } = await supabase.from('users').select('*').eq('email', email).single();
   if (error) return null;
   return data;
+}
+
+async function getUserFromAdminFolderByWsp(phoneNumber) {
+  const phone = String(phoneNumber || '').trim();
+  if (!phone) return null;
+  try {
+    const { data, error } = await supabase
+      .from('carpeta_administrador')
+      .select('user_id, correo, id_drive_carpeta, updated_at')
+      .eq('wsp', phone)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    if (data.user_id) {
+      const { data: user } = await supabase.from('users').select('*').eq('id', data.user_id).maybeSingle();
+      return user || null;
+    }
+    if (data.correo) {
+      const { data: user } = await supabase.from('users').select('*').eq('email', data.correo).maybeSingle();
+      return user || null;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function tryAttachWspToAdminFolder({ userId, userEmail, phoneNumber }) {
+  const phone = String(phoneNumber || '').trim();
+  if (!phone) return false;
+  try {
+    const q = supabase.from('carpeta_administrador').update({ wsp: phone, updated_at: new Date().toISOString() });
+    if (userId) {
+      const { error } = await q.eq('user_id', userId);
+      if (!error) return true;
+    }
+  } catch (_) {}
+
+  if (userEmail) {
+    try {
+      const { error } = await supabase
+        .from('carpeta_administrador')
+        .update({ wsp: phone, updated_at: new Date().toISOString() })
+        .ilike('correo', String(userEmail).trim());
+      if (!error) return true;
+    } catch (_) {}
+  }
+  return false;
 }
 
 async function isDriveLinked(userId) {
@@ -3574,17 +3631,51 @@ async function getDriveClientForUser(userId) {
   return google.drive({ version: 'v3', auth: oauth2Client });
 }
 
-async function resolveRootFolderIdForUser(userEmail, userId) {
-  const { data: adminFolder, error } = await supabase
-    .from('carpeta_administrador')
-    .select('id_drive_carpeta')
-    .or(`user_id.eq.${userId},correo.eq.${userEmail}`)
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber) {
+  const email = String(userEmail || '').trim();
+  const uid = String(userId || '').trim();
+  const phone = String(phoneNumber || '').trim();
 
-  if (error || !adminFolder?.id_drive_carpeta) return null;
-  return adminFolder.id_drive_carpeta;
+  try {
+    if (uid) {
+      const { data } = await supabase
+        .from('carpeta_administrador')
+        .select('id_drive_carpeta')
+        .eq('user_id', uid)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (data?.id_drive_carpeta) return data.id_drive_carpeta;
+    }
+  } catch (_) {}
+
+  try {
+    if (email) {
+      const { data } = await supabase
+        .from('carpeta_administrador')
+        .select('id_drive_carpeta')
+        .ilike('correo', email)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (data?.id_drive_carpeta) return data.id_drive_carpeta;
+    }
+  } catch (_) {}
+
+  try {
+    if (phone) {
+      const { data } = await supabase
+        .from('carpeta_administrador')
+        .select('id_drive_carpeta')
+        .eq('wsp', phone)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (data?.id_drive_carpeta) return data.id_drive_carpeta;
+    }
+  } catch (_) {}
+
+  return null;
 }
 
 async function createHtmlFileInDrive({ userId, parentFolderId, fileName, html }) {
@@ -3919,7 +4010,7 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       parentFolderId = ctx.selectedGroup.folder_id;
     } else {
-      parentFolderId = await resolveRootFolderIdForUser(user.email, user.id);
+      parentFolderId = await resolveRootFolderIdForUser(user.email, user.id, session.phone_number);
     }
 
     if (!parentFolderId) {
@@ -3982,7 +4073,26 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     if (!session.user_id) {
       const userByPhone = await getUserByPhone(phoneNumber);
       if (userByPhone) {
+        try {
+          await tryAttachWspToAdminFolder({ userId: userByPhone.id, userEmail: userByPhone.email, phoneNumber });
+        } catch (_) {}
         session = await updateWspSession(session.id, { user_id: userByPhone.id, branch_context: {}, current_branch: null });
+      }
+    }
+
+    if (!session.user_id) {
+      const userByAdminWsp = await getUserFromAdminFolderByWsp(phoneNumber);
+      if (userByAdminWsp) {
+        try {
+          await supabase
+            .from('users')
+            .update({ phone_number: phoneNumber, wssp: phoneNumber, phone_verified: true, updated_at: new Date().toISOString() })
+            .eq('id', userByAdminWsp.id);
+        } catch (_) {}
+        try {
+          await tryAttachWspToAdminFolder({ userId: userByAdminWsp.id, userEmail: userByAdminWsp.email, phoneNumber });
+        } catch (_) {}
+        session = await updateWspSession(session.id, { user_id: userByAdminWsp.id, branch_context: {}, current_branch: null });
       }
     }
 
@@ -3999,8 +4109,24 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   if (!session.user_id) {
     const user = await getUserByPhone(phoneNumber);
     if (user) {
+      try {
+        await tryAttachWspToAdminFolder({ userId: user.id, userEmail: user.email, phoneNumber });
+      } catch (_) {}
       session = await updateWspSession(session.id, { user_id: user.id, branch_context: {}, current_branch: null });
     } else {
+      const userByAdminWsp = await getUserFromAdminFolderByWsp(phoneNumber);
+      if (userByAdminWsp) {
+        try {
+          await supabase
+            .from('users')
+            .update({ phone_number: phoneNumber, wssp: phoneNumber, phone_verified: true, updated_at: new Date().toISOString() })
+            .eq('id', userByAdminWsp.id);
+        } catch (_) {}
+        try {
+          await tryAttachWspToAdminFolder({ userId: userByAdminWsp.id, userEmail: userByAdminWsp.email, phoneNumber });
+        } catch (_) {}
+        session = await updateWspSession(session.id, { user_id: userByAdminWsp.id, branch_context: {}, current_branch: null });
+      } else {
       const awaitingEmail = Boolean(session.branch_context?.awaiting_email);
       if (!awaitingEmail) {
         session = await updateWspSession(session.id, { current_branch: 'verify_phone', branch_context: { awaiting_email: true } });
@@ -4016,8 +4142,17 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
         return;
       }
 
-      await supabase.from('users').update({ phone_number: phoneNumber, phone_verified: true, updated_at: new Date().toISOString() }).eq('id', byEmail.id);
+      try {
+        await supabase
+          .from('users')
+          .update({ phone_number: phoneNumber, wssp: phoneNumber, phone_verified: true, updated_at: new Date().toISOString() })
+          .eq('id', byEmail.id);
+      } catch (_) {}
+      try {
+        await tryAttachWspToAdminFolder({ userId: byEmail.id, userEmail: byEmail.email, phoneNumber });
+      } catch (_) {}
       session = await updateWspSession(session.id, { user_id: byEmail.id, current_branch: null, branch_context: {} });
+      }
     }
   }
 

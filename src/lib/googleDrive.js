@@ -247,8 +247,19 @@ class GoogleDriveService {
       if (!user) return null
 
       const existing = await db.adminFolders.getByUser(user.id)
-      const existingFolderId = existing?.data?.[0]?.id_drive_carpeta
+      const existingRow = existing?.data?.[0] || null
+      const existingFolderId = existingRow?.id_drive_carpeta
       if (existingFolderId) {
+        try {
+          const { data: u } = await supabase.from('users').select('phone_number,wssp').eq('id', user.id).single()
+          const wsp = u?.phone_number || u?.wssp || null
+          if (wsp && (!existingRow?.wsp || String(existingRow.wsp).trim() === '')) {
+            await supabase
+              .from('carpeta_administrador')
+              .update({ wsp, updated_at: new Date().toISOString() })
+              .eq('id_drive_carpeta', existingFolderId)
+          }
+        } catch (_) {}
         return existingFolderId
       }
 
@@ -256,11 +267,26 @@ class GoogleDriveService {
       const newFolderId = appFolder?.id
 
       if (newFolderId) {
-        await db.adminFolders.create({
+        let wsp = null
+        try {
+          const { data: u } = await supabase.from('users').select('phone_number,wssp').eq('id', user.id).single()
+          wsp = u?.phone_number || u?.wssp || null
+        } catch (_) {
+          wsp = null
+        }
+        const createResult = await db.adminFolders.create({
           user_id: user.id,
           correo: user.email,
-          id_drive_carpeta: newFolderId
+          id_drive_carpeta: newFolderId,
+          ...(wsp ? { wsp } : {})
         })
+        if (createResult?.error && wsp) {
+          await db.adminFolders.create({
+            user_id: user.id,
+            correo: user.email,
+            id_drive_carpeta: newFolderId
+          })
+        }
       }
 
       return newFolderId
@@ -428,4 +454,3 @@ const googleDriveService = new GoogleDriveService()
 
 export default googleDriveService
 export { GoogleDriveService }
-

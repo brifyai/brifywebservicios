@@ -427,6 +427,17 @@ const Plans = () => {
       
       if (existingFolder && existingFolder.length > 0) {
         console.log('Admin folder already exists:', existingFolder[0])
+        try {
+          const wsp = userProfile?.phone_number || userProfile?.wssp || null
+          if (wsp && (!existingFolder[0]?.wsp || String(existingFolder[0].wsp).trim() === '')) {
+            await supabase
+              .from('carpeta_administrador')
+              .update({ wsp, updated_at: new Date().toISOString() })
+              .eq('id_drive_carpeta', existingFolder[0].id_drive_carpeta)
+          }
+        } catch (e) {
+          console.warn('No se pudo actualizar wsp en carpeta_administrador:', e)
+        }
         return existingFolder[0].id_drive_carpeta
       }
       
@@ -439,15 +450,27 @@ const Plans = () => {
       }
       
       // Registrar carpeta en base de datos
+      const wsp = userProfile?.phone_number || userProfile?.wssp || null
       const adminFolderData = {
         user_id: user.id,
         correo: user.email,
         id_drive_carpeta: driveFolder.id,
         plan_name: planName,
-        telegram_id: userProfile?.telegram_id || null
+        ...(wsp ? { wsp } : {})
       }
       
-      const { data: savedFolder, error: saveError } = await db.adminFolders.create(adminFolderData)
+      let { data: savedFolder, error: saveError } = await db.adminFolders.create(adminFolderData)
+      if (saveError && wsp) {
+        const retryData = {
+          user_id: user.id,
+          correo: user.email,
+          id_drive_carpeta: driveFolder.id,
+          plan_name: planName
+        }
+        const retryResult = await db.adminFolders.create(retryData)
+        savedFolder = retryResult?.data
+        saveError = retryResult?.error
+      }
       
       if (saveError) {
         console.error('Error saving admin folder to database:', saveError)

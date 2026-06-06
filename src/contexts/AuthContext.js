@@ -208,12 +208,21 @@ export const AuthProvider = ({ children }) => {
           return { data: authData }
         }
         registrationProcessed.current.add(userId)
+        const rawPhone = String(userData.phone_number || userData.wssp || '').trim()
+        const digits = rawPhone ? rawPhone.replace(/\D/g, '') : ''
+        let normalizedPhone = null
+        if (digits.length === 8) normalizedPhone = `569${digits}`
+        else if (digits.length === 9 && digits.startsWith('9')) normalizedPhone = `56${digits}`
+        else if (digits.length === 11 && digits.startsWith('569')) normalizedPhone = digits
+
         const userProfileData = {
           id: authData.user.id,
           email: email,
           name: userData.name || '',
           telegram_id: userData.telegram_id || null,
-          wssp: userData.wssp || null,
+          wssp: normalizedPhone || null,
+          phone_number: normalizedPhone || null,
+          phone_verified: false,
           plan_gratis: false,
           is_active: true,
           current_plan_id: null,
