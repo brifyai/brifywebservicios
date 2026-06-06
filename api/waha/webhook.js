@@ -308,6 +308,22 @@ function isMenuTrigger(textLower) {
   return ['menu', 'menú', 'inicio', 'volver'].includes(textLower);
 }
 
+function isExplicitCreateGroupRequest(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  const hasCreateVerb =
+    t.includes('crear') ||
+    t.includes('crea') ||
+    t.includes('armar') ||
+    t.includes('arma') ||
+    t.includes('generar') ||
+    t.includes('genera') ||
+    t.includes('hacer') ||
+    t.includes('haz');
+  const hasGroupTarget = t.includes('grupo') || t.includes('carpeta');
+  return hasCreateVerb && hasGroupTarget;
+}
+
 function isCreateDocumentTrigger(textLower) {
   if (!textLower) return false;
   if (textLower === '6') return true;
@@ -2444,6 +2460,11 @@ async function handleCompartirGrupo({ session, chatId, text, sessionName }) {
   const textTrim = normalizeIncomingText(text);
   const textLower = normalizeForIntent(textTrim);
 
+  if (isExplicitCreateGroupRequest(textTrim)) {
+    await startCreateGroupFlow({ session, chatId, text: textTrim, sessionName });
+    return;
+  }
+
   if (isMenuTrigger(textLower)) {
     await showMainMenu({ session, chatId, sessionName });
     return;
@@ -4446,6 +4467,11 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       );
       return;
     }
+  }
+
+  if (isExplicitCreateGroupRequest(textTrim) && session.current_branch !== 'crear_grupo') {
+    await startCreateGroupFlow({ session, chatId, text: textTrim, sessionName });
+    return;
   }
 
   if (session.current_branch && explicitIntent.intent === 'create_group' && session.current_branch !== 'crear_grupo') {
