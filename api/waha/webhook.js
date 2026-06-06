@@ -3369,7 +3369,7 @@ async function enterBranch(session, chatId, sessionName, branch) {
   return false;
 }
 
-async function getOrCreateWspSession(phoneNumber) {
+async function getOrCreateWspSession(phoneNumber, patch = {}) {
   const { data: existing, error } = await supabase
     .from('wsp_sessions')
     .select('*')
@@ -3378,15 +3378,25 @@ async function getOrCreateWspSession(phoneNumber) {
     .limit(1)
     .maybeSingle();
 
-  if (!error && existing) return existing;
+  if (!error && existing) {
+    const nextPatch = {};
+    if (patch.user_id && existing.user_id !== patch.user_id) nextPatch.user_id = patch.user_id;
+    if (phoneNumber && existing.phone_number !== phoneNumber) nextPatch.phone_number = phoneNumber;
+    if (patch.current_branch !== undefined && existing.current_branch !== patch.current_branch) nextPatch.current_branch = patch.current_branch;
+    if (patch.branch_context && JSON.stringify(existing.branch_context || {}) !== JSON.stringify(patch.branch_context)) {
+      nextPatch.branch_context = patch.branch_context;
+    }
+    return Object.keys(nextPatch).length ? updateWspSession(existing.id, nextPatch) : existing;
+  }
 
   const { data: created, error: createError } = await supabase
     .from('wsp_sessions')
     .insert({
       id: crypto.randomUUID(),
       phone_number: phoneNumber,
-      current_branch: null,
-      branch_context: {},
+      ...(patch.user_id ? { user_id: patch.user_id } : {}),
+      ...(patch.current_branch !== undefined ? { current_branch: patch.current_branch } : { current_branch: null }),
+      ...(patch.branch_context ? { branch_context: patch.branch_context } : { branch_context: {} }),
       last_interaction: new Date().toISOString()
     })
     .select('*')
@@ -3450,7 +3460,7 @@ async function getUserByPhone(phoneNumber) {
       .from('users')
       .select('*')
       .in('wssp', variants)
-      .order('updated_at', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
     if (error) {
@@ -3469,7 +3479,7 @@ async function getUserByPhone(phoneNumber) {
       .from('users')
       .select('*')
       .in('phone_number', variants)
-      .order('updated_at', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
     if (error) {
@@ -3494,7 +3504,7 @@ async function getUserByPhone(phoneNumber) {
         .from('users')
         .select('*')
         .or(orFilters)
-        .order('updated_at', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
       if (error) {
@@ -3522,9 +3532,9 @@ async function probeUserLookupByPhone(phoneNumber) {
   try {
     const { data, error } = await supabase
       .from('users')
-      .select('id,email,wssp,phone_number,updated_at')
+      .select('id,email,wssp,phone_number,created_at')
       .or(orParts.join(','))
-      .order('updated_at', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(1);
     return {
       ok: !error,
@@ -3548,51 +3558,19 @@ async function probeUserLookupByPhone(phoneNumber) {
   }
 }
 
-async function linkSessionUserByPhone(session, phoneNumber) {
-  if (!session?.id) return session;
-  const normalizedPhone = normalizePhoneFromChatId(phoneNumber || session.phone_number);
-  if (!normalizedPhone) return session;
+async function resolveUserByIncomingPhone(phoneNumber) {
+  const normalizedPhone = normalizePhoneFromChatId(phoneNumber);
+  if (!normalizedPhone) return { user: null, matchedByAdminFolder: false };
 
-  if (session.user_id) {
-    if (session.phone_number !== normalizedPhone) {
-      return updateWspSession(session.id, { phone_number: normalizedPhone });
-    }
-    return session;
-  }
-
-  let matchedUser = await getUserByPhone(normalizedPhone);
+  let user = await getUserByPhone(normalizedPhone);
   let matchedByAdminFolder = false;
 
-  if (!matchedUser) {
-    matchedUser = await getUserFromAdminFolderByWsp(normalizedPhone);
-    matchedByAdminFolder = Boolean(matchedUser);
+  if (!user) {
+    user = await getUserFromAdminFolderByWsp(normalizedPhone);
+    matchedByAdminFolder = Boolean(user);
   }
 
-  if (!matchedUser?.id) {
-    if (session.phone_number !== normalizedPhone) {
-      return updateWspSession(session.id, { phone_number: normalizedPhone });
-    }
-    return session;
-  }
-
-  try {
-    await safeUpdateUserPhone(matchedUser.id, normalizedPhone);
-  } catch (_) {}
-
-  try {
-    await tryAttachWspToAdminFolder({
-      userId: matchedUser.id,
-      userEmail: matchedUser.email,
-      phoneNumber: normalizedPhone
-    });
-  } catch (_) {}
-
-  return updateWspSession(session.id, {
-    user_id: matchedUser.id,
-    phone_number: normalizedPhone,
-    current_branch: null,
-    branch_context: matchedByAdminFolder ? { linked_via: 'admin_folder' } : {}
-  });
+  return { user: user || null, matchedByAdminFolder, normalizedPhone };
 }
 
 async function getUserByEmail(email) {
@@ -3610,13 +3588,13 @@ async function safeUpdateUserPhone(userId, phoneNumber) {
   try {
     const { error } = await supabase
       .from('users')
-      .update({ phone_number: phone, wssp: phone, phone_verified: true, updated_at: new Date().toISOString() })
+      .update({ phone_number: phone, wssp: phone, phone_verified: true })
       .eq('id', uid);
     if (!error) return true;
   } catch (_) {}
 
   try {
-    const { error } = await supabase.from('users').update({ wssp: phone, updated_at: new Date().toISOString() }).eq('id', uid);
+    const { error } = await supabase.from('users').update({ wssp: phone }).eq('id', uid);
     if (!error) return true;
   } catch (_) {}
 
@@ -4269,8 +4247,28 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   const phoneNumber = normalizePhoneFromChatId(payload?._data?.key?.remoteJidAlt || chatId);
   if (!phoneNumber) return;
 
-  let session = await getOrCreateWspSession(phoneNumber);
-  session = await linkSessionUserByPhone(session, phoneNumber);
+  const { user: userByIncomingPhone, matchedByAdminFolder, normalizedPhone } = await resolveUserByIncomingPhone(phoneNumber);
+  let session = await getOrCreateWspSession(normalizedPhone || phoneNumber, userByIncomingPhone?.id
+    ? {
+        user_id: userByIncomingPhone.id,
+        current_branch: null,
+        branch_context: matchedByAdminFolder ? { linked_via: 'admin_folder' } : {}
+      }
+    : {});
+
+  if (userByIncomingPhone?.id) {
+    try {
+      await safeUpdateUserPhone(userByIncomingPhone.id, normalizedPhone || phoneNumber);
+    } catch (_) {}
+    try {
+      await tryAttachWspToAdminFolder({
+        userId: userByIncomingPhone.id,
+        userEmail: userByIncomingPhone.email,
+        phoneNumber: normalizedPhone || phoneNumber
+      });
+    } catch (_) {}
+  }
+
   const textTrim = normalizeIncomingText(body);
   const textLower = normalizeForIntent(textTrim);
 
