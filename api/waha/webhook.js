@@ -4121,13 +4121,7 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
 }
 
 async function handleWahaMessage({ chatId, body, payload, sessionName }) {
-  const phoneSource =
-    payload?._data?.key?.remoteJidAlt ||
-    payload?._data?.key?.remoteJid ||
-    payload?.from ||
-    payload?.chatId ||
-    chatId;
-  const phoneNumber = normalizePhoneFromChatId(phoneSource);
+  const phoneNumber = normalizePhoneFromChatId(payload?._data?.key?.remoteJidAlt);
   if (!phoneNumber) return;
 
   let session = await getOrCreateWspSession(phoneNumber);
@@ -4628,7 +4622,7 @@ module.exports = async (req, res) => {
       return res.json({ success: true });
     }
 
-    const chatId = payload?._data?.key?.remoteJidAlt || payload.from || payload.chatId;
+    const chatId = payload?._data?.key?.remoteJidAlt;
     const body = payload.body;
     if (!chatId) {
       return res.status(400).json({ success: false });
@@ -4648,7 +4642,7 @@ module.exports = async (req, res) => {
     try {
       const payload = req.body?.payload || {};
       const sessionName = req.body?.session || DEFAULT_WAHA_SESSION;
-      const chatId = payload?._data?.key?.remoteJidAlt || payload.from || payload.chatId;
+      const chatId = payload?._data?.key?.remoteJidAlt;
       if (chatId) {
         await wahaStopTyping(chatId, sessionName);
         await wahaSendText(chatId, `Tuve un problema procesando tu mensaje 😕\n\nEscribe "menú" para reiniciar y lo intentamos de nuevo.`, sessionName, { skipRewrite: true });
