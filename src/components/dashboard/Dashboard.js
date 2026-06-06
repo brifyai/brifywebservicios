@@ -741,7 +741,7 @@ const Dashboard = () => {
               {/* Menú de personalización oculto */}
               
               <a
-                href={`https://wa.me/56939558133?text=${encodeURIComponent('Hola agente brify!')}`}
+                href={`https://wa.me/56936942575?text=${encodeURIComponent('Hola agente brify!')}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => {
@@ -811,7 +811,7 @@ const Dashboard = () => {
                 {/* Menú de personalización oculto en móvil */}
                 
                 <a
-                  href={`https://wa.me/56939558133?text=${encodeURIComponent('Hola agente brify!')}`}
+                  href={`https://wa.me/56936942575?text=${encodeURIComponent('Hola agente brify!')}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={(e) => {
@@ -880,7 +880,7 @@ const Dashboard = () => {
               {/* Menú de personalización oculto en tablet */}
               
               <a
-                href={`https://wa.me/56939558133?text=${encodeURIComponent('Hola agente brify!')}`}
+                href={`https://wa.me/56936942575?text=${encodeURIComponent('Hola agente brify!')}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => {

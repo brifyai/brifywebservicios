@@ -192,6 +192,12 @@ function normalizeIncomingText(text) {
   return String(text).trim();
 }
 
+function isValidEmail(text) {
+  const s = String(text || '').trim();
+  if (!s) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
 function normalizeForEmbedding(text) {
   return String(text || '')
     .toLowerCase()
@@ -3413,6 +3419,8 @@ async function getUserByPhone(phoneNumber) {
       `+${phone}`,
       phone.startsWith('569') && phone.length === 11 ? phone.slice(2) : null,
       phone.startsWith('569') && phone.length === 11 ? phone.slice(3) : null,
+      phone.length >= 9 ? phone.slice(-9) : null,
+      phone.length >= 8 ? phone.slice(-8) : null,
       phone.startsWith('56') && phone.length === 11 ? `+${phone}` : null
     ].filter(Boolean))
   );
@@ -4180,6 +4188,11 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       }
 
       const email = textTrim.trim().toLowerCase();
+      if (!isValidEmail(email)) {
+        await updateWspSession(session.id, { current_branch: 'verify_phone', branch_context: { awaiting_email: true } });
+        await wahaSendText(chatId, `Para vincular tu cuenta necesito tu correo 🙌\n\nEjemplo: nombre@correo.com`, sessionName);
+        return;
+      }
       const byEmail = await getUserByEmail(email);
       if (!byEmail) {
         await updateWspSession(session.id, { current_branch: null, branch_context: { awaiting_email: true } });
