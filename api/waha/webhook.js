@@ -341,7 +341,7 @@ function buildMainMenu(nombre, meta = {}) {
     header = `Hola${displayName} 👋 ¿En qué te puedo ayudar?`;
   }
 
-  return `${header}\n\nPuedes decirlo directo (ej: "crear grupo Marketing", "compartir grupo Ventas con correo@empresa.com") o usar estas opciones:\n\n1️⃣ ⚖️ Asesor legal\n2️⃣ 📁 Crear grupo\n3️⃣ 🤝 Compartir grupo\n4️⃣ 📤 Subir archivo\n5️⃣ 📋 Listar archivos\n6️⃣ ✍️ Crear documento\n7️⃣ 🔍 Analizar documento`;
+  return `${header}\n\nEstoy en modo conversacional, así que puedes hablarme natural y yo intento resolverlo o activar la herramienta correcta.\n\nPor ejemplo: "crear grupo Marketing", "compartir grupo Ventas con correo@empresa.com" o simplemente hacer una pregunta.\n\nSi prefieres, también puedes usar estas opciones:\n\n1️⃣ ⚖️ Asesor legal\n2️⃣ 📁 Crear grupo\n3️⃣ 🤝 Compartir grupo\n4️⃣ 📤 Subir archivo\n5️⃣ 📋 Listar archivos\n6️⃣ ✍️ Crear documento\n7️⃣ 🔍 Analizar documento`;
 }
 
 async function showMainMenu({ session, chatId, sessionName }) {
@@ -349,7 +349,7 @@ async function showMainMenu({ session, chatId, sessionName }) {
   const minutesSinceLast = Number.isFinite(last) ? (Date.now() - last) / 60000 : null;
   const firstInteraction = !last || !Number.isFinite(minutesSinceLast);
 
-  const updated = await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+  const updated = await updateWspSession(session.id, { current_branch: 'casual', branch_context: {} });
   let name = '';
   if (updated.user_id) {
     const { data: user } = await supabase.from('users').select('name, full_name').eq('id', updated.user_id).single();
@@ -851,11 +851,13 @@ function formatGlobalHistoryForModel(history, maxItems = 10, maxChars = 1800) {
 
 async function minimaxCasualReply({ history, userMessage }) {
   if (!MINIMAX_API_KEY) return '';
-  const system = `Eres Brify en WhatsApp. Responde en español chileno neutral (sin voseo), humano y cercano.
-Objetivo: mantener una conversación breve y útil, sin perder el hilo.
+  const system = `Eres Brify en WhatsApp. Responde en español chileno neutral (sin voseo), humano, cercano y útil.
+Objetivo: conversar de forma natural y detectar cuándo hay que activar una capacidad de Brify.
 Reglas:
-- Si el usuario solo saluda o conversa, responde amable y pregunta qué necesita.
-- Si el usuario expresa una intención (asesoría legal, crear/compartir grupo, subir/listar/analizar/crear documento), invítalo a decirlo tal cual (sin exigir número).
+- Si el usuario hace una pregunta general o conversa de cualquier tema, respóndela con normalidad. No digas que solo ayudas con grupos, archivos o temas legales.
+- Si el usuario solo saluda o conversa, responde amable y sigue la conversación.
+- Si detectas una intención de Brify pero falta un dato para ejecutar, pide solo la mínima aclaración necesaria.
+- Si la intención ya está clara, responde de forma breve y alineada con esa intención, sin obligar al usuario a usar menús ni números.
 - No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
 - No inventes datos.`;
 
@@ -926,7 +928,7 @@ async function handleCasualConversation({ session, chatId, text, sessionName }) 
       answer = `Tuve un problema respondiendo 😕\n\nPrueba de nuevo en unos segundos.\n\nSi quieres hacer una acción, dime algo como:\n📁 "crear grupo Marketing"\n🤝 "compartir grupo Ventas con correo@empresa.com"\n📤 "subir archivo"\n📋 "listar archivos"\n\nO escribe "menú".`;
     }
   } else {
-    answer = `${sanitizeWhatsAppText(answer)}\n\nSi quieres, dime qué necesitas hacer (crear/compartir grupo, subir/listar archivos, etc.)`;
+    answer = sanitizeWhatsAppText(answer);
   }
 
   let updatedAfterAssistant = null;
