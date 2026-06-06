@@ -267,6 +267,10 @@ function normalizePhoneFromChatId(chatId) {
   const base = raw.includes('@') ? raw.split('@')[0] : raw;
   const digits = base.replace(/[^\d]/g, '');
   if (!digits) return null;
+  if (digits.length > 11) {
+    if (digits.startsWith('569')) return digits.slice(0, 11);
+    if (digits.startsWith('56') && digits.length >= 11 && digits[2] === '9') return digits.slice(0, 11);
+  }
   if (digits.length === 8) return `569${digits}`;
   if (digits.length === 9 && digits.startsWith('9')) return `56${digits}`;
   if (digits.length === 11 && digits.startsWith('569')) return digits;
@@ -3413,15 +3417,22 @@ async function updateWspSession(sessionId, patch) {
 async function getUserByPhone(phoneNumber) {
   const phone = String(phoneNumber || '').trim();
   if (!phone) return null;
+  const digits = phone.replace(/[^\d]/g, '');
+  const tail11 = digits.length >= 11 ? digits.slice(-11) : digits;
+  const tail9 = digits.length >= 9 ? digits.slice(-9) : digits;
+  const tail8 = digits.length >= 8 ? digits.slice(-8) : digits;
   const variants = Array.from(
     new Set([
       phone,
-      `+${phone}`,
-      phone.startsWith('569') && phone.length === 11 ? phone.slice(2) : null,
-      phone.startsWith('569') && phone.length === 11 ? phone.slice(3) : null,
-      phone.length >= 9 ? phone.slice(-9) : null,
-      phone.length >= 8 ? phone.slice(-8) : null,
-      phone.startsWith('56') && phone.length === 11 ? `+${phone}` : null
+      digits || null,
+      tail11 || null,
+      tail9 || null,
+      tail8 || null,
+      `+${digits || phone}`,
+      tail11 && `+${tail11}`,
+      digits.startsWith('569') && digits.length >= 11 ? digits.slice(0, 11) : null,
+      digits.startsWith('569') && digits.length >= 11 ? digits.slice(2, 11) : null,
+      digits.startsWith('569') && digits.length >= 11 ? digits.slice(3, 11) : null
     ].filter(Boolean))
   );
 
@@ -3446,6 +3457,24 @@ async function getUserByPhone(phoneNumber) {
       .maybeSingle();
     if (data) return data;
   } catch (_) {}
+
+  const patterns = Array.from(new Set([digits, tail11, tail9, tail8].filter((p) => typeof p === 'string' && p.length >= 8)));
+  if (patterns.length) {
+    const safePatterns = patterns.map((p) => p.replace(/[^\d]/g, '')).filter((p) => p.length >= 8);
+    const orFilters = safePatterns
+      .flatMap((p) => [`wssp.ilike.%${p}%`, `phone_number.ilike.%${p}%`])
+      .join(',');
+    try {
+      const { data } = await supabase
+        .from('users')
+        .select('*')
+        .or(orFilters)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (data) return data;
+    } catch (_) {}
+  }
 
   return null;
 }
