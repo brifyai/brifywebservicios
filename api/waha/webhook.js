@@ -1516,6 +1516,125 @@ Reglas:
   }
 }
 
+async function minimaxExtractCreateGroupDetails(text) {
+  if (!WAHA_MINIMAX_ENABLED) return null;
+  if (!MINIMAX_API_KEY) return null;
+  const t = String(text || '').trim();
+  if (!t) return null;
+
+  const system = `Extrae datos para crear un grupo y, si aplica, compartirlo.
+Devuelve SOLO JSON válido (sin texto extra).
+Formato:
+{"group_name":string|null,"emails":string[]}
+Reglas:
+- group_name: SOLO el nombre del grupo, sin verbos (ej: no "Necesito X", solo "X").
+- emails: correos en minúscula, únicos.
+- Si no hay un dato, usa null o [].
+- No inventes correos ni nombres.`;
+
+  try {
+    const response = await fetchWithTimeout(
+      MINIMAX_ENDPOINT,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${MINIMAX_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: MINIMAX_MODEL,
+          system,
+          temperature: 0,
+          max_tokens: 160,
+          messages: [{ role: 'user', content: t }]
+        })
+      },
+      Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+    );
+
+    if (!response.ok) return null;
+    const data = await response.json().catch(() => ({}));
+    let raw = data?.content;
+    if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+    if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+    if (typeof raw !== 'string') return null;
+
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    const groupName = typeof parsed?.group_name === 'string' ? parsed.group_name.trim() : null;
+    const emails = Array.isArray(parsed?.emails) ? parsed.emails.map((e) => String(e || '').toLowerCase().trim()).filter(Boolean) : [];
+    const uniq = Array.from(new Set(emails));
+    return {
+      group_name: groupName && groupName.length >= 2 ? groupName : null,
+      emails: uniq
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function parseCreateGroupUserAction(text) {
+  const t = normalizeForIntent(text);
+  const raw = String(text || '').trim();
+  const emails = parseEmails(raw);
+
+  if (!t) return { action: 'unknown', emails };
+
+  if (
+    t.includes('cancel') ||
+    t.includes('cancela') ||
+    t.includes('olvida') ||
+    t.includes('da lo mismo') ||
+    t.includes('ya no') ||
+    t === 'no'
+  ) {
+    return { action: 'cancel', emails };
+  }
+
+  if (
+    t.includes('no compartir') ||
+    t.includes('sin compartir') ||
+    t.includes('no lo compart') ||
+    t.includes('no lo envies') ||
+    t.includes('no lo envíes') ||
+    t.includes('no lo mandes')
+  ) {
+    return { action: 'no_share', emails };
+  }
+
+  if (emails.length) return { action: 'add_emails', emails };
+
+  const yn = normalizeYesNo(raw);
+  if (yn === true) return { action: 'confirm', emails };
+  if (yn === false) return { action: 'cancel', emails };
+
+  const name = guessGroupName(raw);
+  if (
+    t.includes('cambia') ||
+    t.includes('editar') ||
+    t.includes('modifica') ||
+    t.includes('ponle') ||
+    t.includes('pon') ||
+    t.includes('nombre')
+  ) {
+    return { action: name ? 'edit_name' : 'unknown', name, emails };
+  }
+
+  if (name && (t.startsWith('se llama') || t.startsWith('llamalo') || t.startsWith('llámalo'))) {
+    return { action: 'edit_name', name, emails };
+  }
+
+  return { action: 'unknown', emails };
+}
+
+function formatCreateGroupSummary({ groupName, emails }) {
+  const n = String(groupName || '').trim();
+  const e = Array.isArray(emails) ? emails : [];
+  const emailLine = e.length ? `🤝 Compartir con: ${e.join(', ')}` : `🤝 Compartir: (por ahora nadie)`;
+  return `Entendí esto 👇\n📁 Grupo: ${n || '(sin nombre)'}\n${emailLine}`;
+}
+
 function parseEmails(text) {
   const matches = String(text || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
   return Array.from(new Set(matches.map((e) => e.toLowerCase())));
@@ -1543,16 +1662,42 @@ function extractQuoted(text) {
 function guessGroupName(text) {
   const quoted = extractQuoted(text);
   if (quoted) return quoted;
-  const t = String(text || '').trim();
-  if (!t) return null;
-  const cleaned = t
-    .replace(/crear( un| una)?/i, '')
-    .replace(/grupo/i, '')
-    .replace(/llamad[oa]/i, '')
-    .replace(/que se llame/i, '')
-    .replace(/con/gi, '')
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+
+  const withoutEmails = raw.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, ' ');
+  const base = withoutEmails.replace(/\s+/g, ' ').trim();
+  if (!base) return null;
+
+  const patterns = [
+    /\b(llamado|llamada|que\s+se\s+llame|que\s+se\s+llamara|nombre)\b\s+(?<name>[^,;\n]+?)(?=\s+(y|con|para|a|que)\b|$)/i,
+    /\bgrupo\b\s+(?<name>[^,;\n]+?)(?=\s+(y|con|para|a|que)\b|$)/i,
+    /\bcarpeta\b\s+(?<name>[^,;\n]+?)(?=\s+(y|con|para|a|que)\b|$)/i
+  ];
+
+  for (const re of patterns) {
+    const m = base.match(re);
+    const name = m?.groups?.name ? String(m.groups.name).trim() : '';
+    if (name.length >= 2) {
+      const cleaned = name.replace(/^[“”"'`]+|[“”"'`]+$/g, '').replace(/[.,;:!?()]+$/g, '').trim();
+      if (cleaned.length >= 2) return cleaned;
+    }
+  }
+
+  let cleaned = base;
+  cleaned = cleaned
+    .replace(/\b(necesito|quiero|por\s+favor|ayudame|ayúdame|podrias|podrías|me\s+gustaria|me\s+gustaría)\b/gi, ' ')
+    .replace(/\b(crear|arma|armar|hacer|generar)\b/gi, ' ')
+    .replace(/\b(un|una|el|la|los|las)\b/gi, ' ')
+    .replace(/\b(grupo|carpeta)\b/gi, ' ')
+    .replace(/\b(llamado|llamada|nombre|que\s+se\s+llame)\b/gi, ' ')
+    .replace(/\b(y\s+que\s+se\s+compart[ae]|y\s+compart[ei]r|compart[ei]r|dar\s+acceso|invitar|invita|agrega|agregar|añade|anade)\b[\s\S]*$/i, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
+
+  cleaned = cleaned.replace(/^[“”"'`]+|[“”"'`]+$/g, '').replace(/[.,;:!?()]+$/g, '').trim();
   if (cleaned.length < 2) return null;
+  if (cleaned.length > 80) cleaned = cleaned.slice(0, 80).trim();
   return cleaned;
 }
 
@@ -2073,23 +2218,107 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
   if (ctx.stage === 'ask_name') {
     const name = guessGroupName(textTrim);
     if (!name) {
-      await wahaSendText(chatId, `Dime el nombre del grupo 📁 (puedes escribirlo entre comillas).`, sessionName);
+      await wahaSendText(chatId, `Dime el nombre del grupo 📁 (si quieres, escríbelo entre comillas).`, sessionName);
       return;
     }
-    await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'confirm_name', group_name: name } });
-    await wahaSendText(chatId, `Perfecto ✅ ¿Confirmas crear el grupo "${name}"? (sí/no)`, sessionName);
+    const extraEmails = parseEmails(textTrim);
+    const prefilledEmails = Array.isArray(ctx.prefilled_emails) ? ctx.prefilled_emails : [];
+    const mergedEmails = Array.from(new Set([...prefilledEmails, ...extraEmails]));
+    await updateWspSession(session.id, {
+      current_branch: 'crear_grupo',
+      branch_context: { stage: 'confirm_details', group_name: name, prefilled_emails: mergedEmails, prompted: false }
+    });
+    await handleCrearGrupo({
+      session: { ...session, branch_context: { stage: 'confirm_details', group_name: name, prefilled_emails: mergedEmails, prompted: false } },
+      chatId,
+      text: '',
+      sessionName
+    });
     return;
   }
 
   if (ctx.stage === 'confirm_name') {
-    const ok = normalizeYesNo(textTrim);
-    if (ok === false) {
-      await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'ask_name' } });
-      await wahaSendText(chatId, `Ok 🙌 ¿Qué nombre le ponemos entonces?`, sessionName);
+    await updateWspSession(session.id, {
+      current_branch: 'crear_grupo',
+      branch_context: {
+        stage: 'confirm_details',
+        group_name: ctx.group_name || null,
+        prefilled_emails: Array.isArray(ctx.prefilled_emails) ? ctx.prefilled_emails : [],
+        prompted: false
+      }
+    });
+    await handleCrearGrupo({
+      session: {
+        ...session,
+        branch_context: {
+          stage: 'confirm_details',
+          group_name: ctx.group_name || null,
+          prefilled_emails: Array.isArray(ctx.prefilled_emails) ? ctx.prefilled_emails : [],
+          prompted: false
+        }
+      },
+      chatId,
+      text: '',
+      sessionName
+    });
+    return;
+  }
+
+  if (ctx.stage === 'confirm_details') {
+    const groupName = String(ctx.group_name || '').trim();
+    const prefilledEmails = Array.isArray(ctx.prefilled_emails) ? ctx.prefilled_emails : [];
+
+    if (!ctx.prompted) {
+      const summary = formatCreateGroupSummary({ groupName, emails: prefilledEmails });
+      await updateWspSession(session.id, {
+        current_branch: 'crear_grupo',
+        branch_context: { ...ctx, stage: 'confirm_details', group_name: groupName || null, prefilled_emails: prefilledEmails, prompted: true }
+      });
+      await wahaSendText(
+        chatId,
+        `${summary}\n\n¿Le damos? 🙌\n\nResponde por ejemplo:\n✅ "dale"\n✏️ "cambia el nombre a Medicinas 2026"\n📧 "agrega seba@empresa.com"\n🚫 "no lo compartas"\n🛑 "cancelar"`,
+        sessionName
+      );
       return;
     }
-    if (ok !== true) {
-      await wahaSendText(chatId, `¿Confirmas? Responde "sí" o "no" 🙌`, sessionName);
+
+    const action = parseCreateGroupUserAction(textTrim);
+    const mergedEmails = action.emails?.length ? Array.from(new Set([...prefilledEmails, ...action.emails])) : prefilledEmails;
+
+    if (action.action === 'cancel') {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `Listo 🙌 Quedamos en el menú conversacional. ¿Qué necesitas ahora?`, sessionName);
+      return;
+    }
+
+    if (action.action === 'no_share') {
+      const nextCtx = { ...ctx, prefilled_emails: [], prompted: false };
+      await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: nextCtx });
+      await handleCrearGrupo({ session: { ...session, branch_context: nextCtx }, chatId, text: '', sessionName });
+      return;
+    }
+
+    if (action.action === 'add_emails') {
+      const nextCtx = { ...ctx, prefilled_emails: mergedEmails, prompted: false };
+      await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: nextCtx });
+      await handleCrearGrupo({ session: { ...session, branch_context: nextCtx }, chatId, text: '', sessionName });
+      return;
+    }
+
+    if (action.action === 'edit_name') {
+      const nextName = String(action.name || '').trim();
+      if (!nextName || nextName.length < 2) {
+        await wahaSendText(chatId, `Dime el nombre nuevo del grupo 📁 (si quieres, entre comillas).`, sessionName);
+        return;
+      }
+      const nextCtx = { ...ctx, group_name: nextName, prompted: false };
+      await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: nextCtx });
+      await handleCrearGrupo({ session: { ...session, branch_context: nextCtx }, chatId, text: '', sessionName });
+      return;
+    }
+
+    if (action.action !== 'confirm') {
+      await wahaSendText(chatId, `¿Le damos a crear el grupo o quieres cambiar algo? 🙌\n\nPuedes decir: "dale", "cambia nombre a X", "agrega correo@..." o "cancelar".`, sessionName);
       return;
     }
 
@@ -2108,14 +2337,14 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
       return;
     }
 
-    const groupName = String(ctx.group_name || 'Grupo').trim();
-    const folder = await createDriveFolder({ userId: session.user_id, parentFolderId: rootFolderId, name: groupName });
+    const finalGroupName = groupName || 'Grupo';
+    const folder = await createDriveFolder({ userId: session.user_id, parentFolderId: rootFolderId, name: finalGroupName });
 
     await supabase.from('grupos_drive').insert({
       id: crypto.randomUUID(),
       owner_id: session.user_id,
-      group_name: groupName,
-      nombre_grupo_low: groupName.toLowerCase(),
+      group_name: finalGroupName,
+      nombre_grupo_low: finalGroupName.toLowerCase(),
       folder_id: folder.id,
       administrador: userEmail,
       extension: 'abogados',
@@ -2123,8 +2352,32 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
       updated_at: new Date().toISOString()
     });
 
-    await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'ask_share', folder_id: folder.id, group_name: groupName } });
-    await wahaSendText(chatId, `¡Listo! 🎉 Tu grupo "${groupName}" fue creado.\n\n¿Quieres compartirlo con alguien? Puedes indicarme uno o varios correos separados por coma, o escribe "no".`, sessionName);
+    const role = process.env.WAHA_DRIVE_SHARE_ROLE || 'reader';
+    if (mergedEmails.length) {
+      try {
+        await shareDriveFolder({ userId: session.user_id, folderId: folder.id, emails: mergedEmails, role });
+        await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+        await wahaSendText(chatId, `¡Listo! 🎉 Creé "${finalGroupName}" y lo compartí con: ${mergedEmails.join(', ')}\n\n¿Algo más?`, sessionName);
+        return;
+      } catch (_) {
+        await updateWspSession(session.id, {
+          current_branch: 'crear_grupo',
+          branch_context: { stage: 'ask_share', folder_id: folder.id, group_name: finalGroupName }
+        });
+        await wahaSendText(
+          chatId,
+          `Creé "${finalGroupName}" ✅\n\nNo pude compartirlo todavía 😕\nPásame los correos (separados por coma) o escribe "no".`,
+          sessionName
+        );
+        return;
+      }
+    }
+
+    await updateWspSession(session.id, {
+      current_branch: 'crear_grupo',
+      branch_context: { stage: 'ask_share', folder_id: folder.id, group_name: finalGroupName }
+    });
+    await wahaSendText(chatId, `¡Listo! 🎉 Creé "${finalGroupName}".\n\n¿Con quién lo compartimos? Puedes mandarme uno o varios correos, o decir "no".`, sessionName);
     return;
   }
 
@@ -2132,13 +2385,18 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
     const ok = normalizeYesNo(textTrim);
     if (ok === false) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
-      await wahaSendText(chatId, `Perfecto ✅ ¿Necesitas algo más? Escribe "menú" 🙌`, sessionName);
+      await wahaSendText(chatId, `Perfecto ✅ ¿Qué necesitas ahora?`, sessionName);
+      return;
+    }
+    if (textLower.includes('despues') || textLower.includes('después') || textLower.includes('mas tarde') || textLower.includes('más tarde')) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `Dale 🙌 Cuando quieras lo compartimos. ¿Qué más hacemos?`, sessionName);
       return;
     }
 
     const emails = parseEmails(textTrim);
     if (!emails.length) {
-      await wahaSendText(chatId, `Pásame uno o varios correos separados por coma, o escribe "no".`, sessionName);
+      await wahaSendText(chatId, `Pásame los correos (pueden ser varios) o dime "no".`, sessionName);
       return;
     }
 
@@ -2146,7 +2404,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
     try {
       await shareDriveFolder({ userId: session.user_id, folderId: ctx.folder_id, emails, role });
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
-      await wahaSendText(chatId, `¡Hecho! ✅ Compartí "${ctx.group_name}" con: ${emails.join(', ')}\n\n¿Algo más? Escribe "menú" 🙌`, sessionName);
+      await wahaSendText(chatId, `¡Hecho! ✅ Compartí "${ctx.group_name}" con: ${emails.join(', ')}\n\n¿Algo más?`, sessionName);
     } catch (_) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
       await wahaSendText(chatId, `Tuve un problema compartiendo el grupo 😕\n\n¿Quieres intentarlo de nuevo? Escribe "compartir grupo"`, sessionName);
@@ -4037,8 +4295,43 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       await wahaSendText(chatId, `Para crear grupos necesito que vincules tu Google Drive: ${BRIFY_PROFILE_URL}`, sessionName);
       return;
     }
-    session = await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'ask_name' } });
-    await handleCrearGrupo({ session, chatId, text: textTrim, sessionName });
+    const directEmails = parseEmails(textTrim);
+    let groupName = guessGroupName(textTrim);
+    const suspicious =
+      groupName &&
+      (normalizeForIntent(groupName).startsWith('necesito ') ||
+        normalizeForIntent(groupName).startsWith('quiero ') ||
+        normalizeForIntent(groupName).includes('compart') ||
+        normalizeForIntent(groupName).includes('@'));
+
+    if (directEmails.length && (!groupName || suspicious)) {
+      const extracted = await minimaxExtractCreateGroupDetails(textTrim);
+      if (extracted?.group_name) groupName = extracted.group_name;
+      const extraEmails = Array.isArray(extracted?.emails) ? extracted.emails : [];
+      const mergedEmails = Array.from(new Set([...directEmails, ...extraEmails]));
+      session = await updateWspSession(session.id, {
+        current_branch: 'crear_grupo',
+        branch_context: {
+          stage: groupName ? 'confirm_details' : 'ask_name',
+          group_name: groupName || null,
+          prefilled_emails: mergedEmails,
+          prompted: false
+        }
+      });
+      await handleCrearGrupo({ session, chatId, text: groupName ? '' : textTrim, sessionName });
+      return;
+    }
+
+    session = await updateWspSession(session.id, {
+      current_branch: 'crear_grupo',
+      branch_context: {
+        stage: groupName ? 'confirm_details' : 'ask_name',
+        group_name: groupName || null,
+        prefilled_emails: directEmails,
+        prompted: false
+      }
+    });
+    await handleCrearGrupo({ session, chatId, text: groupName ? '' : textTrim, sessionName });
     return;
   }
 
