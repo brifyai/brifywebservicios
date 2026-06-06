@@ -750,10 +750,6 @@ const Dashboard = () => {
                     toast.error('Primero conecta tu Google Drive para usar WhatsApp')
                     return
                   }
-                  if (!hasActivePlan()) {
-                    e.preventDefault()
-                    toast.error('Debes comprar un plan activo para usar WhatsApp')
-                  }
                 }}
                 className={`inline-flex items-center px-4 py-2 text-white font-medium rounded-xl transition-all duration-200 shadow-lg transform text-base ${
                   isGoogleDriveConnected
@@ -824,10 +820,6 @@ const Dashboard = () => {
                       toast.error('Primero conecta tu Google Drive para usar WhatsApp')
                       return
                     }
-                    if (!hasActivePlan()) {
-                      e.preventDefault()
-                      toast.error('Debes comprar un plan activo para usar WhatsApp')
-                    }
                   }}
                   className={`inline-flex items-center px-3 py-1.5 text-white font-medium rounded-xl transition-all duration-200 shadow-lg transform text-xs ${
                     isGoogleDriveConnected
@@ -896,10 +888,6 @@ const Dashboard = () => {
                     e.preventDefault()
                     toast.error('Primero conecta tu Google Drive para usar WhatsApp')
                     return
-                  }
-                  if (!hasActivePlan()) {
-                    e.preventDefault()
-                    toast.error('Debes comprar un plan activo para usar WhatsApp')
                   }
                 }}
                 className={`inline-flex items-center px-3 py-2 text-white font-medium rounded-xl transition-all duration-200 shadow-lg transform text-sm ${
