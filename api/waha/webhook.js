@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { Readable } = require('stream');
 const { createClient } = require('@supabase/supabase-js');
 const { google } = require('googleapis');
 const { plantillas, MapeoDeClaves } = require('../wspTemplates');
@@ -1896,6 +1897,9 @@ function extractMediaFromPayload(payload) {
 
 async function uploadFileFromUrlToDrive({ userId, parentFolderId, fileName, mimeType, url }) {
   const drive = await getDriveClientForUser(userId);
+  if (!url) {
+    throw new Error('No llegó URL del archivo para descargar desde WAHA');
+  }
   const headers = {
     ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {})
   };
@@ -1909,15 +1913,19 @@ async function uploadFileFromUrlToDrive({ userId, parentFolderId, fileName, mime
     throw new Error(`No se pudo descargar el archivo desde WAHA: ${response.status} ${details}`);
   }
   const buf = Buffer.from(await response.arrayBuffer());
+  const effectiveMimeType =
+    String(mimeType || '').trim() ||
+    String(response.headers.get('content-type') || '').trim() ||
+    'application/octet-stream';
   const created = await drive.files.create({
     requestBody: {
       name: fileName,
       parents: [parentFolderId],
-      mimeType: mimeType || undefined
+      mimeType: effectiveMimeType || undefined
     },
     media: {
-      mimeType: mimeType || 'application/octet-stream',
-      body: buf
+      mimeType: effectiveMimeType,
+      body: Readable.from(buf)
     },
     fields: 'id, webViewLink, name, mimeType, size'
   });
@@ -2799,6 +2807,16 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
         mimeType: pending.mimetype,
         url: pending.url
       });
+      await setWspSessionGlobal(session.id, {
+        last_upload_file_result: {
+          ok: true,
+          file_name: file.name,
+          file_id: file.id,
+          mime_type: file.mimeType || pending.mimetype || null,
+          folder_id: parentFolderId,
+          ts: new Date().toISOString()
+        }
+      });
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
       await wahaSendText(chatId, `✅ Listo. Guardé "${file.name}".\n${file.webViewLink}\n\n¿Algo más? Escribe "menú" 🙌`, sessionName);
 
@@ -2896,7 +2914,21 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
           fileSize: file.size || null
         });
       } catch (_) {}
-    } catch (_) {
+    } catch (error) {
+      await setWspSessionGlobal(session.id, {
+        last_upload_file_result: {
+          ok: false,
+          file_name: fileName,
+          mime_type: pending.mimetype || null,
+          source_url: pending.url || null,
+          folder_id: parentFolderId || null,
+          error: {
+            message: error?.message || 'unknown',
+            stack: String(error?.stack || '').split('\n').slice(0, 4)
+          },
+          ts: new Date().toISOString()
+        }
+      });
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
       await wahaSendText(chatId, `Tuve un problema subiendo el archivo 😕\n\nIntenta de nuevo enviándolo otra vez 📎`, sessionName);
     }
