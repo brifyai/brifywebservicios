@@ -2402,7 +2402,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
     const mergedEmails = action.emails?.length ? Array.from(new Set([...prefilledEmails, ...action.emails])) : prefilledEmails;
 
     if (action.action === 'cancel') {
-      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await returnSessionToCasual(session.id);
       await wahaSendText(chatId, `Listo 🙌 ¿Qué necesitas ahora?`, sessionName, { skipRewrite: true });
       return;
     }
@@ -2441,14 +2441,14 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
     const { data: user, error } = await supabase.from('users').select('email').eq('id', session.user_id).single();
     const userEmail = user?.email;
     if (error || !userEmail) {
-      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await returnSessionToCasual(session.id);
       await wahaSendText(chatId, `No pude obtener tu usuario 😕 Escribe "menú" para reiniciar.`, sessionName);
       return;
     }
 
     const rootFolderId = await resolveRootFolderIdForUser(userEmail, session.user_id, session.phone_number);
     if (!rootFolderId) {
-      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await returnSessionToCasual(session.id);
       await wahaSendText(chatId, `No encontré tu carpeta raíz de Brify 😕 Revisa tu configuración en ${BRIFY_PROFILE_URL}`, sessionName);
       return;
     }
@@ -2472,7 +2472,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
     if (mergedEmails.length) {
       try {
         await shareDriveFolder({ userId: session.user_id, folderId: folder.id, emails: mergedEmails, role });
-        await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+        await returnSessionToCasual(session.id);
         await wahaSendText(chatId, `¡Listo! 🎉 Creé "${finalGroupName}" y lo compartí con: ${mergedEmails.join(', ')}\n\n¿Algo más?`, sessionName, { skipRewrite: true });
         return;
       } catch (_) {
@@ -2501,12 +2501,12 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
   if (ctx.stage === 'ask_share') {
     const ok = normalizeYesNo(textTrim);
     if (ok === false) {
-      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await returnSessionToCasual(session.id);
       await wahaSendText(chatId, `Perfecto ✅ ¿Qué necesitas ahora?`, sessionName);
       return;
     }
     if (textLower.includes('despues') || textLower.includes('después') || textLower.includes('mas tarde') || textLower.includes('más tarde')) {
-      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await returnSessionToCasual(session.id);
       await wahaSendText(chatId, `Dale 🙌 Cuando quieras lo compartimos. ¿Qué más hacemos?`, sessionName);
       return;
     }
@@ -2520,10 +2520,10 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
     const role = process.env.WAHA_DRIVE_SHARE_ROLE || 'reader';
     try {
       await shareDriveFolder({ userId: session.user_id, folderId: ctx.folder_id, emails, role });
-      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await returnSessionToCasual(session.id);
       await wahaSendText(chatId, `¡Hecho! ✅ Compartí "${ctx.group_name}" con: ${emails.join(', ')}\n\n¿Algo más?`, sessionName);
     } catch (_) {
-      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await returnSessionToCasual(session.id);
       await wahaSendText(chatId, `Tuve un problema compartiendo el grupo 😕\n\n¿Quieres intentarlo de nuevo? Escribe "compartir grupo"`, sessionName);
     }
     return;
@@ -2548,7 +2548,7 @@ async function handleCompartirGrupo({ session, chatId, text, sessionName }) {
   const { data: user, error } = await supabase.from('users').select('email').eq('id', session.user_id).single();
   const userEmail = user?.email;
   if (error || !userEmail) {
-    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    await returnSessionToCasual(session.id);
     await wahaSendText(chatId, `No pude obtener tu usuario 😕 Escribe "menú" para reiniciar.`, sessionName);
     return;
   }
@@ -2556,7 +2556,7 @@ async function handleCompartirGrupo({ session, chatId, text, sessionName }) {
   if (!ctx.stage || ctx.stage === 'start') {
     const groups = await listUserGroupsByEmail(userEmail);
     if (!groups.length) {
-      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await returnSessionToCasual(session.id);
       await wahaSendText(chatId, `Aún no tienes grupos creados 📭\n\n¿Te gustaría crear uno? Escribe "crear grupo"`, sessionName);
       return;
     }
@@ -3560,6 +3560,13 @@ async function getOrCreateWspSession(phoneNumber, patch = {}) {
   return created;
 }
 
+async function returnSessionToCasual(sessionId, branchContext = {}) {
+  return updateWspSession(sessionId, {
+    current_branch: 'casual',
+    branch_context: branchContext && typeof branchContext === 'object' ? branchContext : {}
+  });
+}
+
 async function updateWspSession(sessionId, patch) {
   let nextPatch = patch;
   if (patch && typeof patch === 'object' && patch.branch_context && typeof patch.branch_context === 'object') {
@@ -4402,13 +4409,18 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   if (!phoneNumber) return;
 
   const { user: userByIncomingPhone, matchedByAdminFolder, normalizedPhone } = await resolveUserByIncomingPhone(phoneNumber);
-  let session = await getOrCreateWspSession(normalizedPhone || phoneNumber, userByIncomingPhone?.id
-    ? {
-        user_id: userByIncomingPhone.id,
-        current_branch: null,
-        branch_context: matchedByAdminFolder ? { linked_via: 'admin_folder' } : {}
-      }
-    : {});
+  let session = await getOrCreateWspSession(
+    normalizedPhone || phoneNumber,
+    userByIncomingPhone?.id
+      ? {
+          user_id: userByIncomingPhone.id
+        }
+      : {}
+  );
+
+  if (matchedByAdminFolder && !session.user_id && userByIncomingPhone?.id) {
+    session = await updateWspSession(session.id, { user_id: userByIncomingPhone.id });
+  }
 
   if (userByIncomingPhone?.id) {
     try {
