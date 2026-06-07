@@ -2227,10 +2227,22 @@ function inferMimeTypeFromFileName(fileName) {
   return '';
 }
 
+async function loadPdfJsLib() {
+  try {
+    return require('pdfjs-dist/legacy/build/pdf.js');
+  } catch (_) {}
+  try {
+    return await import('pdfjs-dist/legacy/build/pdf.mjs');
+  } catch (_) {}
+  return null;
+}
+
 async function extractPdfTextWithGemini({ buffer, mimeType, fileName }) {
-  if (!GEMINI_API_KEY || !buffer || !Buffer.isBuffer(buffer) || !buffer.length) return '';
+  if (!WAHA_VISION_ENABLED) return { text: '', skippedReason: 'vision_disabled' };
+  if (!GEMINI_API_KEY) return { text: '', skippedReason: 'missing_gemini_api_key' };
+  if (!buffer || !Buffer.isBuffer(buffer) || !buffer.length) return { text: '', skippedReason: 'missing_buffer' };
   const maxInlineBytes = 8 * 1024 * 1024;
-  if (buffer.length > maxInlineBytes) return '';
+  if (buffer.length > maxInlineBytes) return { text: '', skippedReason: 'pdf_too_large_for_inline_gemini' };
   const prompt = [
     {
       text:
@@ -2246,11 +2258,12 @@ async function extractPdfTextWithGemini({ buffer, mimeType, fileName }) {
     },
     ...(fileName ? [{ text: `\nNombre del archivo: ${String(fileName).trim()}` }] : [])
   ];
-  return geminiGenerateText({
+  const text = await geminiGenerateText({
     modelName: GEMINI_VISION_MODEL,
     prompt,
     timeoutMs: Number.isFinite(WAHA_VISION_TIMEOUT_MS) && WAHA_VISION_TIMEOUT_MS > 0 ? WAHA_VISION_TIMEOUT_MS : 25000
   });
+  return { text, skippedReason: text ? null : 'empty_gemini_response' };
 }
 
 async function extractDriveFileTextAdvanced({ userId, fileId, mimeType, fileName }) {
@@ -2278,7 +2291,14 @@ async function extractDriveFileTextAdvanced({ userId, fileId, mimeType, fileName
           text: normalized,
           extractor: mt === 'application/vnd.google-apps.document' ? 'drive_export_text' : 'drive_plain_text',
           mimeType: mt,
-          textStats: getTextSignalStats(normalized)
+          textStats: getTextSignalStats(normalized),
+          attempts: [
+            {
+              extractor: mt === 'application/vnd.google-apps.document' ? 'drive_export_text' : 'drive_plain_text',
+              ok: true,
+              text_chars: getTextSignalStats(normalized).visibleChars
+            }
+          ]
         }
       : null;
   }
@@ -2288,38 +2308,70 @@ async function extractDriveFileTextAdvanced({ userId, fileId, mimeType, fileName
 
   if (mt === 'application/pdf') {
     let out = '';
+    const attempts = [];
     try {
-      const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-      const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+      const pdfjsLib = await loadPdfJsLib();
+      const getDocument = pdfjsLib?.getDocument || pdfjsLib?.default?.getDocument;
+      if (!getDocument) {
+        attempts.push({ extractor: 'pdfjs', ok: false, reason: 'pdfjs_module_not_available' });
+      } else {
+        const doc = await getDocument({ data: new Uint8Array(buf) }).promise;
       const pages = Math.min(doc.numPages || 0, 25);
-      for (let i = 1; i <= pages; i++) {
-        const page = await doc.getPage(i);
-        const content = await page.getTextContent();
-        const line = (content?.items || []).map((it) => it?.str || '').join(' ');
-        out += `${line}\n`;
+        for (let i = 1; i <= pages; i++) {
+          const page = await doc.getPage(i);
+          const content = await page.getTextContent();
+          const line = (content?.items || []).map((it) => it?.str || '').join(' ');
+          out += `${line}\n`;
+        }
       }
-    } catch (_) {}
+    } catch (error) {
+      attempts.push({
+        extractor: 'pdfjs',
+        ok: false,
+        reason: error?.message || 'pdfjs_error'
+      });
+    }
 
     const normalizedPdfText = normalizeExtractedText(out);
+    const pdfStats = getTextSignalStats(normalizedPdfText);
     if (hasUsefulExtractedText(normalizedPdfText)) {
+      attempts.push({ extractor: 'pdfjs', ok: true, text_chars: pdfStats.visibleChars });
       return {
         text: normalizedPdfText,
         extractor: 'pdfjs',
         mimeType: mt,
-        textStats: getTextSignalStats(normalizedPdfText)
+        textStats: pdfStats,
+        attempts
       };
     }
+    attempts.push({ extractor: 'pdfjs', ok: false, reason: 'no_useful_text', text_chars: pdfStats.visibleChars });
 
-    const geminiPdfText = normalizeExtractedText(await extractPdfTextWithGemini({ buffer: buf, mimeType: mt, fileName: resolvedName }));
+    const geminiResult = await extractPdfTextWithGemini({ buffer: buf, mimeType: mt, fileName: resolvedName });
+    const geminiPdfText = normalizeExtractedText(geminiResult?.text || '');
+    const geminiStats = getTextSignalStats(geminiPdfText);
     if (hasUsefulExtractedText(geminiPdfText)) {
+      attempts.push({ extractor: 'gemini_pdf_fallback', ok: true, text_chars: geminiStats.visibleChars });
       return {
         text: geminiPdfText,
         extractor: 'gemini_pdf_fallback',
         mimeType: mt,
-        textStats: getTextSignalStats(geminiPdfText)
+        textStats: geminiStats,
+        attempts
       };
     }
-    return null;
+    attempts.push({
+      extractor: 'gemini_pdf_fallback',
+      ok: false,
+      reason: geminiResult?.skippedReason || 'no_useful_text',
+      text_chars: geminiStats.visibleChars
+    });
+    return {
+      text: '',
+      extractor: null,
+      mimeType: mt,
+      textStats: geminiStats,
+      attempts
+    };
   }
 
   if (mt === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
@@ -2331,7 +2383,8 @@ async function extractDriveFileTextAdvanced({ userId, fileId, mimeType, fileName
           text: value,
           extractor: 'mammoth_raw_text',
           mimeType: mt,
-          textStats: getTextSignalStats(value)
+        textStats: getTextSignalStats(value),
+        attempts: [{ extractor: 'mammoth_raw_text', ok: true, text_chars: getTextSignalStats(value).visibleChars }]
         }
       : null;
   }
@@ -2353,7 +2406,8 @@ async function extractDriveFileTextAdvanced({ userId, fileId, mimeType, fileName
           text: joined,
           extractor: 'xlsx_to_csv',
           mimeType: mt,
-          textStats: getTextSignalStats(joined)
+        textStats: getTextSignalStats(joined),
+        attempts: [{ extractor: 'xlsx_to_csv', ok: true, text_chars: getTextSignalStats(joined).visibleChars }]
         }
       : null;
   }
@@ -2435,6 +2489,7 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
   const text = normalizeExtractedText(extracted?.text || '');
   const extractor = extracted?.extractor || null;
   const extractedChars = extracted?.textStats?.visibleChars || 0;
+  const extractionAttempts = Array.isArray(extracted?.attempts) ? extracted.attempts.slice(0, 6) : null;
 
   if (!text) {
     await upsertDocumentoAdministradorByFile({
@@ -2447,7 +2502,8 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
           vector_status: 'pending_no_text',
           extraction_extractor: extractor,
           extraction_chars: extractedChars,
-          extraction_mime_type: extracted?.mimeType || mimeType || null
+          extraction_mime_type: extracted?.mimeType || mimeType || null,
+          extraction_attempts: extractionAttempts
         }
       }
     });
@@ -2456,7 +2512,8 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
       reason: 'no_text',
       extractor,
       text_chars: extractedChars,
-      mime_type: extracted?.mimeType || mimeType || null
+      mime_type: extracted?.mimeType || mimeType || null,
+      attempts: extractionAttempts
     };
   }
 
@@ -2472,11 +2529,12 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
         metadata: {
           vector_status: 'pending_empty_text',
           extraction_extractor: extractor,
-          extraction_chars: extractedChars
+          extraction_chars: extractedChars,
+          extraction_attempts: extractionAttempts
         }
       }
     });
-    return { ok: false, reason: 'empty_text', extractor, text_chars: extractedChars };
+    return { ok: false, reason: 'empty_text', extractor, text_chars: extractedChars, attempts: extractionAttempts };
   }
 
   const embeddings = await geminiEmbedTexts(chunks, 'RETRIEVAL_DOCUMENT');
@@ -2491,11 +2549,12 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
           vector_status: 'pending_embed_error',
           extraction_extractor: extractor,
           extraction_chars: extractedChars,
-          chunk_count: chunks.length
+          chunk_count: chunks.length,
+          extraction_attempts: extractionAttempts
         }
       }
     });
-    return { ok: false, reason: 'embed_failed', extractor, text_chars: extractedChars, chunks: chunks.length };
+    return { ok: false, reason: 'embed_failed', extractor, text_chars: extractedChars, chunks: chunks.length, attempts: extractionAttempts };
   }
 
   try {
@@ -2529,11 +2588,12 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
           vector_status: 'pending_chunk_insert_error',
           extraction_extractor: extractor,
           extraction_chars: extractedChars,
-          chunk_count: chunks.length
+          chunk_count: chunks.length,
+          extraction_attempts: extractionAttempts
         }
       }
     });
-    return { ok: false, reason: 'chunk_insert_failed', extractor, text_chars: extractedChars, chunks: chunks.length };
+    return { ok: false, reason: 'chunk_insert_failed', extractor, text_chars: extractedChars, chunks: chunks.length, attempts: extractionAttempts };
   }
 
   const mainText = trimmed.slice(0, 12000);
@@ -2551,12 +2611,13 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
         vectorized_at: new Date().toISOString(),
         chunk_count: chunks.length,
         extraction_extractor: extractor,
-        extraction_chars: extractedChars
+        extraction_chars: extractedChars,
+        extraction_attempts: extractionAttempts
       }
     }
   });
 
-  return { ok: true, chunks: chunks.length, extractor, text_chars: extractedChars };
+  return { ok: true, chunks: chunks.length, extractor, text_chars: extractedChars, attempts: extractionAttempts };
 }
 
 async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mimeType, fileSize, text, source, phoneNumber }) {
@@ -3610,7 +3671,8 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
           chunks: vectorized?.chunks || null,
           extractor: vectorized?.extractor || null,
           text_chars: Number.isFinite(Number(vectorized?.text_chars)) ? Number(vectorized.text_chars) : null,
-          mime_type: vectorized?.mime_type || mt || null
+          mime_type: vectorized?.mime_type || mt || null,
+          extraction_attempts: Array.isArray(vectorized?.attempts) ? vectorized.attempts.slice(0, 6) : null
         });
       } catch (vectorError) {
         await noteUploadProcessing(session.id, {
