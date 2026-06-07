@@ -3789,9 +3789,8 @@ async function getUserFromAdminFolderByWsp(phoneNumber) {
   try {
     const { data, error } = await supabase
       .from('carpeta_administrador')
-      .select('user_id, correo, id_drive_carpeta, updated_at')
+      .select('user_id, correo, id_drive_carpeta')
       .eq('wsp', phone)
-      .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
     if (error || !data) return null;
@@ -3813,7 +3812,7 @@ async function tryAttachWspToAdminFolder({ userId, userEmail, phoneNumber }) {
   const phone = String(phoneNumber || '').trim();
   if (!phone) return false;
   try {
-    const q = supabase.from('carpeta_administrador').update({ wsp: phone, updated_at: new Date().toISOString() });
+    const q = supabase.from('carpeta_administrador').update({ wsp: phone });
     if (userId) {
       const { error } = await q.eq('user_id', userId);
       if (!error) return true;
@@ -3824,7 +3823,7 @@ async function tryAttachWspToAdminFolder({ userId, userEmail, phoneNumber }) {
     try {
       const { error } = await supabase
         .from('carpeta_administrador')
-        .update({ wsp: phone, updated_at: new Date().toISOString() })
+        .update({ wsp: phone })
         .ilike('correo', String(userEmail).trim());
       if (!error) return true;
     } catch (_) {}
@@ -4019,7 +4018,6 @@ async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber, option
         .from('carpeta_administrador')
         .select('id_drive_carpeta')
         .in('wsp', phoneVariants)
-        .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
       attempts.push({
@@ -4052,7 +4050,6 @@ async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber, option
         .from('carpeta_administrador')
         .select('id_drive_carpeta')
         .ilike('correo', email)
-        .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
       attempts.push({
@@ -4085,7 +4082,6 @@ async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber, option
         .from('carpeta_administrador')
         .select('id_drive_carpeta')
         .eq('user_id', uid)
-        .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
       attempts.push({
