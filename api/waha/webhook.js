@@ -86,6 +86,11 @@ function normalizeEmbeddingTo768(vec) {
   return new Array(768).fill(0);
 }
 
+function serializeVectorForDb(vec) {
+  const normalized = normalizeEmbeddingTo768(vec);
+  return `[${normalized.map((n) => Number(Number(n).toFixed(8))).join(',')}]`;
+}
+
 function extractEmbeddingFromResponse(data) {
   if (!data) return null;
   if (Array.isArray(data?.data) && data.data[0]?.embedding) return data.data[0].embedding;
@@ -105,6 +110,16 @@ function summarizeEmbeddingError(error, extra = {}) {
   return {
     ...extra,
     ...base
+  };
+}
+
+function summarizeSupabaseError(error, extra = {}) {
+  return {
+    ...extra,
+    message: error?.message || null,
+    code: error?.code || null,
+    details: error?.details || null,
+    hint: error?.hint || null
   };
 }
 
@@ -2764,7 +2779,7 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
 
   const rows = chunks.map((c, idx) => ({
     content: c,
-    embedding: embeddings[idx],
+    embedding: serializeVectorForDb(embeddings[idx]),
     entrenador: userEmail,
     folder_id: null,
     metadata: {
@@ -2779,26 +2794,46 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
   }));
   const { error: insertError } = await supabase.from('documentos_entrenador').insert(rows);
   if (insertError) {
+    const chunkInsertError = summarizeSupabaseError(insertError, { stage: 'documentos_entrenador_insert' });
+    const mainText = trimmed.slice(0, 12000);
+    const mainEmbedding = serializeVectorForDb(embeddings[0]);
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
       patch: {
         ...wspPatch,
-        pendiente: true,
+        content: mainText,
+        embedding: mainEmbedding,
+        pendiente: false,
         metadata: {
-          vector_status: 'pending_chunk_insert_error',
+          vector_status: 'ready_main_only',
+          vectorized_at: new Date().toISOString(),
           extraction_extractor: extractor,
           extraction_chars: extractedChars,
           chunk_count: chunks.length,
-          extraction_attempts: extractionAttempts
+          extraction_attempts: extractionAttempts,
+          embedding_provider: embeddingProvider,
+          embedding_error: embeddingError,
+          chunk_insert_error: chunkInsertError
         }
       }
     });
-    return { ok: false, reason: 'chunk_insert_failed', extractor, text_chars: extractedChars, chunks: chunks.length, attempts: extractionAttempts };
+    return {
+      ok: true,
+      partial: true,
+      reason: 'chunk_insert_failed_main_saved',
+      extractor,
+      text_chars: extractedChars,
+      chunks: chunks.length,
+      attempts: extractionAttempts,
+      embedding_provider: embeddingProvider,
+      embedding_error: embeddingError,
+      chunk_insert_error: chunkInsertError
+    };
   }
 
   const mainText = trimmed.slice(0, 12000);
-  const mainEmbedding = embeddings[0];
+  const mainEmbedding = serializeVectorForDb(embeddings[0]);
   await upsertDocumentoAdministradorByFile({
     userEmail,
     fileId,
@@ -2894,7 +2929,7 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
 
   const rows = chunks.map((c, idx) => ({
     content: c,
-    embedding: embeddings[idx],
+    embedding: serializeVectorForDb(embeddings[idx]),
     entrenador: userEmail,
     folder_id: null,
     metadata: {
@@ -2911,12 +2946,35 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
 
   const { error: insertError } = await supabase.from('documentos_entrenador').insert(rows);
   if (insertError) {
+    const chunkInsertError = summarizeSupabaseError(insertError, { stage: 'documentos_entrenador_insert' });
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_chunk_insert_error', source: source || 'text' } }
+      patch: {
+        ...wspPatch,
+        content: trimmed.slice(0, 12000),
+        embedding: serializeVectorForDb(embeddings[0]),
+        pendiente: false,
+        metadata: {
+          vector_status: 'ready_main_only',
+          vectorized_at: new Date().toISOString(),
+          chunk_count: chunks.length,
+          source: source || 'text',
+          embedding_provider: embeddingProvider,
+          embedding_error: embeddingError,
+          chunk_insert_error: chunkInsertError
+        }
+      }
     });
-    return { ok: false, reason: 'chunk_insert_failed' };
+    return {
+      ok: true,
+      partial: true,
+      reason: 'chunk_insert_failed_main_saved',
+      chunks: chunks.length,
+      embedding_provider: embeddingProvider,
+      embedding_error: embeddingError,
+      chunk_insert_error: chunkInsertError
+    };
   }
 
   await upsertDocumentoAdministradorByFile({
@@ -2925,7 +2983,7 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
     patch: {
       ...wspPatch,
       content: trimmed.slice(0, 12000),
-      embedding: embeddings[0],
+      embedding: serializeVectorForDb(embeddings[0]),
       pendiente: false,
       metadata: { vector_status: 'ready', vectorized_at: new Date().toISOString(), chunk_count: chunks.length, source: source || 'text', embedding_provider: embeddingProvider, embedding_error: embeddingError }
     }
@@ -3874,13 +3932,15 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
           step: 'vectorize',
           file_id: file.id,
           reason: vectorized?.reason || null,
+          partial: Boolean(vectorized?.partial),
           chunks: vectorized?.chunks || null,
           extractor: vectorized?.extractor || null,
           text_chars: Number.isFinite(Number(vectorized?.text_chars)) ? Number(vectorized.text_chars) : null,
           mime_type: vectorized?.mime_type || mt || null,
           extraction_attempts: Array.isArray(vectorized?.attempts) ? vectorized.attempts.slice(0, 6) : null,
           embedding_provider: vectorized?.embedding_provider || null,
-          embedding_error: vectorized?.embedding_error || null
+          embedding_error: vectorized?.embedding_error || null,
+          chunk_insert_error: vectorized?.chunk_insert_error || null
         });
       } catch (vectorError) {
         await noteUploadProcessing(session.id, {
