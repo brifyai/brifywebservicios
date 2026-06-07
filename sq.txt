@@ -1,0 +1,76 @@
+Ya quedó conectado todo el flujo WAHA de grupos/compartición a registros persistentes. Voy a pasar diagnósticos y una revisión rápida para confirmar que no dejé ninguna ruta usando el camino antiguo.
+
+Search codebase for 'upsertGrupoDriveRecord|upsertFolderShareRecords|last_group_record_result|last_folder_share_result|shareDriveFolder\('
+
+4/4 done
+
+Revisar por qué los grupos creados en WAHA no quedan registrados en grupos_drive
+
+Revisar dónde se registra la compartición de carpetas y qué falta para futuras consultas
+
+Corregir el registro de grupos y comparticiones en Supabase
+
+Validar diagnósticos y dejar trazas útiles para próximas pruebas
+
+Detectado
+
+- Sí, el problema estaba en WAHA: el grupo se creaba en Drive, pero el registro en grupos_drive se hacía con un insert silencioso, sin revisar error , así que podía fallar y el flujo seguía igual.
+- Además, al compartir carpetas por WAHA no se estaba persistiendo nada en Supabase para futuras consultas; solo se creaba el permiso en Google Drive.
+Qué corregí
+
+- Reemplacé el insert silencioso por un helper robusto que:
+  - busca por folder_id
+  - actualiza si ya existe
+  - inserta si no existe
+  - lanza error real si falla
+  - upsertGrupoDriveRecord
+- Al crear un grupo desde WAHA, ahora queda traza en sesión de si el registro en grupos_drive salió bien o mal:
+  - branch_context._global.last_group_record_result
+  - handleCrearGrupo
+- Cambié la extensión del grupo creado por WAHA a brify en vez de abogados , que era un valor raro para tus pruebas actuales.
+  - handleCrearGrupo
+Compartición
+
+- La compartición ahora también se registra en Supabase, en la tabla grupos_carpetas .
+- Dejé un helper para persistir cada usuario compartido con:
+  - user_id
+  - role
+  - carpeta_id
+  - administrador
+  - usuario_lector
+  - upsertFolderShareRecords
+- shareDriveFolder() ahora:
+  - comparte en Google Drive
+  - y además registra en grupos_carpetas si le pasamos ownerUserId y adminEmail
+  - shareDriveFolder
+Rutas cubiertas
+
+- Crear grupo + compartir de inmediato
+  - handleCrearGrupo
+- Compartir grupo existente desde el flujo de compartir
+  - handleCompartirGrupo
+Dónde queda cada cosa
+
+- Grupo creado: grupos_drive
+- Usuarios con acceso a la carpeta: grupos_carpetas
+Cómo verificar ahora
+
+- Crea un grupo por WAHA.
+- Revisa en grupos_drive que exista una fila con:
+  - group_name
+  - folder_id
+  - owner_id
+  - administrador
+  - extension = brify
+- Si lo compartes, revisa en grupos_carpetas :
+  - carpeta_id = folder_id del grupo
+  - usuario_lector = correo compartido
+Si algo vuelve a fallar
+
+- Revisa en wsp_sessions.branch_context._global :
+  - last_group_record_result
+  - last_folder_share_result
+Validación
+
+- Revisé diagnósticos y api/waha/webhook.js quedó sin errores.
+Si quieres, el siguiente paso lo hago sobre esta base: agregar la consulta natural tipo ¿con quién tengo compartida la carpeta Licitaciones? para que lea desde grupos_drive + grupos_carpetas y responda directo por WhatsApp.

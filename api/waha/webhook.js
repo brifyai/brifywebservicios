@@ -2190,37 +2190,150 @@ function splitTextIntoChunks(text, maxChars = 2200, overlap = 200) {
   return chunks;
 }
 
-async function extractDriveFileTextAdvanced({ userId, fileId, mimeType }) {
+function normalizeExtractedText(text) {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/\u0000/g, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function getTextSignalStats(text) {
+  const normalized = normalizeExtractedText(text);
+  const visibleChars = normalized.replace(/\s/g, '').length;
+  const alphaNumChars = (normalized.match(/[A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ]/g) || []).length;
+  const words = normalized.split(/\s+/).filter(Boolean).length;
+  return { normalized, visibleChars, alphaNumChars, words };
+}
+
+function hasUsefulExtractedText(text, minVisibleChars = 20) {
+  const stats = getTextSignalStats(text);
+  return stats.visibleChars >= minVisibleChars && (stats.alphaNumChars >= 12 || stats.words >= 4);
+}
+
+function inferMimeTypeFromFileName(fileName) {
+  const name = String(fileName || '').trim().toLowerCase();
+  if (!name) return '';
+  if (name.endsWith('.pdf')) return 'application/pdf';
+  if (name.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (name.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (name.endsWith('.xls')) return 'application/vnd.ms-excel';
+  if (name.endsWith('.txt') || name.endsWith('.md') || name.endsWith('.csv') || name.endsWith('.json')) return 'text/plain';
+  return '';
+}
+
+async function extractPdfTextWithGemini({ buffer, mimeType, fileName }) {
+  if (!GEMINI_API_KEY || !buffer || !Buffer.isBuffer(buffer) || !buffer.length) return '';
+  const maxInlineBytes = 8 * 1024 * 1024;
+  if (buffer.length > maxInlineBytes) return '';
+  const prompt = [
+    {
+      text:
+        `Extrae el texto legible del documento PDF adjunto.\n` +
+        `Devuelve solo texto plano, en espanol, sin markdown, sin explicaciones y conservando la estructura lo mejor posible.\n` +
+        `Si una pagina no tiene texto util, omite el ruido.`
+    },
+    {
+      inlineData: {
+        data: buffer.toString('base64'),
+        mimeType: String(mimeType || '').trim() || 'application/pdf'
+      }
+    },
+    ...(fileName ? [{ text: `\nNombre del archivo: ${String(fileName).trim()}` }] : [])
+  ];
+  return geminiGenerateText({
+    modelName: GEMINI_VISION_MODEL,
+    prompt,
+    timeoutMs: Number.isFinite(WAHA_VISION_TIMEOUT_MS) && WAHA_VISION_TIMEOUT_MS > 0 ? WAHA_VISION_TIMEOUT_MS : 25000
+  });
+}
+
+async function extractDriveFileTextAdvanced({ userId, fileId, mimeType, fileName }) {
   const drive = await getDriveClientForUser(userId);
-  const mt = String(mimeType || '').trim();
+  let resolvedName = String(fileName || '').trim();
+  let mt = String(mimeType || '').trim().toLowerCase();
+
+  if (!mt || mt === 'application/octet-stream') {
+    try {
+      const meta = await drive.files.get({ fileId, fields: 'id,name,mimeType,size' });
+      if (!resolvedName) resolvedName = String(meta?.data?.name || '').trim();
+      mt = String(meta?.data?.mimeType || mt || '').trim().toLowerCase();
+    } catch (_) {}
+  }
+
+  if ((!mt || mt === 'application/octet-stream') && resolvedName) {
+    mt = inferMimeTypeFromFileName(resolvedName);
+  }
 
   if (mt === 'application/vnd.google-apps.document' || mt.startsWith('text/')) {
     const t = await getDriveFileText({ userId, fileId, mimeType: mt });
-    return typeof t === 'string' ? t : null;
+    const normalized = normalizeExtractedText(t);
+    return normalized
+      ? {
+          text: normalized,
+          extractor: mt === 'application/vnd.google-apps.document' ? 'drive_export_text' : 'drive_plain_text',
+          mimeType: mt,
+          textStats: getTextSignalStats(normalized)
+        }
+      : null;
   }
 
   const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' });
   const buf = Buffer.from(res.data);
 
   if (mt === 'application/pdf') {
-    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
-    const pages = Math.min(doc.numPages || 0, 25);
     let out = '';
-    for (let i = 1; i <= pages; i++) {
-      const page = await doc.getPage(i);
-      const content = await page.getTextContent();
-      const line = (content?.items || []).map((it) => it?.str || '').join(' ');
-      out += `${line}\n`;
+    try {
+      const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+      const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+      const pages = Math.min(doc.numPages || 0, 25);
+      for (let i = 1; i <= pages; i++) {
+        const page = await doc.getPage(i);
+        const content = await page.getTextContent();
+        const line = (content?.items || []).map((it) => it?.str || '').join(' ');
+        out += `${line}\n`;
+      }
+    } catch (_) {}
+
+    const normalizedPdfText = normalizeExtractedText(out);
+    if (hasUsefulExtractedText(normalizedPdfText)) {
+      return {
+        text: normalizedPdfText,
+        extractor: 'pdfjs',
+        mimeType: mt,
+        textStats: getTextSignalStats(normalizedPdfText)
+      };
     }
-    return out.trim() || null;
+
+    const geminiPdfText = normalizeExtractedText(await extractPdfTextWithGemini({ buffer: buf, mimeType: mt, fileName: resolvedName }));
+    if (hasUsefulExtractedText(geminiPdfText)) {
+      return {
+        text: geminiPdfText,
+        extractor: 'gemini_pdf_fallback',
+        mimeType: mt,
+        textStats: getTextSignalStats(geminiPdfText)
+      };
+    }
+    return null;
   }
 
   if (mt === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
     const mammoth = require('mammoth');
     const result = await mammoth.extractRawText({ buffer: buf });
-    const value = typeof result?.value === 'string' ? result.value : '';
-    return value.trim() || null;
+    const value = normalizeExtractedText(typeof result?.value === 'string' ? result.value : '');
+    return value
+      ? {
+          text: value,
+          extractor: 'mammoth_raw_text',
+          mimeType: mt,
+          textStats: getTextSignalStats(value)
+        }
+      : null;
   }
 
   if (mt === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || mt === 'application/vnd.ms-excel') {
@@ -2234,8 +2347,15 @@ async function extractDriveFileTextAdvanced({ userId, fileId, mimeType }) {
       const csv = XLSX.utils.sheet_to_csv(ws, { blankrows: false });
       if (csv && csv.trim()) parts.push(`Hoja: ${name}\n${csv}`);
     }
-    const joined = parts.join('\n\n');
-    return joined.trim() || null;
+    const joined = normalizeExtractedText(parts.join('\n\n'));
+    return joined
+      ? {
+          text: joined,
+          extractor: 'xlsx_to_csv',
+          mimeType: mt,
+          textStats: getTextSignalStats(joined)
+        }
+      : null;
   }
 
   return null;
@@ -2305,20 +2425,39 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
     }
   });
 
-  let text = null;
+  let extracted = null;
   try {
-    text = await extractDriveFileTextAdvanced({ userId, fileId, mimeType });
+    extracted = await extractDriveFileTextAdvanced({ userId, fileId, mimeType, fileName });
   } catch (_) {
-    text = null;
+    extracted = null;
   }
+
+  const text = normalizeExtractedText(extracted?.text || '');
+  const extractor = extracted?.extractor || null;
+  const extractedChars = extracted?.textStats?.visibleChars || 0;
 
   if (!text) {
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_no_text' } }
+      patch: {
+        ...wspPatch,
+        pendiente: true,
+        metadata: {
+          vector_status: 'pending_no_text',
+          extraction_extractor: extractor,
+          extraction_chars: extractedChars,
+          extraction_mime_type: extracted?.mimeType || mimeType || null
+        }
+      }
     });
-    return { ok: false, reason: 'no_text' };
+    return {
+      ok: false,
+      reason: 'no_text',
+      extractor,
+      text_chars: extractedChars,
+      mime_type: extracted?.mimeType || mimeType || null
+    };
   }
 
   const trimmed = text.length > 90000 ? text.slice(0, 90000) : text;
@@ -2327,9 +2466,17 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_empty_text' } }
+      patch: {
+        ...wspPatch,
+        pendiente: true,
+        metadata: {
+          vector_status: 'pending_empty_text',
+          extraction_extractor: extractor,
+          extraction_chars: extractedChars
+        }
+      }
     });
-    return { ok: false, reason: 'empty_text' };
+    return { ok: false, reason: 'empty_text', extractor, text_chars: extractedChars };
   }
 
   const embeddings = await geminiEmbedTexts(chunks, 'RETRIEVAL_DOCUMENT');
@@ -2337,9 +2484,18 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_embed_error' } }
+      patch: {
+        ...wspPatch,
+        pendiente: true,
+        metadata: {
+          vector_status: 'pending_embed_error',
+          extraction_extractor: extractor,
+          extraction_chars: extractedChars,
+          chunk_count: chunks.length
+        }
+      }
     });
-    return { ok: false, reason: 'embed_failed' };
+    return { ok: false, reason: 'embed_failed', extractor, text_chars: extractedChars, chunks: chunks.length };
   }
 
   try {
@@ -2366,9 +2522,18 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_chunk_insert_error' } }
+      patch: {
+        ...wspPatch,
+        pendiente: true,
+        metadata: {
+          vector_status: 'pending_chunk_insert_error',
+          extraction_extractor: extractor,
+          extraction_chars: extractedChars,
+          chunk_count: chunks.length
+        }
+      }
     });
-    return { ok: false, reason: 'chunk_insert_failed' };
+    return { ok: false, reason: 'chunk_insert_failed', extractor, text_chars: extractedChars, chunks: chunks.length };
   }
 
   const mainText = trimmed.slice(0, 12000);
@@ -2384,12 +2549,14 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
       metadata: {
         vector_status: 'ready',
         vectorized_at: new Date().toISOString(),
-        chunk_count: chunks.length
+        chunk_count: chunks.length,
+        extraction_extractor: extractor,
+        extraction_chars: extractedChars
       }
     }
   });
 
-  return { ok: true, chunks: chunks.length };
+  return { ok: true, chunks: chunks.length, extractor, text_chars: extractedChars };
 }
 
 async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mimeType, fileSize, text, source, phoneNumber }) {
@@ -2577,7 +2744,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
       });
       await wahaSendText(
         chatId,
-        `${summary}\n\n¿Lo compartimos? 🙌`,
+        `${summary}\n\n¿Todo correcto? 🙌`,
         sessionName,
         { skipRewrite: true }
       );
@@ -3440,7 +3607,10 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
           step: 'vectorize',
           file_id: file.id,
           reason: vectorized?.reason || null,
-          chunks: vectorized?.chunks || null
+          chunks: vectorized?.chunks || null,
+          extractor: vectorized?.extractor || null,
+          text_chars: Number.isFinite(Number(vectorized?.text_chars)) ? Number(vectorized.text_chars) : null,
+          mime_type: vectorized?.mime_type || mt || null
         });
       } catch (vectorError) {
         await noteUploadProcessing(session.id, {
