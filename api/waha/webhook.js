@@ -94,50 +94,179 @@ function extractEmbeddingFromResponse(data) {
   return null;
 }
 
-async function geminiEmbedTexts(texts, taskType = 'RETRIEVAL_DOCUMENT') {
-  if (!WAHA_EMBEDDINGS_ENABLED) return null;
-  if (!GEMINI_API_KEY) return null;
-  const inputs = Array.isArray(texts) ? texts.map((t) => String(t || '').trim()).filter(Boolean) : [];
-  if (!inputs.length) return null;
+function summarizeEmbeddingError(error, extra = {}) {
+  const base = {
+    message: error?.message || null,
+    name: error?.name || null,
+    status: error?.status || error?.code || null
+  };
+  const details = error?.details || error?.errorDetails || error?.response?.data || null;
+  if (details) base.details = details;
+  return {
+    ...extra,
+    ...base
+  };
+}
 
-  const { GoogleGenerativeAI } = require('@google/generative-ai');
-  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: GEMINI_EMBEDDINGS_MODEL });
+function extractEmbeddingValues(result) {
+  const candidates = [
+    result,
+    result?.response,
+    result?.data,
+    result?.response?.data,
+    result?.embeddings?.[0],
+    result?.data?.[0],
+    result?.embedding
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate?.embedding?.values)) return candidate.embedding.values;
+    if (Array.isArray(candidate?.values)) return candidate.values;
+    if (Array.isArray(candidate?.embedding)) return candidate.embedding;
+    if (Array.isArray(candidate)) return candidate;
+    const extracted = extractEmbeddingFromResponse(candidate);
+    if (Array.isArray(extracted?.values)) return extracted.values;
+    if (Array.isArray(extracted)) return extracted;
+  }
+
+  return null;
+}
+
+async function geminiEmbedTextsDetailed(texts, taskType = 'RETRIEVAL_DOCUMENT') {
+  if (!WAHA_EMBEDDINGS_ENABLED) {
+    return { embeddings: null, error: { reason: 'embeddings_disabled' } };
+  }
+  if (!GEMINI_API_KEY) {
+    return { embeddings: null, error: { reason: 'missing_gemini_api_key' } };
+  }
+  const inputs = Array.isArray(texts) ? texts.map((t) => String(t || '').trim()).filter(Boolean) : [];
+  if (!inputs.length) {
+    return { embeddings: null, error: { reason: 'missing_input_texts' } };
+  }
+
+  let GoogleGenerativeAI = null;
+  try {
+    ({ GoogleGenerativeAI } = require('@google/generative-ai'));
+  } catch (error) {
+    return {
+      embeddings: null,
+      error: summarizeEmbeddingError(error, {
+        reason: 'gemini_sdk_load_failed',
+        model: GEMINI_EMBEDDINGS_MODEL,
+        task_type: taskType
+      })
+    };
+  }
+
+  let model = null;
+  try {
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    model = genAI.getGenerativeModel({ model: GEMINI_EMBEDDINGS_MODEL });
+  } catch (error) {
+    return {
+      embeddings: null,
+      error: summarizeEmbeddingError(error, {
+        reason: 'gemini_model_init_failed',
+        model: GEMINI_EMBEDDINGS_MODEL,
+        task_type: taskType
+      })
+    };
+  }
 
   const out = [];
   const timeoutMs = Number.isFinite(WAHA_EMBEDDINGS_TIMEOUT_MS) && WAHA_EMBEDDINGS_TIMEOUT_MS > 0 ? WAHA_EMBEDDINGS_TIMEOUT_MS : 15000;
 
-  for (const input of inputs) {
-    const embedCall = async () => {
-      try {
-        return await model.embedContent({
+  for (let inputIndex = 0; inputIndex < inputs.length; inputIndex++) {
+    const input = inputs[inputIndex];
+    const requestForms = [
+      {
+        label: 'content_parts_with_task_type',
+        build: () => ({
           content: { parts: [{ text: input }] },
           taskType
-        });
-      } catch (_) {
-        try {
-          return await model.embedContent(input);
-        } catch (__) {
-          try {
-            return await model.embedContent({ content: input });
-          } catch (___) {
-            return null;
-          }
-        }
+        })
+      },
+      {
+        label: 'raw_string',
+        build: () => input
+      },
+      {
+        label: 'content_string_object',
+        build: () => ({ content: input })
       }
-    };
+    ];
 
-    const result = await Promise.race([
-      embedCall(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini embeddings timeout')), timeoutMs))
-    ]).catch(() => null);
+    const attempts = [];
+    let embedded = null;
 
-    const values = result?.embedding?.values;
-    if (!Array.isArray(values)) return null;
-    out.push(normalizeEmbeddingTo768(values));
+    for (const form of requestForms) {
+      try {
+        const result = await Promise.race([
+          model.embedContent(form.build()),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini embeddings timeout')), timeoutMs))
+        ]);
+        const values = extractEmbeddingValues(result);
+        if (Array.isArray(values)) {
+          embedded = normalizeEmbeddingTo768(values);
+          attempts.push({ form: form.label, ok: true, values: values.length });
+          break;
+        }
+        attempts.push({
+          form: form.label,
+          ok: false,
+          reason: 'missing_embedding_values',
+          response_keys: Object.keys(result || {}).slice(0, 8)
+        });
+      } catch (error) {
+        attempts.push({
+          form: form.label,
+          ok: false,
+          ...summarizeEmbeddingError(error)
+        });
+      }
+    }
+
+    if (!embedded) {
+      return {
+        embeddings: null,
+        error: {
+          reason: 'all_embedding_forms_failed',
+          model: GEMINI_EMBEDDINGS_MODEL,
+          task_type: taskType,
+          input_index: inputIndex,
+          input_chars: input.length,
+          attempts: attempts.slice(0, 6)
+        }
+      };
+    }
+
+    out.push(embedded);
   }
 
-  return out.length ? out : null;
+  return { embeddings: out.length ? out : null, error: null };
+}
+
+async function geminiEmbedTexts(texts, taskType = 'RETRIEVAL_DOCUMENT') {
+  const detailed = await geminiEmbedTextsDetailed(texts, taskType);
+  return detailed?.embeddings || null;
+}
+
+async function buildEmbeddingsWithFallback(texts, taskType = 'RETRIEVAL_DOCUMENT') {
+  const inputs = Array.isArray(texts) ? texts.map((t) => String(t || '').trim()).filter(Boolean) : [];
+  if (!inputs.length) return { embeddings: null, provider: null };
+
+  const detailed = await geminiEmbedTextsDetailed(inputs, taskType);
+  const geminiEmbeddings = detailed?.embeddings;
+  if (Array.isArray(geminiEmbeddings) && geminiEmbeddings.length === inputs.length) {
+    return { embeddings: geminiEmbeddings, provider: 'gemini', error: null };
+  }
+
+  const deterministicEmbeddings = inputs.map((input) => generateDeterministicEmbedding(input));
+  return {
+    embeddings: deterministicEmbeddings,
+    provider: 'deterministic_fallback',
+    error: detailed?.error || { reason: 'unknown_gemini_embedding_failure' }
+  };
 }
 
 async function geminiGenerateText({ modelName, prompt, timeoutMs }) {
@@ -2604,7 +2733,10 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
     return { ok: false, reason: 'empty_text', extractor, text_chars: extractedChars, attempts: extractionAttempts };
   }
 
-  const embeddings = await geminiEmbedTexts(chunks, 'RETRIEVAL_DOCUMENT');
+  const embeddingBuild = await buildEmbeddingsWithFallback(chunks, 'RETRIEVAL_DOCUMENT');
+  const embeddings = embeddingBuild?.embeddings;
+  const embeddingProvider = embeddingBuild?.provider || null;
+  const embeddingError = embeddingBuild?.error || null;
   if (!embeddings || embeddings.length !== chunks.length) {
     await upsertDocumentoAdministradorByFile({
       userEmail,
@@ -2617,11 +2749,13 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
           extraction_extractor: extractor,
           extraction_chars: extractedChars,
           chunk_count: chunks.length,
-          extraction_attempts: extractionAttempts
+          extraction_attempts: extractionAttempts,
+          embedding_provider: embeddingProvider,
+          embedding_error: embeddingError
         }
       }
     });
-    return { ok: false, reason: 'embed_failed', extractor, text_chars: extractedChars, chunks: chunks.length, attempts: extractionAttempts };
+    return { ok: false, reason: 'embed_failed', extractor, text_chars: extractedChars, chunks: chunks.length, attempts: extractionAttempts, embedding_provider: embeddingProvider, embedding_error: embeddingError };
   }
 
   try {
@@ -2679,12 +2813,14 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
         chunk_count: chunks.length,
         extraction_extractor: extractor,
         extraction_chars: extractedChars,
-        extraction_attempts: extractionAttempts
+        extraction_attempts: extractionAttempts,
+        embedding_provider: embeddingProvider,
+        embedding_error: embeddingError
       }
     }
   });
 
-  return { ok: true, chunks: chunks.length, extractor, text_chars: extractedChars, attempts: extractionAttempts };
+  return { ok: true, chunks: chunks.length, extractor, text_chars: extractedChars, attempts: extractionAttempts, embedding_provider: embeddingProvider, embedding_error: embeddingError };
 }
 
 async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mimeType, fileSize, text, source, phoneNumber }) {
@@ -2739,14 +2875,17 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
     return { ok: false, reason: 'empty_text' };
   }
 
-  const embeddings = await geminiEmbedTexts(chunks, 'RETRIEVAL_DOCUMENT');
+  const embeddingBuild = await buildEmbeddingsWithFallback(chunks, 'RETRIEVAL_DOCUMENT');
+  const embeddings = embeddingBuild?.embeddings;
+  const embeddingProvider = embeddingBuild?.provider || null;
+  const embeddingError = embeddingBuild?.error || null;
   if (!embeddings || embeddings.length !== chunks.length) {
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_embed_error', source: source || 'text' } }
+      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_embed_error', source: source || 'text', embedding_provider: embeddingProvider, embedding_error: embeddingError } }
     });
-    return { ok: false, reason: 'embed_failed' };
+    return { ok: false, reason: 'embed_failed', embedding_provider: embeddingProvider, embedding_error: embeddingError };
   }
 
   try {
@@ -2788,11 +2927,11 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
       content: trimmed.slice(0, 12000),
       embedding: embeddings[0],
       pendiente: false,
-      metadata: { vector_status: 'ready', vectorized_at: new Date().toISOString(), chunk_count: chunks.length, source: source || 'text' }
+      metadata: { vector_status: 'ready', vectorized_at: new Date().toISOString(), chunk_count: chunks.length, source: source || 'text', embedding_provider: embeddingProvider, embedding_error: embeddingError }
     }
   });
 
-  return { ok: true, chunks: chunks.length };
+  return { ok: true, chunks: chunks.length, embedding_provider: embeddingProvider, embedding_error: embeddingError };
 }
 
 async function handleCrearGrupo({ session, chatId, text, sessionName }) {
@@ -3739,7 +3878,9 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
           extractor: vectorized?.extractor || null,
           text_chars: Number.isFinite(Number(vectorized?.text_chars)) ? Number(vectorized.text_chars) : null,
           mime_type: vectorized?.mime_type || mt || null,
-          extraction_attempts: Array.isArray(vectorized?.attempts) ? vectorized.attempts.slice(0, 6) : null
+          extraction_attempts: Array.isArray(vectorized?.attempts) ? vectorized.attempts.slice(0, 6) : null,
+          embedding_provider: vectorized?.embedding_provider || null,
+          embedding_error: vectorized?.embedding_error || null
         });
       } catch (vectorError) {
         await noteUploadProcessing(session.id, {
