@@ -421,6 +421,7 @@ function extractGroupMention(text) {
   const raw = (m[2] || m[1] || '').trim();
   if (!raw) return null;
   let name = raw.replace(/\b(con|a|para|por)\b\s+.+$/i, '').trim();
+  name = name.replace(/^(de|del|la|el|los|las)\s+/i, '').trim();
   name = name.replace(/[.,;:!?()]+$/g, '').trim();
   if (name.length < 2) return null;
   return name;
@@ -1885,6 +1886,23 @@ async function shareDriveFolder({ userId, folderId, emails, role }) {
   return results;
 }
 
+async function moveDriveFileToFolder({ userId, fileId, targetFolderId }) {
+  const drive = await getDriveClientForUser(userId);
+  const current = await drive.files.get({
+    fileId,
+    fields: 'id, name, mimeType, size, webViewLink, parents'
+  });
+  const currentParents = Array.isArray(current?.data?.parents) ? current.data.parents.filter(Boolean) : [];
+  const removeParents = currentParents.filter((id) => id !== targetFolderId).join(',');
+  const updated = await drive.files.update({
+    fileId,
+    addParents: targetFolderId,
+    removeParents: removeParents || undefined,
+    fields: 'id, name, mimeType, size, webViewLink, parents'
+  });
+  return updated.data;
+}
+
 function normalizeMediaUrl(url) {
   if (!url) return null;
   const s = String(url);
@@ -1948,6 +1966,54 @@ async function uploadFileFromUrlToDrive({ userId, parentFolderId, fileName, mime
     fields: 'id, webViewLink, name, mimeType, size'
   });
   return created.data;
+}
+
+function uploadWaitReminder(ctx) {
+  const groupName = String(ctx?.selectedGroup?.group_name || '').trim();
+  if (groupName) return `Cuando quieras, adjunta el archivo y lo guardo en "${groupName}" 📎`;
+  return `Cuando quieras, adjunta el archivo y seguimos con la subida 📎`;
+}
+
+async function noteUploadProcessing(sessionId, patch) {
+  await setWspSessionGlobal(sessionId, {
+    last_upload_processing_result: {
+      ...(patch && typeof patch === 'object' ? patch : {}),
+      ts: new Date().toISOString()
+    }
+  });
+}
+
+async function startUploadFileFlow({ session, chatId, text, sessionName, defaultTarget = 'root' }) {
+  const textTrim = normalizeIncomingText(text);
+  const groupMention = extractGroupMention(textTrim);
+  let branchContext = { stage: 'wait_file', saveTarget: defaultTarget === 'group' ? 'group' : 'root' };
+
+  if (groupMention) {
+    const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+    const groups = await listUserGroupsByEmail(user?.email);
+    const picked = findGroupByName(groups, groupMention);
+    if (picked) {
+      branchContext = { stage: 'wait_file', saveTarget: 'group', selectedGroup: picked };
+      const updated = await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: branchContext });
+      await wahaSendText(chatId, `Dale 🙌 Súbelo por aquí y lo guardo en "${picked.group_name}".`, sessionName, { skipRewrite: true });
+      return updated;
+    }
+    if (groups.length) {
+      const lines = groups.slice(0, 15).map((g, idx) => `${idx + 1}️⃣ 📁 ${g.group_name}`);
+      const updated = await updateWspSession(session.id, {
+        current_branch: 'subir_archivo',
+        branch_context: { stage: 'choose_group_before_file', groups, saveTarget: 'group' }
+      });
+      await wahaSendText(chatId, `No pillé el grupo "${groupMention}" 😕\n\nElige uno y después subes el archivo:\n\n${lines.join('\n')}`, sessionName, {
+        skipRewrite: true
+      });
+      return updated;
+    }
+  }
+
+  const updated = await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: branchContext });
+  await wahaSendText(chatId, uploadWaitReminder(branchContext), sessionName, { skipRewrite: true });
+  return updated;
 }
 
 async function downloadWahaMediaBuffer(url) {
@@ -2694,14 +2760,34 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
   }
 
   if (!ctx.stage) {
-    await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { stage: 'wait_file' } });
-    await wahaSendText(chatId, `Adjunta el archivo aquí 📎 y te pregunto dónde guardarlo 😊`, sessionName);
+    await startUploadFileFlow({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
   if (ctx.stage === 'wait_file') {
     if (!media?.url) {
-      await wahaSendText(chatId, `Ahora envíame el archivo adjunto 📎`, sessionName);
+      const groupMention = extractGroupMention(textTrim);
+      if (groupMention) {
+        const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+        const groups = await listUserGroupsByEmail(user?.email);
+        const picked = findGroupByName(groups, groupMention);
+        if (picked) {
+          await updateWspSession(session.id, {
+            current_branch: 'subir_archivo',
+            branch_context: { ...ctx, saveTarget: 'group', selectedGroup: picked, stage: 'wait_file' }
+          });
+          await wahaSendText(chatId, `Perfecto 🙌 Lo dejo apuntado para "${picked.group_name}". Ahora súbelo por aquí 📎`, sessionName, {
+            skipRewrite: true
+          });
+          return;
+        }
+      }
+      if (textTrim) {
+        await handleCasualConversation({ session, chatId, text: textTrim, sessionName });
+        await wahaSendText(chatId, uploadWaitReminder(ctx), sessionName, { skipRewrite: true });
+        return;
+      }
+      await wahaSendText(chatId, uploadWaitReminder(ctx), sessionName, { skipRewrite: true });
       return;
     }
     const pending = {
@@ -2736,6 +2822,30 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
       branch_context: { stage: 'save_now', saveTarget: 'root', pending }
     });
     await handleSubirArchivo({ session: updated, chatId, text, sessionName, payload });
+    return;
+  }
+
+  if (ctx.stage === 'choose_group_before_file') {
+    const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
+    const picked = pickGroupFromInput(groups, textTrim);
+    if (!picked) {
+      if (textTrim) {
+        await handleCasualConversation({ session, chatId, text: textTrim, sessionName });
+        await wahaSendText(chatId, `Sigo atento. Cuando quieras, elige el grupo y después subes el archivo 📎`, sessionName, {
+          skipRewrite: true
+        });
+        return;
+      }
+      await wahaSendText(chatId, `Elige un grupo válido 🙌 (número o nombre)`, sessionName);
+      return;
+    }
+    await updateWspSession(session.id, {
+      current_branch: 'subir_archivo',
+      branch_context: { stage: 'wait_file', saveTarget: 'group', selectedGroup: picked }
+    });
+    await wahaSendText(chatId, `Buenísimo 🙌 Ahora sube el archivo y lo guardo en "${picked.group_name}".`, sessionName, {
+      skipRewrite: true
+    });
     return;
   }
 
@@ -2788,10 +2898,25 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
     const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
     const picked = pickGroupFromInput(groups, textTrim);
     if (!picked) {
+      if (textTrim) {
+        await handleCasualConversation({ session, chatId, text: textTrim, sessionName });
+        await wahaSendText(chatId, `Sigo atento para que me digas el grupo 📁`, sessionName, { skipRewrite: true });
+        return;
+      }
       await wahaSendText(chatId, `Elige un grupo válido 🙌 (número o nombre)`, sessionName);
       return;
     }
-    const updated = await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { ...ctx, stage: 'save_now', saveTarget: 'group', selectedGroup: picked } });
+    const nextStage = ctx.pending?.url ? 'save_now' : 'wait_file';
+    const updated = await updateWspSession(session.id, {
+      current_branch: 'subir_archivo',
+      branch_context: { ...ctx, stage: nextStage, saveTarget: 'group', selectedGroup: picked }
+    });
+    if (nextStage === 'wait_file') {
+      await wahaSendText(chatId, `Perfecto 🙌 Ahora sube el archivo y lo guardo en "${picked.group_name}".`, sessionName, {
+        skipRewrite: true
+      });
+      return;
+    }
     await handleSubirArchivo({ session: updated, chatId, text, sessionName, payload });
     return;
   }
@@ -2831,6 +2956,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
         mimeType: pending.mimetype,
         url: pending.url
       });
+      const folderName = ctx.saveTarget === 'group' ? String(ctx.selectedGroup?.group_name || '').trim() || 'Grupo' : 'Carpeta raíz';
       await setWspSessionGlobal(session.id, {
         last_upload_file_result: {
           ok: true,
@@ -2838,16 +2964,85 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
           file_id: file.id,
           mime_type: file.mimeType || pending.mimetype || null,
           folder_id: parentFolderId,
+          folder_name: folderName,
           ts: new Date().toISOString()
         }
       });
-      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
-      await wahaSendText(chatId, `✅ Listo. Guardé "${file.name}".\n${file.webViewLink}\n\n¿Algo más? Escribe "menú" 🙌`, sessionName);
+      try {
+        await upsertDocumentoAdministradorByFile({
+          userEmail: user.email,
+          fileId: file.id,
+          patch: {
+            ...documentWsspPatch(session.phone_number),
+            name: file.name,
+            file_type: file.mimeType || pending.mimetype || null,
+            file_size: Number.isFinite(Number(file.size)) ? Number(file.size) : null,
+            servicio: 'general',
+            pendiente: true,
+            carpeta_actual: parentFolderId,
+            nombre_carpeta_actual: folderName,
+            metadata: { source: 'waha', action: 'upload_file', vector_status: 'uploaded' },
+            nombre_limpio: String(file.name || '').toLowerCase().replace(/[^a-z0-9]/g, '_')
+          }
+        });
+        await noteUploadProcessing(session.id, {
+          ok: true,
+          step: 'insert_base_record',
+          file_id: file.id
+        });
+      } catch (recordError) {
+        await noteUploadProcessing(session.id, {
+          ok: false,
+          step: 'insert_base_record',
+          file_id: file.id,
+          error: {
+            message: recordError?.message || 'unknown'
+          }
+        });
+      }
+      if (ctx.saveTarget === 'group') {
+        await returnSessionToCasual(session.id);
+        await wahaSendText(
+          chatId,
+          `✅ Listo. Guardé "${file.name}" en "${folderName}".\n${file.webViewLink}\n\n¿Algo más?`,
+          sessionName,
+          { skipRewrite: true }
+        );
+      } else {
+        await updateWspSession(session.id, {
+          current_branch: 'subir_archivo',
+          branch_context: {
+            stage: 'offer_move',
+            uploaded_file: {
+              file_id: file.id,
+              file_name: file.name,
+              mime_type: file.mimeType || pending.mimetype || null,
+              folder_id: parentFolderId,
+              folder_name: folderName,
+              webViewLink: file.webViewLink || null
+            }
+          }
+        });
+        await wahaSendText(
+          chatId,
+          `✅ Listo. Guardé "${file.name}".\n${file.webViewLink}\n\nSi quieres, también lo puedo mover a uno de tus grupos 🙌`,
+          sessionName,
+          { skipRewrite: true }
+        );
+      }
 
       const mt = String(file.mimeType || pending.mimetype || '').trim();
       const canVectorizeNow = isImmediateVectorizableMime(mt);
 
-      if (!WAHA_EMBEDDINGS_ENABLED) return;
+      if (!WAHA_EMBEDDINGS_ENABLED) {
+        await noteUploadProcessing(session.id, {
+          ok: false,
+          step: 'vectorize',
+          file_id: file.id,
+          reason: 'embed_disabled'
+        });
+        return;
+      }
 
       if (mt.startsWith('image/')) {
         try {
@@ -2871,6 +3066,11 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
               source: 'waha_image_analysis',
               phoneNumber: session.phone_number
             });
+            await noteUploadProcessing(session.id, {
+              ok: true,
+              step: 'vectorize_image',
+              file_id: file.id
+            });
 
             await wahaSendText(chatId, `🖼️ Análisis de la imagen:\n\n${sanitizeWhatsAppText(analysis)}`, sessionName, {
               skipRewrite: true
@@ -2890,8 +3090,20 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
                 nombre_limpio: String(file.name || '').toLowerCase().replace(/[^a-z0-9]/g, '_')
               }
             });
+            await noteUploadProcessing(session.id, {
+              ok: false,
+              step: 'vectorize_image',
+              file_id: file.id,
+              reason: 'pending_image_analysis_failed'
+            });
           }
-        } catch (_) {
+        } catch (imageError) {
+          await noteUploadProcessing(session.id, {
+            ok: false,
+            step: 'vectorize_image',
+            file_id: file.id,
+            error: { message: imageError?.message || 'unknown' }
+          });
           try {
             await upsertDocumentoAdministradorByFile({
               userEmail: user.email,
@@ -2928,12 +3140,18 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
               nombre_limpio: String(file.name || '').toLowerCase().replace(/[^a-z0-9]/g, '_')
             }
           });
+          await noteUploadProcessing(session.id, {
+            ok: false,
+            step: 'vectorize',
+            file_id: file.id,
+            reason: 'pending_deferred'
+          });
         } catch (_) {}
         return;
       }
 
       try {
-        await vectorizeDriveFileToSupabase({
+        const vectorized = await vectorizeDriveFileToSupabase({
           userId: session.user_id,
           userEmail: user.email,
           fileId: file.id,
@@ -2942,7 +3160,21 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
           fileSize: file.size || null,
           phoneNumber: session.phone_number
         });
-      } catch (_) {}
+        await noteUploadProcessing(session.id, {
+          ok: Boolean(vectorized?.ok),
+          step: 'vectorize',
+          file_id: file.id,
+          reason: vectorized?.reason || null,
+          chunks: vectorized?.chunks || null
+        });
+      } catch (vectorError) {
+        await noteUploadProcessing(session.id, {
+          ok: false,
+          step: 'vectorize',
+          file_id: file.id,
+          error: { message: vectorError?.message || 'unknown' }
+        });
+      }
     } catch (error) {
       await setWspSessionGlobal(session.id, {
         last_upload_file_result: {
@@ -2960,6 +3192,143 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
       });
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
       await wahaSendText(chatId, `Tuve un problema subiendo el archivo 😕\n\nIntenta de nuevo enviándolo otra vez 📎`, sessionName);
+    }
+    return;
+  }
+
+  if (ctx.stage === 'offer_move') {
+    const uploadedFile = ctx.uploaded_file || {};
+    const yn = normalizeYesNo(textTrim);
+    const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+    const groups = await listUserGroupsByEmail(user?.email);
+    const groupMention = extractGroupMention(textTrim);
+    const picked = groupMention ? findGroupByName(groups, groupMention) : null;
+
+    if (yn === false || textLower.includes('dejalo ahi') || textLower.includes('déjalo ahi') || textLower.includes('asi esta') || textLower.includes('así está')) {
+      await returnSessionToCasual(session.id);
+      await wahaSendText(chatId, `Perfecto 🙌 Lo dejo donde está. ¿Qué necesitas ahora?`, sessionName, { skipRewrite: true });
+      return;
+    }
+
+    if (picked) {
+      const updated = await updateWspSession(session.id, {
+        current_branch: 'subir_archivo',
+        branch_context: { ...ctx, stage: 'move_now', selectedGroup: picked }
+      });
+      await handleSubirArchivo({ session: updated, chatId, text: textTrim, sessionName, payload });
+      return;
+    }
+
+    if (yn === true || textLower.includes('mueve') || textLower.includes('pasalo') || textLower.includes('pásalo') || textLower.includes('mandalo al grupo') || textLower.includes('mándalo al grupo')) {
+      if (!groups.length) {
+        await returnSessionToCasual(session.id);
+        await wahaSendText(chatId, `No encontré grupos creados 📭 Entonces lo dejo en la carpeta raíz.`, sessionName, { skipRewrite: true });
+        return;
+      }
+      const lines = groups.slice(0, 15).map((g, idx) => `${idx + 1}️⃣ 📁 ${g.group_name}`);
+      await updateWspSession(session.id, {
+        current_branch: 'subir_archivo',
+        branch_context: { ...ctx, stage: 'choose_move_group', groups }
+      });
+      await wahaSendText(chatId, `¿A cuál grupo lo movemos? 📁\n\n${lines.join('\n')}`, sessionName, { skipRewrite: true });
+      return;
+    }
+
+    if (textTrim) {
+      await handleCasualConversation({ session, chatId, text: textTrim, sessionName });
+      await wahaSendText(chatId, `Sigo atento por si quieres mover "${uploadedFile.file_name || 'el archivo'}" a un grupo 🙌`, sessionName, {
+        skipRewrite: true
+      });
+      return;
+    }
+    await wahaSendText(chatId, `Si quieres, puedo mover "${uploadedFile.file_name || 'el archivo'}" a uno de tus grupos 🙌`, sessionName, {
+      skipRewrite: true
+    });
+    return;
+  }
+
+  if (ctx.stage === 'choose_move_group') {
+    const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
+    const picked = pickGroupFromInput(groups, textTrim);
+    if (!picked) {
+      if (textTrim) {
+        await handleCasualConversation({ session, chatId, text: textTrim, sessionName });
+        await wahaSendText(chatId, `Sigo atento por si quieres elegir el grupo al que movemos el archivo 📁`, sessionName, {
+          skipRewrite: true
+        });
+        return;
+      }
+      await wahaSendText(chatId, `Elige un grupo válido 🙌 (número o nombre)`, sessionName);
+      return;
+    }
+    const updated = await updateWspSession(session.id, {
+      current_branch: 'subir_archivo',
+      branch_context: { ...ctx, stage: 'move_now', selectedGroup: picked }
+    });
+    await handleSubirArchivo({ session: updated, chatId, text: textTrim, sessionName, payload });
+    return;
+  }
+
+  if (ctx.stage === 'move_now') {
+    const uploadedFile = ctx.uploaded_file || {};
+    const targetGroup = ctx.selectedGroup;
+    const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+    if (!uploadedFile.file_id || !targetGroup?.folder_id || !user?.email) {
+      await returnSessionToCasual(session.id);
+      await wahaSendText(chatId, `Perdí el dato del archivo o del grupo 😕 Intentémoslo otra vez cuando quieras.`, sessionName, { skipRewrite: true });
+      return;
+    }
+    try {
+      const moved = await moveDriveFileToFolder({
+        userId: session.user_id,
+        fileId: uploadedFile.file_id,
+        targetFolderId: targetGroup.folder_id
+      });
+      await upsertDocumentoAdministradorByFile({
+        userEmail: user.email,
+        fileId: uploadedFile.file_id,
+        patch: {
+          ...documentWsspPatch(session.phone_number),
+          carpeta_actual: targetGroup.folder_id,
+          nombre_carpeta_actual: targetGroup.group_name,
+          metadata: {
+            source: 'waha',
+            action: 'upload_file',
+            moved_to_group_at: new Date().toISOString()
+          }
+        }
+      });
+      try {
+        await supabase
+          .from('documentos_entrenador')
+          .update({ folder_id: targetGroup.folder_id, updated_at: new Date().toISOString() })
+          .eq('entrenador', user.email)
+          .eq('metadata->>file_id', uploadedFile.file_id);
+      } catch (_) {}
+      await noteUploadProcessing(session.id, {
+        ok: true,
+        step: 'move',
+        file_id: uploadedFile.file_id,
+        folder_id: targetGroup.folder_id
+      });
+      await returnSessionToCasual(session.id);
+      await wahaSendText(
+        chatId,
+        `✅ Listo. Moví "${moved.name || uploadedFile.file_name || 'el archivo'}" a "${targetGroup.group_name}".\n${moved.webViewLink || uploadedFile.webViewLink || ''}`.trim(),
+        sessionName,
+        { skipRewrite: true }
+      );
+    } catch (moveError) {
+      await noteUploadProcessing(session.id, {
+        ok: false,
+        step: 'move',
+        file_id: uploadedFile.file_id,
+        error: { message: moveError?.message || 'unknown' }
+      });
+      await returnSessionToCasual(session.id);
+      await wahaSendText(chatId, `Tuve un problema moviendo el archivo 😕 Inténtalo de nuevo cuando quieras.`, sessionName, {
+        skipRewrite: true
+      });
     }
     return;
   }
@@ -3482,15 +3851,7 @@ async function enterBranch(session, chatId, sessionName, branch) {
   }
 
   if (branch === 'upload_file') {
-    await updateWspSession(session.id, {
-      current_branch: 'subir_archivo',
-      branch_context: { stage: 'wait_file' }
-    });
-    await wahaSendText(
-      chatId,
-      `¡Claro! 📤 Adjunta el archivo directamente en este chat y te pregunto dónde guardarlo 😊`,
-      sessionName
-    );
+    await startUploadFileFlow({ session, chatId, text: '', sessionName });
     return true;
   }
 
@@ -4801,6 +5162,26 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     return;
   }
 
+  const wantsUpload =
+    textLower.includes('subir') ||
+    textLower.includes('adjunt') ||
+    textLower.includes('enviar') ||
+    textLower.includes('guarda') ||
+    textLower.includes('guardar') ||
+    textLower.includes('te enviare') ||
+    textLower.includes('te enviaré') ||
+    textLower.includes('te voy a enviar');
+  if (!session.current_branch && wantsUpload) {
+    if (!hasDrive) {
+      await updateWspSession(session.id, { current_branch: 'await_drive', branch_context: {} });
+      await wahaSendText(chatId, `Para guardar archivos necesito que vincules tu Google Drive: ${BRIFY_PROFILE_URL}`, sessionName);
+      return;
+    }
+
+    await startUploadFileFlow({ session, chatId, text: textTrim, sessionName });
+    return;
+  }
+
   const listQuery = extractNameContainsQuery(textTrim);
   const wantsList =
     textLower.includes('listar') ||
@@ -4836,27 +5217,6 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       branch_context: { stage: 'list_now', saveTarget, selectedGroup, query: listQuery, kind }
     });
     await handleListarArchivos({ session, chatId, text: textTrim, sessionName });
-    return;
-  }
-
-  const wantsUpload =
-    textLower.includes('subir') ||
-    textLower.includes('adjunt') ||
-    textLower.includes('enviar') ||
-    textLower.includes('guarda') ||
-    textLower.includes('guardar') ||
-    textLower.includes('te enviare') ||
-    textLower.includes('te enviaré') ||
-    textLower.includes('te voy a enviar');
-  if (!session.current_branch && wantsUpload) {
-    if (!hasDrive) {
-      await updateWspSession(session.id, { current_branch: 'await_drive', branch_context: {} });
-      await wahaSendText(chatId, `Para guardar archivos necesito que vincules tu Google Drive: ${BRIFY_PROFILE_URL}`, sessionName);
-      return;
-    }
-
-    session = await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { stage: 'wait_file' } });
-    await handleSubirArchivo({ session, chatId, text: textTrim, sessionName, payload });
     return;
   }
 
