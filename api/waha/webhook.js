@@ -2446,7 +2446,7 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
       return;
     }
 
-    const rootFolderId = await resolveRootFolderIdForUser(userEmail, session.user_id, session.phone_number);
+    const rootFolderId = await resolveRootFolderIdForUser(userEmail, session.user_id, session.phone_number, { sessionId: session.id });
     if (!rootFolderId) {
       await returnSessionToCasual(session.id);
       await wahaSendText(chatId, `No encontré tu carpeta raíz de Brify 😕 Revisa tu configuración en ${BRIFY_PROFILE_URL}`, sessionName);
@@ -2782,7 +2782,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       parentFolderId = ctx.selectedGroup.folder_id;
     } else {
-      parentFolderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number);
+      parentFolderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number, { sessionId: session.id });
     }
     if (!parentFolderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -2924,7 +2924,7 @@ async function handleListarArchivos({ session, chatId, text, sessionName }) {
 
     let folderId = null;
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) folderId = ctx.selectedGroup.folder_id;
-    else folderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number);
+    else folderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number, { sessionId: session.id });
 
     if (!folderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -3062,7 +3062,7 @@ async function handleListarArchivos({ session, chatId, text, sessionName }) {
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       folderId = ctx.selectedGroup.folder_id;
     } else {
-      folderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number);
+      folderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number, { sessionId: session.id });
     }
     if (!folderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -3294,7 +3294,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
 
     let folderId = null;
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) folderId = ctx.selectedGroup.folder_id;
-    else folderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number);
+    else folderId = await resolveRootFolderIdForUser(user.email, session.user_id, session.phone_number, { sessionId: session.id });
 
     if (!folderId) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -3565,6 +3565,27 @@ async function returnSessionToCasual(sessionId, branchContext = {}) {
     current_branch: 'casual',
     branch_context: branchContext && typeof branchContext === 'object' ? branchContext : {}
   });
+}
+
+async function setWspSessionGlobal(sessionId, globalPatch) {
+  const patch = globalPatch && typeof globalPatch === 'object' ? globalPatch : {};
+  if (!sessionId || !Object.keys(patch).length) return null;
+  try {
+    const { data: existing } = await supabase.from('wsp_sessions').select('branch_context').eq('id', sessionId).single();
+    const currentCtx = existing?.branch_context && typeof existing.branch_context === 'object' ? existing.branch_context : {};
+    const currentGlobal = currentCtx._global && typeof currentCtx._global === 'object' ? currentCtx._global : {};
+    return await updateWspSession(sessionId, {
+      branch_context: {
+        ...currentCtx,
+        _global: {
+          ...currentGlobal,
+          ...patch
+        }
+      }
+    });
+  } catch (_) {
+    return null;
+  }
 }
 
 async function updateWspSession(sessionId, patch) {
@@ -3974,21 +3995,45 @@ async function getDriveClientForUser(userId) {
   return google.drive({ version: 'v3', auth: oauth2Client });
 }
 
-async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber) {
+async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber, options = {}) {
   const email = String(userEmail || '').trim();
   const uid = String(userId || '').trim();
   const phone = String(phoneNumber || '').trim();
+  const sessionId = String(options?.sessionId || '').trim();
+  const digits = phone.replace(/[^\d]/g, '');
+  const phoneVariants = Array.from(
+    new Set([
+      phone,
+      digits || null,
+      digits.length >= 11 ? digits.slice(-11) : null,
+      digits.length >= 9 ? digits.slice(-9) : null,
+      digits.length >= 8 ? digits.slice(-8) : null,
+      digits ? `+${digits}` : null
+    ].filter(Boolean))
+  );
 
   try {
-    if (uid) {
+    if (phoneVariants.length) {
       const { data } = await supabase
         .from('carpeta_administrador')
         .select('id_drive_carpeta')
-        .eq('user_id', uid)
+        .in('wsp', phoneVariants)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (data?.id_drive_carpeta) return data.id_drive_carpeta;
+      if (data?.id_drive_carpeta) {
+        await setWspSessionGlobal(sessionId, {
+          last_root_folder_resolution: {
+            via: 'wsp',
+            phone_variants: phoneVariants,
+            email: email || null,
+            user_id: uid || null,
+            folder_id: data.id_drive_carpeta,
+            ts: new Date().toISOString()
+          }
+        });
+        return data.id_drive_carpeta;
+      }
     }
   } catch (_) {}
 
@@ -4001,23 +4046,57 @@ async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber) {
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (data?.id_drive_carpeta) return data.id_drive_carpeta;
+      if (data?.id_drive_carpeta) {
+        await setWspSessionGlobal(sessionId, {
+          last_root_folder_resolution: {
+            via: 'correo',
+            phone_variants: phoneVariants,
+            email,
+            user_id: uid || null,
+            folder_id: data.id_drive_carpeta,
+            ts: new Date().toISOString()
+          }
+        });
+        return data.id_drive_carpeta;
+      }
     }
   } catch (_) {}
 
   try {
-    if (phone) {
+    if (uid) {
       const { data } = await supabase
         .from('carpeta_administrador')
         .select('id_drive_carpeta')
-        .eq('wsp', phone)
+        .eq('user_id', uid)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (data?.id_drive_carpeta) return data.id_drive_carpeta;
+      if (data?.id_drive_carpeta) {
+        await setWspSessionGlobal(sessionId, {
+          last_root_folder_resolution: {
+            via: 'user_id',
+            phone_variants: phoneVariants,
+            email: email || null,
+            user_id: uid,
+            folder_id: data.id_drive_carpeta,
+            ts: new Date().toISOString()
+          }
+        });
+        return data.id_drive_carpeta;
+      }
     }
   } catch (_) {}
 
+  await setWspSessionGlobal(sessionId, {
+    last_root_folder_resolution: {
+      via: 'no_match',
+      phone_variants: phoneVariants,
+      email: email || null,
+      user_id: uid || null,
+      folder_id: null,
+      ts: new Date().toISOString()
+    }
+  });
   return null;
 }
 
@@ -4353,7 +4432,7 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
     if (ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id) {
       parentFolderId = ctx.selectedGroup.folder_id;
     } else {
-      parentFolderId = await resolveRootFolderIdForUser(user.email, user.id, session.phone_number);
+      parentFolderId = await resolveRootFolderIdForUser(user.email, user.id, session.phone_number, { sessionId: session.id });
     }
 
     if (!parentFolderId) {
