@@ -1867,7 +1867,96 @@ async function createDriveFolder({ userId, parentFolderId, name }) {
   return response.data;
 }
 
-async function shareDriveFolder({ userId, folderId, emails, role }) {
+async function upsertGrupoDriveRecord({ ownerUserId, userEmail, folderId, groupName, extension = 'brify' }) {
+  const normalizedGroupName = String(groupName || '').trim();
+  if (!ownerUserId || !userEmail || !folderId || !normalizedGroupName) {
+    throw new Error('Faltan datos para registrar el grupo en grupos_drive');
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from('grupos_drive')
+    .select('id')
+    .eq('folder_id', folderId)
+    .maybeSingle();
+  if (existingError) throw existingError;
+
+  const patch = {
+    owner_id: ownerUserId,
+    group_name: normalizedGroupName,
+    nombre_grupo_low: normalizedGroupName.toLowerCase(),
+    folder_id: folderId,
+    administrador: userEmail,
+    extension
+  };
+
+  if (existing?.id) {
+    const { data, error } = await supabase
+      .from('grupos_drive')
+      .update(patch)
+      .eq('id', existing.id)
+      .select('id, group_name, folder_id, administrador, owner_id, extension')
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  const { data, error } = await supabase
+    .from('grupos_drive')
+    .insert(patch)
+    .select('id, group_name, folder_id, administrador, owner_id, extension')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function upsertFolderShareRecords({ ownerUserId, adminEmail, folderId, emails, role }) {
+  const normalizedEmails = Array.from(new Set((Array.isArray(emails) ? emails : []).map((e) => String(e || '').trim().toLowerCase()).filter(Boolean)));
+  if (!ownerUserId || !adminEmail || !folderId || !normalizedEmails.length) return [];
+  const mappedRole = role === 'writer' ? 'editor' : 'lector';
+  const results = [];
+
+  for (const email of normalizedEmails) {
+    const { data: existing, error: existingError } = await supabase
+      .from('grupos_carpetas')
+      .select('id')
+      .eq('carpeta_id', folderId)
+      .eq('usuario_lector', email)
+      .maybeSingle();
+    if (existingError) throw existingError;
+
+    const patch = {
+      user_id: ownerUserId,
+      role: mappedRole,
+      carpeta_id: folderId,
+      administrador: adminEmail,
+      usuario_lector: email
+    };
+
+    if (existing?.id) {
+      const { data, error } = await supabase
+        .from('grupos_carpetas')
+        .update(patch)
+        .eq('id', existing.id)
+        .select('id, carpeta_id, usuario_lector, role')
+        .single();
+      if (error) throw error;
+      results.push(data);
+      continue;
+    }
+
+    const { data, error } = await supabase
+      .from('grupos_carpetas')
+      .insert(patch)
+      .select('id, carpeta_id, usuario_lector, role')
+      .single();
+    if (error) throw error;
+    results.push(data);
+  }
+
+  return results;
+}
+
+async function shareDriveFolder({ userId, folderId, emails, role, ownerUserId, adminEmail }) {
   const drive = await getDriveClientForUser(userId);
   const normalizedRole = role === 'reader' || role === 'writer' ? role : 'reader';
   const results = [];
@@ -1882,6 +1971,15 @@ async function shareDriveFolder({ userId, folderId, emails, role }) {
       fields: 'id'
     });
     results.push({ email, permissionId: response.data?.id || null });
+  }
+  if (ownerUserId && adminEmail && folderId && results.length) {
+    await upsertFolderShareRecords({
+      ownerUserId,
+      adminEmail,
+      folderId,
+      emails: results.map((r) => r.email),
+      role: normalizedRole
+    });
   }
   return results;
 }
@@ -2554,26 +2652,79 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
     const finalGroupName = groupName || 'Grupo';
     const folder = await createDriveFolder({ userId: session.user_id, parentFolderId: rootFolderId, name: finalGroupName });
 
-    await supabase.from('grupos_drive').insert({
-      id: crypto.randomUUID(),
-      owner_id: session.user_id,
-      group_name: finalGroupName,
-      nombre_grupo_low: finalGroupName.toLowerCase(),
-      folder_id: folder.id,
-      administrador: userEmail,
-      extension: 'abogados',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    });
+    try {
+      const groupRecord = await upsertGrupoDriveRecord({
+        ownerUserId: session.user_id,
+        userEmail,
+        folderId: folder.id,
+        groupName: finalGroupName,
+        extension: 'brify'
+      });
+      await setWspSessionGlobal(session.id, {
+        last_group_record_result: {
+          ok: true,
+          group_name: finalGroupName,
+          folder_id: folder.id,
+          grupos_drive_id: groupRecord?.id || null,
+          ts: new Date().toISOString()
+        }
+      });
+    } catch (groupRecordError) {
+      await setWspSessionGlobal(session.id, {
+        last_group_record_result: {
+          ok: false,
+          group_name: finalGroupName,
+          folder_id: folder.id,
+          error: {
+            message: groupRecordError?.message || 'unknown',
+            code: groupRecordError?.code || null,
+            details: groupRecordError?.details || null,
+            hint: groupRecordError?.hint || null
+          },
+          ts: new Date().toISOString()
+        }
+      });
+    }
 
     const role = process.env.WAHA_DRIVE_SHARE_ROLE || 'reader';
     if (mergedEmails.length) {
       try {
-        await shareDriveFolder({ userId: session.user_id, folderId: folder.id, emails: mergedEmails, role });
+        await shareDriveFolder({
+          userId: session.user_id,
+          folderId: folder.id,
+          emails: mergedEmails,
+          role,
+          ownerUserId: session.user_id,
+          adminEmail: userEmail
+        });
+        await setWspSessionGlobal(session.id, {
+          last_folder_share_result: {
+            ok: true,
+            folder_id: folder.id,
+            group_name: finalGroupName,
+            emails: mergedEmails,
+            ts: new Date().toISOString()
+          }
+        });
         await returnSessionToCasual(session.id);
         await wahaSendText(chatId, `¡Listo! 🎉 Creé "${finalGroupName}" y lo compartí con: ${mergedEmails.join(', ')}\n\n¿Algo más?`, sessionName, { skipRewrite: true });
         return;
-      } catch (_) {
+      } catch (shareError) {
+        await setWspSessionGlobal(session.id, {
+          last_folder_share_result: {
+            ok: false,
+            folder_id: folder.id,
+            group_name: finalGroupName,
+            emails: mergedEmails,
+            error: {
+              message: shareError?.message || 'unknown',
+              code: shareError?.code || null,
+              details: shareError?.details || null,
+              hint: shareError?.hint || null
+            },
+            ts: new Date().toISOString()
+          }
+        });
         await updateWspSession(session.id, {
           current_branch: 'crear_grupo',
           branch_context: { stage: 'ask_share', folder_id: folder.id, group_name: finalGroupName }
@@ -2617,10 +2768,41 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
 
     const role = process.env.WAHA_DRIVE_SHARE_ROLE || 'reader';
     try {
-      await shareDriveFolder({ userId: session.user_id, folderId: ctx.folder_id, emails, role });
+      await shareDriveFolder({
+        userId: session.user_id,
+        folderId: ctx.folder_id,
+        emails,
+        role,
+        ownerUserId: session.user_id,
+        adminEmail: userEmail
+      });
+      await setWspSessionGlobal(session.id, {
+        last_folder_share_result: {
+          ok: true,
+          folder_id: ctx.folder_id,
+          group_name: ctx.group_name || null,
+          emails,
+          ts: new Date().toISOString()
+        }
+      });
       await returnSessionToCasual(session.id);
       await wahaSendText(chatId, `¡Hecho! ✅ Compartí "${ctx.group_name}" con: ${emails.join(', ')}\n\n¿Algo más?`, sessionName);
-    } catch (_) {
+    } catch (shareError) {
+      await setWspSessionGlobal(session.id, {
+        last_folder_share_result: {
+          ok: false,
+          folder_id: ctx.folder_id,
+          group_name: ctx.group_name || null,
+          emails,
+          error: {
+            message: shareError?.message || 'unknown',
+            code: shareError?.code || null,
+            details: shareError?.details || null,
+            hint: shareError?.hint || null
+          },
+          ts: new Date().toISOString()
+        }
+      });
       await returnSessionToCasual(session.id);
       await wahaSendText(chatId, `Tuve un problema compartiendo el grupo 😕\n\n¿Quieres intentarlo de nuevo? Escribe "compartir grupo"`, sessionName);
     }
@@ -2665,14 +2847,45 @@ async function handleCompartirGrupo({ session, chatId, text, sessionName }) {
       if (prefilledEmails.length) {
         const role = process.env.WAHA_DRIVE_SHARE_ROLE || 'reader';
         try {
-          await shareDriveFolder({ userId: session.user_id, folderId: picked.folder_id, emails: prefilledEmails, role });
+          await shareDriveFolder({
+            userId: session.user_id,
+            folderId: picked.folder_id,
+            emails: prefilledEmails,
+            role,
+            ownerUserId: session.user_id,
+            adminEmail: userEmail
+          });
+          await setWspSessionGlobal(session.id, {
+            last_folder_share_result: {
+              ok: true,
+              folder_id: picked.folder_id,
+              group_name: picked.group_name,
+              emails: prefilledEmails,
+              ts: new Date().toISOString()
+            }
+          });
           await updateWspSession(session.id, { current_branch: null, branch_context: {} });
           await wahaSendText(
             chatId,
             `¡Hecho! ✅ Compartí "${picked.group_name}" con ${prefilledEmails.join(', ')}\n\n¿Necesitas algo más? Escribe "menú" 🙌`,
             sessionName
           );
-        } catch (_) {
+        } catch (shareError) {
+          await setWspSessionGlobal(session.id, {
+            last_folder_share_result: {
+              ok: false,
+              folder_id: picked.folder_id,
+              group_name: picked.group_name,
+              emails: prefilledEmails,
+              error: {
+                message: shareError?.message || 'unknown',
+                code: shareError?.code || null,
+                details: shareError?.details || null,
+                hint: shareError?.hint || null
+              },
+              ts: new Date().toISOString()
+            }
+          });
           await updateWspSession(session.id, { current_branch: null, branch_context: {} });
           await wahaSendText(chatId, `Tuve un problema compartiendo el grupo 😕\n\nVuelve a intentar escribiendo "compartir grupo".`, sessionName);
         }
@@ -2707,14 +2920,45 @@ async function handleCompartirGrupo({ session, chatId, text, sessionName }) {
     if (prefilledEmails.length) {
       const role = process.env.WAHA_DRIVE_SHARE_ROLE || 'reader';
       try {
-        await shareDriveFolder({ userId: session.user_id, folderId: picked.folder_id, emails: prefilledEmails, role });
+        await shareDriveFolder({
+          userId: session.user_id,
+          folderId: picked.folder_id,
+          emails: prefilledEmails,
+          role,
+          ownerUserId: session.user_id,
+          adminEmail: userEmail
+        });
+        await setWspSessionGlobal(session.id, {
+          last_folder_share_result: {
+            ok: true,
+            folder_id: picked.folder_id,
+            group_name: picked.group_name,
+            emails: prefilledEmails,
+            ts: new Date().toISOString()
+          }
+        });
         await updateWspSession(session.id, { current_branch: null, branch_context: {} });
         await wahaSendText(
           chatId,
           `¡Hecho! ✅ Compartí "${picked.group_name}" con ${prefilledEmails.join(', ')}\n\n¿Necesitas algo más? Escribe "menú" 🙌`,
           sessionName
         );
-      } catch (_) {
+      } catch (shareError) {
+        await setWspSessionGlobal(session.id, {
+          last_folder_share_result: {
+            ok: false,
+            folder_id: picked.folder_id,
+            group_name: picked.group_name,
+            emails: prefilledEmails,
+            error: {
+              message: shareError?.message || 'unknown',
+              code: shareError?.code || null,
+              details: shareError?.details || null,
+              hint: shareError?.hint || null
+            },
+            ts: new Date().toISOString()
+          }
+        });
         await updateWspSession(session.id, { current_branch: null, branch_context: {} });
         await wahaSendText(chatId, `Tuve un problema compartiendo el grupo 😕\n\nVuelve a intentar escribiendo "compartir grupo".`, sessionName);
       }
@@ -2737,10 +2981,41 @@ async function handleCompartirGrupo({ session, chatId, text, sessionName }) {
     }
     const role = process.env.WAHA_DRIVE_SHARE_ROLE || 'reader';
     try {
-      await shareDriveFolder({ userId: session.user_id, folderId: ctx.group?.folder_id, emails, role });
+      await shareDriveFolder({
+        userId: session.user_id,
+        folderId: ctx.group?.folder_id,
+        emails,
+        role,
+        ownerUserId: session.user_id,
+        adminEmail: userEmail
+      });
+      await setWspSessionGlobal(session.id, {
+        last_folder_share_result: {
+          ok: true,
+          folder_id: ctx.group?.folder_id || null,
+          group_name: ctx.group?.group_name || null,
+          emails,
+          ts: new Date().toISOString()
+        }
+      });
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
       await wahaSendText(chatId, `¡Hecho! ✅ Compartiste "${ctx.group?.group_name}" con ${emails.join(', ')}\n\n¿Necesitas algo más? Escribe "menú" 🙌`, sessionName);
-    } catch (_) {
+    } catch (shareError) {
+      await setWspSessionGlobal(session.id, {
+        last_folder_share_result: {
+          ok: false,
+          folder_id: ctx.group?.folder_id || null,
+          group_name: ctx.group?.group_name || null,
+          emails,
+          error: {
+            message: shareError?.message || 'unknown',
+            code: shareError?.code || null,
+            details: shareError?.details || null,
+            hint: shareError?.hint || null
+          },
+          ts: new Date().toISOString()
+        }
+      });
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
       await wahaSendText(chatId, `Tuve un problema compartiendo el grupo 😕\n\nVuelve a intentar escribiendo "compartir grupo".`, sessionName);
     }
