@@ -2266,6 +2266,53 @@ async function extractPdfTextWithGemini({ buffer, mimeType, fileName }) {
   return { text, skippedReason: text ? null : 'empty_gemini_response' };
 }
 
+async function extractPdfTextViaDriveImport({ userId, buffer, fileName }) {
+  if (!userId || !buffer || !Buffer.isBuffer(buffer) || !buffer.length) {
+    return { text: '', skippedReason: 'missing_params' };
+  }
+  const drive = await getDriveClientForUser(userId);
+  const tempName = `[Brify OCR] ${String(fileName || 'Documento PDF').replace(/\.pdf$/i, '')}`.slice(0, 120);
+  let tempFileId = null;
+
+  try {
+    const created = await drive.files.create({
+      requestBody: {
+        name: tempName,
+        mimeType: 'application/vnd.google-apps.document'
+      },
+      media: {
+        mimeType: 'application/pdf',
+        body: Readable.from(buffer)
+      },
+      ocrLanguage: 'es',
+      fields: 'id,name,mimeType'
+    });
+
+    tempFileId = created?.data?.id || null;
+    if (!tempFileId) {
+      return { text: '', skippedReason: 'drive_import_missing_file_id' };
+    }
+
+    const exported = await drive.files.export(
+      {
+        fileId: tempFileId,
+        mimeType: 'text/plain'
+      },
+      { responseType: 'arraybuffer' }
+    );
+    const text = Buffer.from(exported.data).toString('utf8');
+    return { text, skippedReason: text ? null : 'drive_export_empty' };
+  } catch (error) {
+    return { text: '', skippedReason: error?.message || 'drive_import_failed' };
+  } finally {
+    if (tempFileId) {
+      try {
+        await drive.files.delete({ fileId: tempFileId });
+      } catch (_) {}
+    }
+  }
+}
+
 async function extractDriveFileTextAdvanced({ userId, fileId, mimeType, fileName }) {
   const drive = await getDriveClientForUser(userId);
   let resolvedName = String(fileName || '').trim();
@@ -2345,6 +2392,26 @@ async function extractDriveFileTextAdvanced({ userId, fileId, mimeType, fileName
       };
     }
     attempts.push({ extractor: 'pdfjs', ok: false, reason: 'no_useful_text', text_chars: pdfStats.visibleChars });
+
+    const driveImportResult = await extractPdfTextViaDriveImport({ userId, buffer: buf, fileName: resolvedName });
+    const driveImportText = normalizeExtractedText(driveImportResult?.text || '');
+    const driveImportStats = getTextSignalStats(driveImportText);
+    if (hasUsefulExtractedText(driveImportText)) {
+      attempts.push({ extractor: 'drive_pdf_import_ocr', ok: true, text_chars: driveImportStats.visibleChars });
+      return {
+        text: driveImportText,
+        extractor: 'drive_pdf_import_ocr',
+        mimeType: mt,
+        textStats: driveImportStats,
+        attempts
+      };
+    }
+    attempts.push({
+      extractor: 'drive_pdf_import_ocr',
+      ok: false,
+      reason: driveImportResult?.skippedReason || 'no_useful_text',
+      text_chars: driveImportStats.visibleChars
+    });
 
     const geminiResult = await extractPdfTextWithGemini({ buffer: buf, mimeType: mt, fileName: resolvedName });
     const geminiPdfText = normalizeExtractedText(geminiResult?.text || '');
