@@ -288,6 +288,24 @@ function normalizePhoneFromChatId(chatId) {
   return digits;
 }
 
+function documentWsspPatch(phoneNumber) {
+  const normalized = normalizePhoneFromChatId(phoneNumber);
+  return normalized ? { wssp: normalized } : {};
+}
+
+function isImmediateVectorizableMime(mimeType) {
+  const mt = String(mimeType || '').trim().toLowerCase();
+  if (!mt) return false;
+  return (
+    mt === 'application/vnd.google-apps.document' ||
+    mt.startsWith('text/') ||
+    mt === 'application/pdf' ||
+    mt === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    mt === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    mt === 'application/vnd.ms-excel'
+  );
+}
+
 function normalizeChatIdForSend(chatId) {
   if (!chatId) return null;
   const raw = String(chatId);
@@ -2103,14 +2121,16 @@ async function upsertDocumentoAdministradorByFile({ userEmail, fileId, patch }) 
   return data;
 }
 
-async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileName, mimeType, fileSize }) {
+async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileName, mimeType, fileSize, phoneNumber }) {
   if (!WAHA_EMBEDDINGS_ENABLED) return { ok: false, reason: 'disabled' };
   if (!userId || !userEmail || !fileId) return { ok: false, reason: 'missing_params' };
+  const wspPatch = documentWsspPatch(phoneNumber);
 
   await upsertDocumentoAdministradorByFile({
     userEmail,
     fileId,
     patch: {
+      ...wspPatch,
       name: fileName || null,
       file_type: mimeType || null,
       file_size: Number.isFinite(Number(fileSize)) ? Number(fileSize) : null,
@@ -2132,7 +2152,7 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { pendiente: true, metadata: { vector_status: 'pending_no_text' } }
+      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_no_text' } }
     });
     return { ok: false, reason: 'no_text' };
   }
@@ -2143,7 +2163,7 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { pendiente: true, metadata: { vector_status: 'pending_empty_text' } }
+      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_empty_text' } }
     });
     return { ok: false, reason: 'empty_text' };
   }
@@ -2153,7 +2173,7 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { pendiente: true, metadata: { vector_status: 'pending_embed_error' } }
+      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_embed_error' } }
     });
     return { ok: false, reason: 'embed_failed' };
   }
@@ -2182,7 +2202,7 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { pendiente: true, metadata: { vector_status: 'pending_chunk_insert_error' } }
+      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_chunk_insert_error' } }
     });
     return { ok: false, reason: 'chunk_insert_failed' };
   }
@@ -2193,6 +2213,7 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
     userEmail,
     fileId,
     patch: {
+      ...wspPatch,
       content: mainText,
       embedding: mainEmbedding,
       pendiente: false,
@@ -2207,15 +2228,16 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
   return { ok: true, chunks: chunks.length };
 }
 
-async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mimeType, fileSize, text, source }) {
+async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mimeType, fileSize, text, source, phoneNumber }) {
   if (!userEmail || !fileId) return { ok: false, reason: 'missing_params' };
+  const wspPatch = documentWsspPatch(phoneNumber);
 
   const contentText = String(text || '').trim();
   if (!contentText) {
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { pendiente: true, metadata: { vector_status: 'pending_no_text', source: source || 'text' } }
+      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_no_text', source: source || 'text' } }
     });
     return { ok: false, reason: 'no_text' };
   }
@@ -2224,6 +2246,7 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
     userEmail,
     fileId,
     patch: {
+      ...wspPatch,
       name: fileName || null,
       file_type: mimeType || null,
       file_size: Number.isFinite(Number(fileSize)) ? Number(fileSize) : null,
@@ -2238,7 +2261,7 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { content: contentText.slice(0, 12000), pendiente: true, metadata: { vector_status: 'pending_embed_disabled' } }
+      patch: { ...wspPatch, content: contentText.slice(0, 12000), pendiente: true, metadata: { vector_status: 'pending_embed_disabled' } }
     });
     return { ok: false, reason: 'embed_disabled' };
   }
@@ -2252,7 +2275,7 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { pendiente: true, metadata: { vector_status: 'pending_empty_text', source: source || 'text' } }
+      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_empty_text', source: source || 'text' } }
     });
     return { ok: false, reason: 'empty_text' };
   }
@@ -2262,7 +2285,7 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { pendiente: true, metadata: { vector_status: 'pending_embed_error', source: source || 'text' } }
+      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_embed_error', source: source || 'text' } }
     });
     return { ok: false, reason: 'embed_failed' };
   }
@@ -2293,7 +2316,7 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { pendiente: true, metadata: { vector_status: 'pending_chunk_insert_error', source: source || 'text' } }
+      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_chunk_insert_error', source: source || 'text' } }
     });
     return { ok: false, reason: 'chunk_insert_failed' };
   }
@@ -2302,6 +2325,7 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
     userEmail,
     fileId,
     patch: {
+      ...wspPatch,
       content: trimmed.slice(0, 12000),
       embedding: embeddings[0],
       pendiente: false,
@@ -2821,7 +2845,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
       await wahaSendText(chatId, `✅ Listo. Guardé "${file.name}".\n${file.webViewLink}\n\n¿Algo más? Escribe "menú" 🙌`, sessionName);
 
       const mt = String(file.mimeType || pending.mimetype || '').trim();
-      const isLight = mt === 'application/vnd.google-apps.document' || mt.startsWith('text/');
+      const canVectorizeNow = isImmediateVectorizableMime(mt);
 
       if (!WAHA_EMBEDDINGS_ENABLED) return;
 
@@ -2844,7 +2868,8 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
               mimeType: mt || null,
               fileSize: file.size || null,
               text: analysis,
-              source: 'waha_image_analysis'
+              source: 'waha_image_analysis',
+              phoneNumber: session.phone_number
             });
 
             await wahaSendText(chatId, `🖼️ Análisis de la imagen:\n\n${sanitizeWhatsAppText(analysis)}`, sessionName, {
@@ -2858,6 +2883,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
                 name: file.name,
                 file_type: mt || null,
                 file_size: file.size || null,
+                ...documentWsspPatch(session.phone_number),
                 servicio: 'general',
                 pendiente: true,
                 metadata: { source: 'waha', action: 'upload_file', vector_status: 'pending_image_analysis_failed' },
@@ -2874,6 +2900,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
                 name: file.name,
                 file_type: mt || null,
                 file_size: file.size || null,
+                ...documentWsspPatch(session.phone_number),
                 servicio: 'general',
                 pendiente: true,
                 metadata: { source: 'waha', action: 'upload_file', vector_status: 'pending_image_analysis_error' },
@@ -2885,7 +2912,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
         return;
       }
 
-      if (!isLight) {
+      if (!canVectorizeNow) {
         try {
           await upsertDocumentoAdministradorByFile({
             userEmail: user.email,
@@ -2894,6 +2921,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
               name: file.name,
               file_type: mt || null,
               file_size: file.size || null,
+              ...documentWsspPatch(session.phone_number),
               servicio: 'general',
               pendiente: true,
               metadata: { source: 'waha', action: 'upload_file', vector_status: 'pending_deferred' },
@@ -2911,7 +2939,8 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
           fileId: file.id,
           fileName: file.name,
           mimeType: mt || null,
-          fileSize: file.size || null
+          fileSize: file.size || null,
+          phoneNumber: session.phone_number
         });
       } catch (_) {}
     } catch (error) {
