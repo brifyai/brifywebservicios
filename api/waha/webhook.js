@@ -4011,24 +4011,33 @@ async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber, option
       digits ? `+${digits}` : null
     ].filter(Boolean))
   );
+  const attempts = [];
 
   try {
     if (phoneVariants.length) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('carpeta_administrador')
         .select('id_drive_carpeta')
         .in('wsp', phoneVariants)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+      attempts.push({
+        via: 'wsp',
+        ok: !error,
+        found: Boolean(data?.id_drive_carpeta),
+        error: error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null
+      });
       if (data?.id_drive_carpeta) {
         await setWspSessionGlobal(sessionId, {
           last_root_folder_resolution: {
             via: 'wsp',
+            has_service_role: Boolean(supabaseServiceKey),
             phone_variants: phoneVariants,
             email: email || null,
             user_id: uid || null,
             folder_id: data.id_drive_carpeta,
+            attempts,
             ts: new Date().toISOString()
           }
         });
@@ -4039,21 +4048,29 @@ async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber, option
 
   try {
     if (email) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('carpeta_administrador')
         .select('id_drive_carpeta')
         .ilike('correo', email)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+      attempts.push({
+        via: 'correo',
+        ok: !error,
+        found: Boolean(data?.id_drive_carpeta),
+        error: error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null
+      });
       if (data?.id_drive_carpeta) {
         await setWspSessionGlobal(sessionId, {
           last_root_folder_resolution: {
             via: 'correo',
+            has_service_role: Boolean(supabaseServiceKey),
             phone_variants: phoneVariants,
             email,
             user_id: uid || null,
             folder_id: data.id_drive_carpeta,
+            attempts,
             ts: new Date().toISOString()
           }
         });
@@ -4064,21 +4081,29 @@ async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber, option
 
   try {
     if (uid) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('carpeta_administrador')
         .select('id_drive_carpeta')
         .eq('user_id', uid)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+      attempts.push({
+        via: 'user_id',
+        ok: !error,
+        found: Boolean(data?.id_drive_carpeta),
+        error: error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null
+      });
       if (data?.id_drive_carpeta) {
         await setWspSessionGlobal(sessionId, {
           last_root_folder_resolution: {
             via: 'user_id',
+            has_service_role: Boolean(supabaseServiceKey),
             phone_variants: phoneVariants,
             email: email || null,
             user_id: uid,
             folder_id: data.id_drive_carpeta,
+            attempts,
             ts: new Date().toISOString()
           }
         });
@@ -4090,10 +4115,12 @@ async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber, option
   await setWspSessionGlobal(sessionId, {
     last_root_folder_resolution: {
       via: 'no_match',
+      has_service_role: Boolean(supabaseServiceKey),
       phone_variants: phoneVariants,
       email: email || null,
       user_id: uid || null,
       folder_id: null,
+      attempts,
       ts: new Date().toISOString()
     }
   });
