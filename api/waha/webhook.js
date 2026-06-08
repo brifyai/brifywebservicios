@@ -1934,11 +1934,43 @@ function summarizeLawRefsForThread(laws) {
 }
 
 function summarizeDocumentRefsForThread(documents) {
-  return (Array.isArray(documents) ? documents : []).slice(0, 8).map((doc) => ({
-    name: doc?.name || null,
-    file_id: doc?.fileId || doc?.file_id || null,
-    url: driveOpenLink(doc?.fileId || doc?.file_id || null)
-  }));
+  return Array.from(
+    new Map(
+      (Array.isArray(documents) ? documents : [])
+        .filter((doc) => doc?.name || doc?.fileId || doc?.file_id)
+        .map((doc) => {
+          const fileId = doc?.fileId || doc?.file_id || null;
+          const name = doc?.name || null;
+          const key = `${fileId || ''}|${normalizeForIntent(name || '')}`;
+          return [
+            key,
+            {
+              name,
+              file_id: fileId,
+              url: driveOpenLink(fileId)
+            }
+          ];
+        })
+    ).values()
+  ).slice(0, 8);
+}
+
+async function getLegalThreadReferencedDocuments(threadId, userId) {
+  if (!threadId || !userId) return [];
+  try {
+    const { data: thread, error } = await supabase
+      .from('wsp_legal_threads')
+      .select('documents_referenced')
+      .eq('id', threadId)
+      .single();
+    if (error) return [];
+    const docs = Array.isArray(thread?.documents_referenced) ? thread.documents_referenced : [];
+    const ids = docs.map((doc) => doc?.file_id).filter(Boolean);
+    if (!ids.length) return [];
+    return await loadUserDocsByFileIds({ userId, fileIds: ids });
+  } catch (_) {
+    return [];
+  }
 }
 
 async function minimaxLegalReply({ history, question, lawsContext, docsContext }) {
@@ -2143,6 +2175,7 @@ async function answerLegalConsultation({
   if (!cleanQuestion) return false;
 
   const preferredDocumentName = extractDocumentReferenceName(cleanQuestion);
+  const explicitDocQuestion = isLikelyLegalDocumentQuestion(cleanQuestion);
   const documents = [];
 
   if (Array.isArray(uploadedDocuments) && uploadedDocuments.length) {
@@ -2158,7 +2191,12 @@ async function answerLegalConsultation({
     documents.push(...namedDocuments);
   }
 
-  if (!documents.length || !preferredDocumentName) {
+  if (explicitDocQuestion && !documents.length) {
+    const referencedDocuments = await getLegalThreadReferencedDocuments(threadId, session.user_id);
+    documents.push(...referencedDocuments);
+  }
+
+  if (explicitDocQuestion && (!documents.length || !preferredDocumentName)) {
     const semanticMatches = await semanticSearchUserDocs({
       userId: session.user_id,
       query: cleanQuestion,
@@ -2222,8 +2260,10 @@ async function answerLegalConsultation({
 
   const withSources = (() => {
     const lawNames = summarizeLawRefsForThread(laws).slice(0, 3).map((item) => item.number ? `${item.title} (Ley ${item.number})` : item.title);
-    const docNames = summarizeDocumentRefsForThread(uniqueDocuments).slice(0, 2).map((item) => item.name).filter(Boolean);
-    const sources = [...lawNames, ...docNames].filter(Boolean);
+    const docNames = explicitDocQuestion
+      ? summarizeDocumentRefsForThread(uniqueDocuments).slice(0, 2).map((item) => item.name).filter(Boolean)
+      : [];
+    const sources = Array.from(new Set([...lawNames, ...docNames].filter(Boolean)));
     if (!sources.length) return answer;
     if (normalizeForIntent(answer).includes('fuente:')) return answer;
     return `${answer}\n\nFuente: ${sources.join(', ')}`;
@@ -2231,7 +2271,7 @@ async function answerLegalConsultation({
 
   await appendLegalThreadReferences(threadId, {
     laws: summarizeLawRefsForThread(laws),
-    documents: summarizeDocumentRefsForThread(uniqueDocuments)
+    documents: explicitDocQuestion || uploadedDocuments.length ? summarizeDocumentRefsForThread(uniqueDocuments) : []
   });
 
   await wahaSendLongTextLogged({
@@ -2249,7 +2289,7 @@ async function answerLegalConsultation({
       thread_id: threadId,
       stage: 'case_active',
       last_legal_laws: summarizeLawRefsForThread(laws),
-      last_legal_docs: summarizeDocumentRefsForThread(uniqueDocuments)
+      last_legal_docs: explicitDocQuestion || uploadedDocuments.length ? summarizeDocumentRefsForThread(uniqueDocuments) : []
     }
   });
   return true;
