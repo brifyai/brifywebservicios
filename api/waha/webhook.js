@@ -1500,6 +1500,22 @@ async function getActiveLegalThread(sessionId) {
   }
 }
 
+async function getLatestLegalThread(sessionId) {
+  try {
+    const { data, error } = await supabase
+      .from('wsp_legal_threads')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) return null;
+    return data || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 async function createLegalThread({ sessionId, userId, threadType }) {
   try {
     const { data, error } = await supabase
@@ -1550,6 +1566,15 @@ async function setLegalThreadType(threadId, threadType) {
   } catch (_) {}
 }
 
+async function setLegalThreadActive(threadId, isActive) {
+  try {
+    await supabase
+      .from('wsp_legal_threads')
+      .update({ is_active: Boolean(isActive), updated_at: new Date().toISOString() })
+      .eq('id', threadId);
+  } catch (_) {}
+}
+
 async function getLegalThreadHistory(threadId, maxItems = 10, maxChars = 2500) {
   try {
     const { data, error } = await supabase.from('wsp_legal_threads').select('messages').eq('id', threadId).single();
@@ -1566,6 +1591,81 @@ async function getLegalThreadHistory(threadId, maxItems = 10, maxChars = 2500) {
     return joined.slice(-maxChars);
   } catch (_) {
     return '';
+  }
+}
+
+async function appendLegalThreadReferences(threadId, { laws = [], documents = [] } = {}) {
+  if (!threadId) return null;
+  try {
+    const { data: thread, error } = await supabase
+      .from('wsp_legal_threads')
+      .select('laws_referenced, documents_referenced')
+      .eq('id', threadId)
+      .single();
+    if (error) return null;
+
+    const currentLaws = Array.isArray(thread?.laws_referenced) ? thread.laws_referenced : [];
+    const currentDocs = Array.isArray(thread?.documents_referenced) ? thread.documents_referenced : [];
+
+    const nextLaws = Array.from(
+      new Map(
+        [...currentLaws, ...(Array.isArray(laws) ? laws : [])]
+          .filter((item) => item && (item.number || item.title))
+          .map((item) => [`${item.number || ''}|${item.title || ''}`, item])
+      ).values()
+    ).slice(-20);
+
+    const nextDocs = Array.from(
+      new Map(
+        [...currentDocs, ...(Array.isArray(documents) ? documents : [])]
+          .filter((item) => item && (item.file_id || item.name))
+          .map((item) => [`${item.file_id || ''}|${item.name || ''}`, item])
+      ).values()
+    ).slice(-20);
+
+    await supabase
+      .from('wsp_legal_threads')
+      .update({
+        laws_referenced: nextLaws,
+        documents_referenced: nextDocs,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', threadId);
+    return { laws: nextLaws, documents: nextDocs };
+  } catch (_) {
+    return null;
+  }
+}
+
+function splitLongWhatsAppResponse(text, maxChars = 1400) {
+  const input = String(text || '').trim();
+  if (!input) return [];
+  if (input.length <= maxChars) return [input];
+
+  const parts = [];
+  let remaining = input;
+  while (remaining.length > maxChars) {
+    let cut = remaining.lastIndexOf('\n', maxChars);
+    if (cut < Math.floor(maxChars * 0.45)) cut = remaining.lastIndexOf('. ', maxChars);
+    if (cut < Math.floor(maxChars * 0.45)) cut = remaining.lastIndexOf(' ', maxChars);
+    if (cut < 1) cut = maxChars;
+    const chunk = remaining.slice(0, cut).trim();
+    if (chunk) parts.push(chunk);
+    remaining = remaining.slice(cut).trim();
+  }
+  if (remaining) parts.push(remaining);
+
+  return parts.map((part, index) => {
+    if (index === 0 && parts.length > 1) return `${part}\n\nContinúo en el siguiente mensaje...`;
+    if (index < parts.length - 1) return `Esto es la parte ${index + 1}, sigo...\n\n${part}\n\nContinúo en el siguiente mensaje...`;
+    return parts.length > 1 ? `Parte ${index + 1}:\n\n${part}` : part;
+  });
+}
+
+async function wahaSendLongTextLogged({ threadId, chatId, text, sessionName, options }) {
+  const chunks = splitLongWhatsAppResponse(text, 1400);
+  for (const chunk of chunks) {
+    await wahaSendTextLogged({ threadId, chatId, text: chunk, sessionName, options });
   }
 }
 
@@ -1750,12 +1850,421 @@ function pickLawFromResults(results, input) {
   return null;
 }
 
-async function handleAsesorLegal({ session, chatId, text, sessionName }) {
-  const ctx = session.branch_context || {};
+function extractLawNumbersFromText(text) {
+  const raw = String(text || '');
+  if (!raw.trim()) return [];
+  const matches = Array.from(raw.matchAll(/\bley\s*([0-9]{2,6}(?:\.[0-9]{1,3})?)\b/gi));
+  return Array.from(
+    new Set(
+      matches
+        .map((m) => normalizeLawNumber(m?.[1]))
+        .filter(Boolean)
+    )
+  );
+}
+
+function dedupeLaws(laws) {
+  return Array.from(
+    new Map(
+      (Array.isArray(laws) ? laws : [])
+        .filter(Boolean)
+        .map((law) => {
+          const key = `${normalizeLawNumber(getLawNumber(law))}|${normalizeForIntent(getLawTitle(law))}`;
+          return [key, law];
+        })
+    ).values()
+  );
+}
+
+function buildLegalLawContext(laws, question) {
+  return (Array.isArray(laws) ? laws : [])
+    .slice(0, 4)
+    .map((law, idx) => {
+      const titulo = getLawTitle(law);
+      const numero = getLawNumber(law) || 'No disponible';
+      const url = getLawUrl(law);
+      const snippet = buildLawSnippet(law, question || titulo) || String(getLawContent(law) || '').slice(0, 700);
+      return `Ley ${idx + 1}\nTítulo: ${titulo}\nNúmero: ${numero}\n${url ? `Fuente: ${url}\n` : ''}Fragmento:\n${snippet || 'Sin extracto disponible'}`;
+    })
+    .join('\n\n');
+}
+
+function buildLegalDocumentContext(documents, question) {
+  return (Array.isArray(documents) ? documents : [])
+    .slice(0, 3)
+    .map((doc, idx) => {
+      const excerpt = extractRelevantDocExcerpt(doc.content, question, 1200);
+      const folderName = doc?.metadata?.nombre_carpeta_actual || doc?.metadata?.folder_name || doc?.folder_name || null;
+      return `Documento ${idx + 1}\nNombre: ${doc.name}\n${folderName ? `Carpeta: ${folderName}\n` : ''}Contenido relevante:\n${excerpt || '(sin texto útil)'}`;
+    })
+    .join('\n\n');
+}
+
+async function searchLawsForLegalQuestion({ question, documents = [], limit = 5 }) {
+  const directLawNumbers = extractLawNumbersFromText(question);
+  let results = [];
+
+  for (const lawNumber of directLawNumbers) {
+    const exactMatches = await searchLawsRpc(`Ley ${lawNumber}`, Math.max(limit, 5));
+    results.push(
+      ...exactMatches.filter((law) => normalizeLawNumber(getLawNumber(law)) === lawNumber)
+    );
+  }
+
+  if (results.length < limit) {
+    const docHints = (Array.isArray(documents) ? documents : [])
+      .slice(0, 2)
+      .map((doc) => extractRelevantDocExcerpt(doc.content, question, 360))
+      .filter(Boolean)
+      .join('\n');
+    const searchQuery = [question, docHints].filter(Boolean).join('\n');
+    const contextual = await searchLawsRpc(searchQuery, limit);
+    results.push(...contextual);
+  }
+
+  return dedupeLaws(results).slice(0, limit);
+}
+
+function summarizeLawRefsForThread(laws) {
+  return (Array.isArray(laws) ? laws : []).slice(0, 8).map((law) => ({
+    title: getLawTitle(law),
+    number: getLawNumber(law),
+    url: getLawUrl(law)
+  }));
+}
+
+function summarizeDocumentRefsForThread(documents) {
+  return (Array.isArray(documents) ? documents : []).slice(0, 8).map((doc) => ({
+    name: doc?.name || null,
+    file_id: doc?.fileId || doc?.file_id || null,
+    url: driveOpenLink(doc?.fileId || doc?.file_id || null)
+  }));
+}
+
+async function minimaxLegalReply({ history, question, lawsContext, docsContext }) {
+  if (!MINIMAX_API_KEY) return '';
+  const system = `Eres el Asesor Legal de Brify, un legislador chileno experto.
+Respondes con autoridad jurídica, criterio legal y lenguaje profesional, pero cercano y natural.
+Prioridad:
+1. Usa primero las leyes encontradas en la base de datos.
+2. Si también hay documentos del usuario, intégralos con el análisis legal.
+3. Si el contexto legal es insuficiente, dilo explícitamente y formula solo las aclaraciones mínimas necesarias.
+Reglas:
+- No inventes leyes, artículos ni hechos.
+- Si citas una ley, menciona su nombre o número de forma clara.
+- Si hay documento del usuario, explica cómo se relaciona con la legislación aplicable.
+- No uses Markdown.
+- Si la respuesta es larga, redacta con continuidad para poder dividirse en varios mensajes.
+- Responde en español chileno neutral.`;
+
+  try {
+    const response = await fetchWithTimeout(
+      MINIMAX_ENDPOINT,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${MINIMAX_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: MINIMAX_MODEL,
+          system,
+          temperature: 0.25,
+          max_tokens: 950,
+          messages: [
+            {
+              role: 'user',
+              content: `Historial legal reciente:\n${history || '(sin historial)'}\n\nConsulta del usuario:\n${question}\n\nContexto documental:\n${docsContext || '(sin documentos relevantes)'}\n\nContexto legal desde base de datos:\n${lawsContext || '(sin resultados de base de datos)'}\n\nResponde:`
+            }
+          ]
+        })
+      },
+      Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 9000
+    );
+    if (!response.ok) return '';
+    const data = await response.json().catch(() => ({}));
+    let raw = data?.content;
+    if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+    if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+    return typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+async function openaiLegalReply({ history, question, lawsContext, docsContext }) {
+  if (!OPENAI_API_KEY) return '';
+  try {
+    const response = await fetchWithTimeout(
+      `${String(OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')}/chat/completions`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: OPENAI_CHAT_MODEL,
+          temperature: 0.25,
+          max_tokens: 950,
+          messages: [
+            {
+              role: 'system',
+              content: `Eres el Asesor Legal de Brify, un legislador chileno experto.
+Responde con criterio jurídico chileno, tono profesional pero cercano.
+Usa primero la legislación encontrada en la base de datos.
+Si además hay documentos del usuario, intégralos con la ley aplicable.
+No inventes artículos ni afirmes hechos no presentes.
+No uses Markdown.`
+            },
+            {
+              role: 'user',
+              content: `Historial legal reciente:\n${history || '(sin historial)'}\n\nConsulta:\n${question}\n\nDocumentos:\n${docsContext || '(sin documentos)'}\n\nLeyes encontradas:\n${lawsContext || '(sin resultados de base de datos)'}\n\nResponde:`
+            }
+          ]
+        })
+      },
+      Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 9000
+    );
+    if (!response.ok) return '';
+    const data = await response.json().catch(() => ({}));
+    const raw = data?.choices?.[0]?.message?.content;
+    return typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function buildLegalFallbackReply({ question, laws, documents }) {
+  const law = Array.isArray(laws) && laws.length ? laws[0] : null;
+  const doc = Array.isArray(documents) && documents.length ? documents[0] : null;
+  const lawText = law
+    ? `Encontré como referencia ${getLawTitle(law)}${getLawNumber(law) ? ` (Ley ${getLawNumber(law)})` : ''}.`
+    : `No encontré una ley específica en la base para esta consulta.`;
+  const docText = doc
+    ? ` Además revisé el documento "${doc.name}".`
+    : '';
+  return `${lawText}${docText}\n\nPara orientarte bien, necesito afinar uno o dos puntos de tu caso: qué pasó exactamente, en qué contexto ocurrió y qué quieres lograr. Si quieres, también puedes citar una ley concreta o mencionar el documento exacto.`;
+}
+
+function isLikelyLegalDocumentQuestion(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  return (
+    isLikelyDocumentKnowledgeQuestion(text) ||
+    ((t.includes('document') || t.includes('archivo') || t.includes('pdf')) &&
+      (t.includes('segun') || t.includes('según') || t.includes('demanda') || t.includes('contrato') || t.includes('ley') || t.includes('testigo')))
+  );
+}
+
+async function uploadLegalMediaDocument({ session, threadId, media, userEmail }) {
+  const normalizedUrl = normalizeMediaUrl(media?.url);
+  if (!normalizedUrl || !userEmail) return null;
+
+  const parentFolderId = await resolveRootFolderIdForUser(userEmail, session.user_id, session.phone_number, { sessionId: session.id });
+  if (!parentFolderId) throw new Error('No encontré la carpeta raíz del usuario para Asesor Legal');
+
+  const baseName = String(media?.filename || `documento-legal-${Date.now()}`).trim();
+  const finalName = /^\[AL\]/i.test(baseName) ? baseName : `[AL] ${baseName}`;
+  const file = await uploadFileFromUrlToDrive({
+    userId: session.user_id,
+    parentFolderId,
+    fileName: finalName,
+    mimeType: media?.mimetype,
+    url: normalizedUrl
+  });
+
+  await upsertDocumentoAdministradorByFile({
+    userEmail,
+    fileId: file.id,
+    patch: {
+      ...documentWsspPatch(session.phone_number),
+      name: file.name,
+      file_type: file.mimeType || media?.mimetype || null,
+      file_size: Number.isFinite(Number(file.size)) ? Number(file.size) : null,
+      servicio: 'abogados',
+      pendiente: true,
+      carpeta_actual: parentFolderId,
+      nombre_carpeta_actual: 'Carpeta raíz',
+      metadata: { source: 'waha', action: 'legal_upload_file', vector_status: 'uploaded', legal_thread_id: threadId || null },
+      nombre_limpio: String(file.name || '').toLowerCase().replace(/[^a-z0-9]/g, '_')
+    }
+  });
+
+  const vectorized = await vectorizeDriveFileToSupabase({
+    userId: session.user_id,
+    userEmail,
+    fileId: file.id,
+    fileName: file.name,
+    mimeType: file.mimeType || media?.mimetype || null,
+    fileSize: file.size || null,
+    phoneNumber: session.phone_number,
+    service: 'abogados',
+    sourceAction: 'legal_upload_file'
+  });
+
+  const { data: doc } = await supabase
+    .from('documentos_administrador')
+    .select('name,file_id,content,metadata,created_at')
+    .eq('administrador', userEmail)
+    .eq('file_id', file.id)
+    .maybeSingle();
+
+  const documentRef = {
+    name: doc?.name || file.name,
+    fileId: doc?.file_id || file.id,
+    content: String(doc?.content || ''),
+    metadata: doc?.metadata || {},
+    created_at: doc?.created_at || null
+  };
+
+  await appendLegalThreadReferences(threadId, {
+    documents: summarizeDocumentRefsForThread([documentRef])
+  });
+
+  return {
+    ...documentRef,
+    webViewLink: file.webViewLink || driveOpenLink(file.id),
+    mimeType: file.mimeType || media?.mimetype || null,
+    vectorized
+  };
+}
+
+async function answerLegalConsultation({
+  session,
+  threadId,
+  chatId,
+  sessionName,
+  question,
+  uploadedDocuments = [],
+  forceKnowledgeFallback = false
+}) {
+  const cleanQuestion = normalizeIncomingText(question);
+  if (!cleanQuestion) return false;
+
+  const preferredDocumentName = extractDocumentReferenceName(cleanQuestion);
+  const documents = [];
+
+  if (Array.isArray(uploadedDocuments) && uploadedDocuments.length) {
+    documents.push(...uploadedDocuments.filter(Boolean));
+  }
+
+  if (preferredDocumentName) {
+    const namedDocuments = await findUserDocumentsByNameHint({
+      userId: session.user_id,
+      nameHint: preferredDocumentName,
+      limit: 3
+    });
+    documents.push(...namedDocuments);
+  }
+
+  if (!documents.length || !preferredDocumentName) {
+    const semanticMatches = await semanticSearchUserDocs({
+      userId: session.user_id,
+      query: cleanQuestion,
+      limit: 4
+    });
+    if (semanticMatches.length) {
+      const semanticDocuments = await loadUserDocsByFileIds({
+        userId: session.user_id,
+        fileIds: semanticMatches.map((item) => item.fileId)
+      });
+      documents.push(...semanticDocuments);
+    }
+  }
+
+  const uniqueDocuments = Array.from(
+    new Map(
+      documents
+        .filter((doc) => doc?.fileId || doc?.file_id || doc?.name)
+        .map((doc) => [String(doc.fileId || doc.file_id || doc.name), doc])
+    ).values()
+  ).slice(0, 4);
+
+  const laws = forceKnowledgeFallback ? [] : await searchLawsForLegalQuestion({ question: cleanQuestion, documents: uniqueDocuments, limit: 5 });
+  const history = threadId ? await getLegalThreadHistory(threadId, 14, 3200) : '';
+  const lawsContext = buildLegalLawContext(laws, cleanQuestion);
+  const docsContext = buildLegalDocumentContext(uniqueDocuments, cleanQuestion);
+
+  if (!laws.length) {
+    await wahaSendTextLogged({
+      threadId,
+      chatId,
+      text: `Buscando información, ya te contesto... esperame 🔍`,
+      sessionName,
+      options: { skipRewrite: true }
+    });
+  }
+
+  let answer = await minimaxLegalReply({
+    history,
+    question: cleanQuestion,
+    lawsContext,
+    docsContext
+  });
+
+  if (!answer) {
+    answer = await openaiLegalReply({
+      history,
+      question: cleanQuestion,
+      lawsContext,
+      docsContext
+    });
+  }
+
+  if (!answer) {
+    answer = buildLegalFallbackReply({
+      question: cleanQuestion,
+      laws,
+      documents: uniqueDocuments
+    });
+  }
+
+  const withSources = (() => {
+    const lawNames = summarizeLawRefsForThread(laws).slice(0, 3).map((item) => item.number ? `${item.title} (Ley ${item.number})` : item.title);
+    const docNames = summarizeDocumentRefsForThread(uniqueDocuments).slice(0, 2).map((item) => item.name).filter(Boolean);
+    const sources = [...lawNames, ...docNames].filter(Boolean);
+    if (!sources.length) return answer;
+    if (normalizeForIntent(answer).includes('fuente:')) return answer;
+    return `${answer}\n\nFuente: ${sources.join(', ')}`;
+  })();
+
+  await appendLegalThreadReferences(threadId, {
+    laws: summarizeLawRefsForThread(laws),
+    documents: summarizeDocumentRefsForThread(uniqueDocuments)
+  });
+
+  await wahaSendLongTextLogged({
+    threadId,
+    chatId,
+    text: withSources,
+    sessionName,
+    options: { skipRewrite: true }
+  });
+
+  await updateWspSession(session.id, {
+    current_branch: 'asesor_legal',
+    branch_context: {
+      ...(session.branch_context || {}),
+      thread_id: threadId,
+      stage: 'case_active',
+      last_legal_laws: summarizeLawRefsForThread(laws),
+      last_legal_docs: summarizeDocumentRefsForThread(uniqueDocuments)
+    }
+  });
+  return true;
+}
+
+async function handleAsesorLegal({ session, chatId, text, sessionName, payload }) {
+  let ctx = session.branch_context || {};
   const textTrim = normalizeIncomingText(text);
   const textLower = normalizeForIntent(textTrim);
+  const media = extractMediaFromPayload(payload);
 
   if (isMenuTrigger(textLower)) {
+    if (ctx.thread_id) {
+      await setLegalThreadActive(ctx.thread_id, false);
+    }
     await showMainMenu({ session, chatId, sessionName });
     return;
   }
@@ -1763,32 +2272,97 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
   let threadId = ctx.thread_id || null;
   if (!threadId) {
     const active = await getActiveLegalThread(session.id);
-    const created = active || (await createLegalThread({ sessionId: session.id, userId: session.user_id, threadType: 'case' }));
-    threadId = created?.id || null;
+    const reusable = active || (await getLatestLegalThread(session.id));
+    if (reusable?.id) {
+      threadId = reusable.id;
+      await setLegalThreadActive(threadId, true);
+    } else {
+      const created = await createLegalThread({ sessionId: session.id, userId: session.user_id, threadType: 'case' });
+      threadId = created?.id || null;
+    }
     if (threadId) {
-      await updateWspSession(session.id, {
+      const updatedSession = await updateWspSession(session.id, {
         current_branch: 'asesor_legal',
         branch_context: { ...ctx, thread_id: threadId, stage: ctx.stage || 'choose_mode' }
       });
+      ctx = updatedSession?.branch_context || { ...ctx, thread_id: threadId, stage: ctx.stage || 'choose_mode' };
     }
   }
 
-  if (threadId) {
+  if (threadId && textTrim) {
     await appendLegalMessage(threadId, 'user', textTrim);
   }
 
   if (!ctx.stage) {
-    await updateWspSession(session.id, {
+    const updatedSession = await updateWspSession(session.id, {
       current_branch: 'asesor_legal',
       branch_context: { ...ctx, thread_id: threadId, stage: 'choose_mode' }
     });
+    ctx = updatedSession?.branch_context || { ...ctx, thread_id: threadId, stage: 'choose_mode' };
     await wahaSendTextLogged({
       threadId,
       chatId,
-      text: `¿Cómo quieres que te ayude hoy? ⚖️\n\n1️⃣ 📝 Compartir mi caso — cuéntame tu situación y te oriento con respaldo legal\n2️⃣ 🔎 Buscar una ley — dime el nombre, término o artículo que buscas`,
+      text: `Soy tu Asesor Legal de Brify ⚖️\n\nPuedo orientarte sobre tu caso, buscar leyes chilenas y revisar documentos dentro del contexto legal.\n\nSi quieres, parte contándome tu caso, mencionando una ley o diciéndome algo como: "según mi documento..."`,
       sessionName
     });
     return;
+  }
+
+  const { data: legalUser } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+  const legalUserEmail = legalUser?.email || null;
+  let uploadedDocuments = [];
+
+  if (media?.url && legalUserEmail) {
+    try {
+      const uploadedDoc = await uploadLegalMediaDocument({
+        session,
+        threadId,
+        media,
+        userEmail: legalUserEmail
+      });
+      if (uploadedDoc) uploadedDocuments.push(uploadedDoc);
+      if (!textTrim || textTrim.length < 6) {
+        await updateWspSession(session.id, {
+          current_branch: 'asesor_legal',
+          branch_context: { ...ctx, thread_id: threadId, stage: 'case_active', last_legal_docs: summarizeDocumentRefsForThread(uploadedDocuments) }
+        });
+        await wahaSendTextLogged({
+          threadId,
+          chatId,
+          text: `Listo 🙌 Guardé "${uploadedDoc.name}" dentro del contexto legal.\n\nAhora puedes preguntarme algo como: "según mi documento, ¿qué implicancia legal tiene esto?"`,
+          sessionName,
+          options: { skipRewrite: true }
+        });
+        return;
+      }
+    } catch (uploadError) {
+      await wahaSendTextLogged({
+        threadId,
+        chatId,
+        text: `Tuve un problema guardando el documento en Asesor Legal 😕\n\nSi quieres, reenvíalo o cuéntame tu consulta y la trabajamos igual.`,
+        sessionName
+      });
+      return;
+    }
+  }
+
+  const wantsDocumentLegalAnswer = isLikelyLegalDocumentQuestion(textTrim);
+  const wantsFreeLegalAnswer =
+    ctx.stage === 'case_collect' ||
+    ctx.stage === 'case_active' ||
+    (textTrim.length >= 18 && shouldTreatAsCase(textTrim));
+
+  if ((uploadedDocuments.length && textTrim) || wantsDocumentLegalAnswer || wantsFreeLegalAnswer) {
+    if (threadId) await setLegalThreadType(threadId, 'case');
+    const answered = await answerLegalConsultation({
+      session,
+      threadId,
+      chatId,
+      sessionName,
+      question: textTrim,
+      uploadedDocuments
+    });
+    if (answered) return;
   }
 
   if (ctx.stage === 'choose_mode') {
@@ -1892,7 +2466,7 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
       return;
     }
 
-    await wahaSendTextLogged({ threadId, chatId, text: `¿Prefieres?\n\n1️⃣ 📝 Compartir mi caso\n2️⃣ 🔎 Buscar una ley`, sessionName });
+    await wahaSendTextLogged({ threadId, chatId, text: `Cuéntame directamente tu duda legal, menciona una ley o referencia un documento. También puedes decir:\n\n1️⃣ 📝 Compartir mi caso\n2️⃣ 🔎 Buscar una ley`, sessionName });
     return;
   }
 
@@ -1911,6 +2485,7 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
     const results = await searchLawsRpc(query, 7);
     const nextNoResults = results.length ? 0 : (Number(ctx.no_results_count || 0) + 1);
     await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'law_results', last_query: query, results, no_results_count: nextNoResults } });
+    await appendLegalThreadReferences(threadId, { laws: summarizeLawRefsForThread(results) });
     await wahaSendTextLogged({ threadId, chatId, text: formatLawResults(results, query), sessionName });
     return;
   }
@@ -1920,12 +2495,13 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
     const picked = pickLawFromResults(results, textTrim);
     if (picked) {
       await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'law_results', last_query: ctx.last_query, results, selected: picked.index } });
+      await appendLegalThreadReferences(threadId, { laws: summarizeLawRefsForThread([picked.law]) });
       await wahaSendTextLogged({ threadId, chatId, text: formatLawDetail(picked.law), sessionName });
       return;
     }
 
     if (shouldTreatAsCase(textTrim)) {
-      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'case_collect' } });
+      await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'case_active' } });
       if (threadId) await setLegalThreadType(threadId, 'case');
       await wahaSendTextLogged({ threadId, chatId, text: `Perfecto 🙌 Cuéntame el caso o tu duda y te oriento.`, sessionName });
       return;
@@ -1939,84 +2515,30 @@ async function handleAsesorLegal({ session, chatId, text, sessionName }) {
     const newResults = await searchLawsRpc(query, 7);
     const nextNoResults = newResults.length ? 0 : (Number(ctx.no_results_count || 0) + 1);
     await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'law_results', last_query: query, results: newResults, no_results_count: nextNoResults } });
+    await appendLegalThreadReferences(threadId, { laws: summarizeLawRefsForThread(newResults) });
     await wahaSendTextLogged({ threadId, chatId, text: formatLawResults(newResults, query), sessionName });
     return;
   }
 
-  if (ctx.stage === 'case_collect') {
+  if (ctx.stage === 'case_collect' || ctx.stage === 'case_active') {
     const description = textTrim;
     if (!description || description.length < 20) {
       await wahaSendTextLogged({ threadId, chatId, text: `Cuéntame un poquito más 🙌 (qué pasó, cuándo, con quién y qué necesitas)`, sessionName });
       return;
     }
-
-    const candidateLaws = await searchLawsRpc(description, 5);
-    const lawsContext = candidateLaws
-      .slice(0, 3)
-      .map((law, idx) => {
-        const titulo = getLawTitle(law);
-        const numero = getLawNumber(law) || 'No disponible';
-        const url = getLawUrl(law);
-        const contenido = getLawContent(law);
-        const fragmento = contenido ? contenido.slice(0, 700) + (contenido.length > 700 ? '…' : '') : 'Contenido no disponible';
-        return `--- Ley ${idx + 1} ---\nTítulo: ${titulo}\nNúmero: ${numero}\n${url ? `Fuente: ${url}\n` : ''}Fragmento:\n${fragmento}`;
-      })
-      .join('\n\n');
-
-    let answer = '';
-    if (MINIMAX_API_KEY) {
-      const history = threadId ? await getLegalThreadHistory(threadId, 10, 2500) : '';
-      const system = `Eres un asesor legal en WhatsApp para Brify. Responde en español, con tono humano y cercano.
-Si hay contexto legal, cita la ley/artículo de forma clara. Si falta información, haz 1-2 preguntas de aclaración.
-No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
-No inventes artículos ni números.`;
-      try {
-        const response = await fetchWithTimeout(
-          MINIMAX_ENDPOINT,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${MINIMAX_API_KEY}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model: MINIMAX_MODEL,
-              system,
-              temperature: 0.4,
-              max_tokens: 700,
-              messages: [
-                {
-                  role: 'user',
-                  content: `Historial reciente (puede estar vacío):\n${history || '(sin historial)'}\n\nMensaje actual:\n${description}\n\nContexto de leyes (puede estar vacío):\n${lawsContext || '(sin contexto)'}\n\nResponde:`
-                }
-              ]
-            })
-          },
-          Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
-        );
-        if (response.ok) {
-          const data = await response.json().catch(() => ({}));
-          let raw = data?.content;
-          if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
-          if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-          answer = typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
-        }
-      } catch (_) {
-        answer = '';
-      }
-    }
-
-    if (!answer) {
-      answer = `Gracias por el detalle 🙌\n\nPara orientarte mejor, necesito 2 datos:\n1) ¿En qué ciudad/comuna ocurrió?\n2) ¿Qué quieres lograr exactamente (cobrar, terminar contrato, demanda, etc.)?\n\nSi quieres, también puedo buscar una ley específica: dime el término o número (ej: "Ley 19.628").`;
-    }
-
-    await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'choose_mode' } });
-    await wahaSendTextLogged({ threadId, chatId, text: answer, sessionName });
+    await answerLegalConsultation({
+      session,
+      threadId,
+      chatId,
+      sessionName,
+      question: description,
+      uploadedDocuments
+    });
     return;
   }
 
   await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...ctx, thread_id: threadId, stage: 'choose_mode' } });
-  await wahaSendTextLogged({ threadId, chatId, text: `¿Quieres?\n\n1️⃣ 📝 Compartir mi caso\n2️⃣ 🔎 Buscar una ley`, sessionName });
+  await wahaSendTextLogged({ threadId, chatId, text: `Sigo aquí como tu Asesor Legal ⚖️\n\nPuedes contarme tu caso, buscar una ley o referenciar un documento.`, sessionName });
 }
 
 async function detectIntentWithAI(text) {
@@ -3140,7 +3662,7 @@ async function upsertDocumentoAdministradorByFile({ userEmail, fileId, patch }) 
   return data;
 }
 
-async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileName, mimeType, fileSize, phoneNumber }) {
+async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileName, mimeType, fileSize, phoneNumber, service = 'general', sourceAction = 'upload_file' }) {
   if (!WAHA_EMBEDDINGS_ENABLED) return { ok: false, reason: 'disabled' };
   if (!userId || !userEmail || !fileId) return { ok: false, reason: 'missing_params' };
   const wspPatch = documentWsspPatch(phoneNumber);
@@ -3153,9 +3675,9 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
       name: fileName || null,
       file_type: mimeType || null,
       file_size: Number.isFinite(Number(fileSize)) ? Number(fileSize) : null,
-      servicio: 'general',
+      servicio: service,
       pendiente: true,
-      metadata: { source: 'waha', action: 'upload_file', vector_status: 'pending' },
+      metadata: { source: 'waha', action: sourceAction, vector_status: 'pending' },
       nombre_limpio: String(fileName || '').toLowerCase().replace(/[^a-z0-9]/g, '_')
     }
   });
@@ -6811,7 +7333,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   }
 
   if (session.current_branch === 'asesor_legal') {
-    await handleAsesorLegal({ session, chatId, text: textTrim, sessionName });
+    await handleAsesorLegal({ session, chatId, text: textTrim, sessionName, payload });
     return;
   }
 
@@ -7041,7 +7563,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
 
   if (intent.intent === 'legal') {
     session = await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'choose_mode' } });
-    await handleAsesorLegal({ session, chatId, text: textTrim, sessionName });
+    await handleAsesorLegal({ session, chatId, text: textTrim, sessionName, payload });
     return;
   }
 
@@ -7111,7 +7633,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
 
   if (intent.intent === 'unknown' && (isLikelyLegalTopic(textTrim) || isLikelyLawSearch(textTrim))) {
     session = await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'choose_mode' } });
-    await handleAsesorLegal({ session, chatId, text: textTrim, sessionName });
+    await handleAsesorLegal({ session, chatId, text: textTrim, sessionName, payload });
     return;
   }
 
