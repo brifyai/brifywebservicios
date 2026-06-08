@@ -1427,6 +1427,38 @@ Reglas:
   }
 }
 
+function isWhoAreYouQuestion(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  return (
+    t.includes('quien eres') ||
+    t.includes('quién eres') ||
+    t.includes('quien es brify') ||
+    t.includes('quién es brify') ||
+    t.includes('que eres') ||
+    t.includes('qué eres') ||
+    t.includes('eres una ia') ||
+    t.includes('eres un bot') ||
+    t.includes('que hace brify') ||
+    t.includes('qué hace brify') ||
+    t.includes('para que sirves') ||
+    t.includes('para qué sirves')
+  );
+}
+
+function buildWhoAreYouReply() {
+  return `Soy Brify, tu asistente. Estoy para ayudarte a resolver dudas y gestionar tus archivos de forma simple 🙌
+
+Puedo ayudarte con cosas como:
+📁 Crear grupos
+🤝 Compartir grupos
+📋 Listar archivos y grupos
+📤 Subir documentos e imágenes
+⚖️ Acompañarte con Asesoría Legal
+
+Si quieres, dime directamente qué necesitas y lo hacemos.`;
+}
+
 async function handleCasualConversation({ session, chatId, text, sessionName }) {
   const ctx = session.branch_context || {};
   const userText = normalizeIncomingText(text);
@@ -1443,9 +1475,13 @@ async function handleCasualConversation({ session, chatId, text, sessionName }) 
   const historyText = formatGlobalHistoryForModel(history, 10, 1800);
 
   let answer = '';
+  if (isWhoAreYouQuestion(userText)) {
+    answer = buildWhoAreYouReply();
+  }
+
   if (WAHA_MINIMAX_ENABLED && MINIMAX_API_KEY) {
     try {
-      answer = await minimaxCasualReply({ history: historyText, userMessage: userText });
+      if (!answer) answer = await minimaxCasualReply({ history: historyText, userMessage: userText });
     } catch (_) {
       answer = '';
     }
