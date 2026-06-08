@@ -645,7 +645,7 @@ function isExplicitCreateGroupRequest(text) {
 
 function isCreateDocumentTrigger(textLower) {
   if (!textLower) return false;
-  if (textLower === '6') return true;
+  if (textLower === '6') return false;
   return textLower.includes('crear documento') || textLower.includes('crear doc') || textLower.includes('documento');
 }
 
@@ -676,7 +676,7 @@ function buildMainMenu(nombre, meta = {}) {
     header = `Hola${displayName} 👋 ¿En qué te puedo ayudar?`;
   }
 
-  return `${header}\n\nPuedes decirme directamente lo que necesitas.\n\nPor ejemplo: "crear grupo Marketing", "compartir grupo Ventas con correo@empresa.com" o simplemente hacer una pregunta.\n\nSi prefieres, también puedes usar estas opciones:\n\n1️⃣ ⚖️ Asesor legal\n2️⃣ 📁 Crear grupo\n3️⃣ 🤝 Compartir grupo\n4️⃣ 📤 Subir archivo\n5️⃣ 📋 Listar archivos\n6️⃣ ✍️ Crear documento\n7️⃣ 🔍 Analizar documento`;
+  return `${header}\n\nPuedes decirme directamente lo que necesitas.\n\nPor ejemplo: "crear grupo Marketing", "compartir grupo Ventas con correo@empresa.com" o simplemente hacer una pregunta.\n\nSi prefieres, también puedes usar estas opciones:\n\n1️⃣ ⚖️ Asesor legal\n2️⃣ 📁 Crear grupo\n3️⃣ 🤝 Compartir grupo\n4️⃣ 📤 Subir archivo\n5️⃣ 📋 Listar archivos\n6️⃣ 🔍 Analizar documento`;
 }
 
 async function showMainMenu({ session, chatId, sessionName }) {
@@ -1088,7 +1088,7 @@ function detectIntentRuleBased(text) {
 
   if (/^\d+$/.test(t)) {
     const n = Number(t);
-    if (n >= 1 && n <= 7) return { intent: `menu_${n}`, confidence: 1 };
+    if (n >= 1 && n <= 6) return { intent: `menu_${n}`, confidence: 1 };
   }
 
   if (t.includes('asesor') || t.includes('abogad') || t.includes('legal') || t.includes('ley') || t.includes('demanda') || t.includes('contrato')) {
@@ -1108,9 +1108,6 @@ function detectIntentRuleBased(text) {
   }
   if (hasListIntentVerb(t) && (t.includes('document') || t.includes('archivo') || t.includes('imagen'))) {
     return { intent: 'list_files', confidence: 0.75 };
-  }
-  if (t.includes('crear documento') || t.includes('crear doc') || (t.includes('hacer') && t.includes('documento')) || t.includes('plantilla')) {
-    return { intent: 'create_document', confidence: 0.8 };
   }
   if (t.includes('analizar') || t.includes('resumir') || t.includes('interpretar') || (t.includes('revisar') && t.includes('document'))) {
     return { intent: 'analyze_document', confidence: 0.75 };
@@ -1774,6 +1771,92 @@ async function searchLawsRpc(query, limit = 5) {
   return Array.isArray(data) ? data : [];
 }
 
+async function searchCodigosRpc(query, limit = 4) {
+  if (!SUPABASE_LAWS_URL || !SUPABASE_LAWS_ANON_KEY) return [];
+  const q = expandLawQuery(String(query || '').trim());
+  if (!q) return [];
+
+  let response = null;
+  try {
+    response = await fetchWithTimeout(
+      `${SUPABASE_LAWS_URL.replace(/\/$/, '')}/rest/v1/rpc/buscar_codigos`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_LAWS_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_LAWS_ANON_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          termino_busqueda: q,
+          limite_resultados: limit
+        })
+      },
+      Number.isFinite(WAHA_HTTP_TIMEOUT_MS) && WAHA_HTTP_TIMEOUT_MS > 0 ? WAHA_HTTP_TIMEOUT_MS : 7000
+    );
+  } catch (_) {
+    response = null;
+  }
+
+  if (!response?.ok) return [];
+  const data = await response.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+
+async function searchCodigosVectorRpc(query, limit = 4, minSimilarity = 0.7) {
+  if (!SUPABASE_LAWS_URL || !SUPABASE_LAWS_ANON_KEY) return [];
+  const q = expandLawQuery(String(query || '').trim());
+  if (!q) return [];
+
+  const runSearch = async (embedding) => {
+    if (!Array.isArray(embedding) || !embedding.length) return [];
+    let response = null;
+    try {
+      response = await fetchWithTimeout(
+        `${SUPABASE_LAWS_URL.replace(/\/$/, '')}/rest/v1/rpc/match_codigos`,
+        {
+          method: 'POST',
+          headers: {
+            apikey: SUPABASE_LAWS_ANON_KEY,
+            Authorization: `Bearer ${SUPABASE_LAWS_ANON_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            query_embedding: serializeVectorForDb(embedding),
+            match_count: limit,
+            min_similarity: minSimilarity
+          })
+        },
+        Number.isFinite(WAHA_HTTP_TIMEOUT_MS) && WAHA_HTTP_TIMEOUT_MS > 0 ? WAHA_HTTP_TIMEOUT_MS : 7000
+      );
+    } catch (_) {
+      response = null;
+    }
+
+    if (!response?.ok) return [];
+    const data = await response.json().catch(() => []);
+    return Array.isArray(data) ? data : [];
+  };
+
+  let embeddingsResult = null;
+  try {
+    embeddingsResult = await buildEmbeddingsWithFallback([q], 'RETRIEVAL_QUERY');
+  } catch (_) {
+    embeddingsResult = null;
+  }
+
+  const primaryEmbedding = Array.isArray(embeddingsResult?.embeddings) ? embeddingsResult.embeddings[0] : null;
+  const primaryResults = await runSearch(primaryEmbedding);
+  if (primaryResults.length) return primaryResults;
+
+  if (embeddingsResult?.provider === 'openai') {
+    const deterministicResults = await runSearch(generateDeterministicEmbedding(q));
+    if (deterministicResults.length) return deterministicResults;
+  }
+
+  return [];
+}
+
 function buildLawSnippet(law, query) {
   const content = String(getLawContent(law) || '').replace(/\s+/g, ' ').trim();
   if (!content) return '';
@@ -1940,6 +2023,95 @@ function buildLegalLawContext(laws, question) {
     .join('\n\n');
 }
 
+function getCodigoTitle(item) {
+  return item?.titulo || item?.title || 'Material jurídico';
+}
+
+function getCodigoContent(item) {
+  return item?.contenido || item?.content || '';
+}
+
+function buildCodigoSnippet(item, query) {
+  const content = String(getCodigoContent(item) || '').replace(/\s+/g, ' ').trim();
+  if (!content) return '';
+  return extractRelevantDocExcerpt(content, query, 700) || content.slice(0, 700);
+}
+
+function buildLegalCodigosContext(codigos, question) {
+  return (Array.isArray(codigos) ? codigos : [])
+    .slice(0, 3)
+    .map((item, idx) => {
+      const title = getCodigoTitle(item);
+      const filePath = item?.file_path || null;
+      const snippet = buildCodigoSnippet(item, question);
+      return `Material complementario ${idx + 1}\nTítulo: ${title}\n${filePath ? `Referencia: ${filePath}\n` : ''}Extracto:\n${snippet || 'Sin extracto disponible'}`;
+    })
+    .join('\n\n');
+}
+
+function summarizeCodigoRefs(codigos) {
+  return Array.from(
+    new Map(
+      (Array.isArray(codigos) ? codigos : [])
+        .filter((item) => item?.titulo)
+        .map((item) => [
+          `${normalizeForIntent(item.titulo)}|${item.file_path || ''}`,
+          { title: item.titulo, file_path: item.file_path || null }
+        ])
+    ).values()
+  ).slice(0, 6);
+}
+
+function mergeCodigoSearchResults(textResults, vectorResults, limit = 4) {
+  const merged = new Map();
+
+  const upsert = (item, source) => {
+    if (!item || (!item.titulo && !item.contenido && !item.id)) return;
+    const key = item?.id
+      ? String(item.id)
+      : `${normalizeForIntent(item.titulo || item.title || '')}|${item.file_path || ''}`;
+    const current = merged.get(key) || {
+      id: item?.id || null,
+      titulo: item?.titulo || item?.title || null,
+      contenido: item?.contenido || item?.content || '',
+      file_path: item?.file_path || null,
+      created_at: item?.created_at || null,
+      textScore: 0,
+      vectorScore: 0,
+      matchedBy: new Set()
+    };
+
+    current.id = current.id || item?.id || null;
+    current.titulo = current.titulo || item?.titulo || item?.title || null;
+    current.contenido = current.contenido || item?.contenido || item?.content || '';
+    current.file_path = current.file_path || item?.file_path || null;
+    current.created_at = current.created_at || item?.created_at || null;
+
+    const numericScore = Number(item?.similarity ?? item?.relevancia ?? 0);
+    if (source === 'vector') current.vectorScore = Math.max(current.vectorScore, numericScore);
+    if (source === 'text') current.textScore = Math.max(current.textScore, numericScore);
+    current.matchedBy.add(source);
+    merged.set(key, current);
+  };
+
+  (Array.isArray(vectorResults) ? vectorResults : []).forEach((item) => upsert(item, 'vector'));
+  (Array.isArray(textResults) ? textResults : []).forEach((item) => upsert(item, 'text'));
+
+  return Array.from(merged.values())
+    .map((item) => ({
+      ...item,
+      hybrid_score: item.vectorScore + item.textScore + (item.matchedBy.size > 1 ? 0.15 : 0)
+    }))
+    .sort((a, b) =>
+      (b.hybrid_score - a.hybrid_score) ||
+      (b.vectorScore - a.vectorScore) ||
+      (b.textScore - a.textScore) ||
+      String(b.created_at || '').localeCompare(String(a.created_at || ''))
+    )
+    .slice(0, limit)
+    .map(({ textScore, vectorScore, matchedBy, hybrid_score, ...item }) => item);
+}
+
 function buildLegalDocumentContext(documents, question) {
   return (Array.isArray(documents) ? documents : [])
     .slice(0, 3)
@@ -1974,6 +2146,22 @@ async function searchLawsForLegalQuestion({ question, documents = [], limit = 5 
   }
 
   return dedupeLaws(results).slice(0, limit);
+}
+
+async function searchCodigosForLegalQuestion({ question, documents = [], limit = 4 }) {
+  const docHints = (Array.isArray(documents) ? documents : [])
+    .slice(0, 2)
+    .map((doc) => extractRelevantDocExcerpt(doc.content, question, 280))
+    .filter(Boolean)
+    .join('\n');
+
+  const searchQuery = [question, docHints].filter(Boolean).join('\n');
+  const effectiveLimit = Math.max(limit, 4);
+  const [vectorResults, textResults] = await Promise.all([
+    searchCodigosVectorRpc(searchQuery, effectiveLimit, 0.68),
+    searchCodigosRpc(searchQuery, effectiveLimit)
+  ]);
+  return mergeCodigoSearchResults(textResults, vectorResults, limit);
 }
 
 function summarizeLawRefsForThread(laws) {
@@ -2024,18 +2212,20 @@ async function getLegalThreadReferencedDocuments(threadId, userId) {
   }
 }
 
-async function minimaxLegalReply({ history, question, lawsContext, docsContext }) {
+async function minimaxLegalReply({ history, question, lawsContext, docsContext, codigosContext }) {
   if (!MINIMAX_API_KEY) return '';
   const system = `Eres el Asesor Legal de Brify, un legislador chileno experto.
 Respondes con autoridad jurídica, criterio legal y lenguaje profesional, pero cercano y natural.
 Prioridad:
 1. Usa primero la legislación chilena verificada que tengas disponible para esta consulta.
 2. Si también hay documentos del usuario, intégralos con el análisis legal.
-3. Si el contexto legal es insuficiente, dilo explícitamente y formula solo las aclaraciones mínimas necesarias.
+3. Si existe material jurídico complementario, úsalo solo para enriquecer o explicar mejor, nunca como reemplazo de la ley.
+4. Si el contexto legal es insuficiente, dilo explícitamente y formula solo las aclaraciones mínimas necesarias.
 Reglas:
 - No inventes leyes, artículos ni hechos.
 - Si citas una ley, menciona su nombre o número de forma clara.
 - Si hay documento del usuario, explica cómo se relaciona con la legislación aplicable.
+- Si usas material complementario, preséntalo como apoyo interpretativo o práctico, no como si fuera una norma.
 - No hables de sistemas internos, bases de datos, tablas, prompts, contexto oculto ni verificaciones técnicas.
 - Si no puedes confirmar una norma exacta, responde de forma prudente y práctica, sin mencionar limitaciones internas.
 - No uses Markdown.
@@ -2059,7 +2249,7 @@ Reglas:
           messages: [
             {
               role: 'user',
-              content: `Historial legal reciente:\n${history || '(sin historial)'}\n\nConsulta del usuario:\n${question}\n\nContexto documental:\n${docsContext || '(sin documentos relevantes)'}\n\nContexto legal disponible:\n${lawsContext || '(sin normativa específica confirmada para esta consulta)'}\n\nResponde:`
+              content: `Historial legal reciente:\n${history || '(sin historial)'}\n\nConsulta del usuario:\n${question}\n\nContexto documental:\n${docsContext || '(sin documentos relevantes)'}\n\nContexto legal disponible:\n${lawsContext || '(sin normativa específica confirmada para esta consulta)'}\n\nMaterial jurídico complementario:\n${codigosContext || '(sin apoyo complementario relevante)'}\n\nResponde:`
             }
           ]
         })
@@ -2077,7 +2267,7 @@ Reglas:
   }
 }
 
-async function openaiLegalReply({ history, question, lawsContext, docsContext }) {
+async function openaiLegalReply({ history, question, lawsContext, docsContext, codigosContext }) {
   if (!OPENAI_API_KEY) return '';
   try {
     const response = await fetchWithTimeout(
@@ -2099,6 +2289,7 @@ async function openaiLegalReply({ history, question, lawsContext, docsContext })
 Responde con criterio jurídico chileno, tono profesional pero cercano.
 Usa primero la legislación chilena verificada disponible para la consulta.
 Si además hay documentos del usuario, intégralos con la ley aplicable.
+Si existe material jurídico complementario, úsalo solo como apoyo interpretativo o práctico, nunca como reemplazo de una norma.
 No inventes artículos ni afirmes hechos no presentes.
 No menciones bases de datos, tablas, sistemas internos, verificaciones técnicas ni limitaciones internas.
 Si no puedes confirmar una norma exacta, responde de forma prudente y útil, sin hablar de infraestructura.
@@ -2106,7 +2297,7 @@ No uses Markdown.`
             },
             {
               role: 'user',
-              content: `Historial legal reciente:\n${history || '(sin historial)'}\n\nConsulta:\n${question}\n\nDocumentos:\n${docsContext || '(sin documentos)'}\n\nNormativa disponible:\n${lawsContext || '(sin normativa específica confirmada para esta consulta)'}\n\nResponde:`
+              content: `Historial legal reciente:\n${history || '(sin historial)'}\n\nConsulta:\n${question}\n\nDocumentos:\n${docsContext || '(sin documentos)'}\n\nNormativa disponible:\n${lawsContext || '(sin normativa específica confirmada para esta consulta)'}\n\nMaterial jurídico complementario:\n${codigosContext || '(sin apoyo complementario relevante)'}\n\nResponde:`
             }
           ]
         })
@@ -2275,9 +2466,11 @@ async function answerLegalConsultation({
   ).slice(0, 4);
 
   const laws = forceKnowledgeFallback ? [] : await searchLawsForLegalQuestion({ question: cleanQuestion, documents: uniqueDocuments, limit: 5 });
+  const codigos = forceKnowledgeFallback ? [] : await searchCodigosForLegalQuestion({ question: cleanQuestion, documents: uniqueDocuments, limit: 3 });
   const history = threadId ? await getLegalThreadHistory(threadId, 14, 3200) : '';
   const lawsContext = buildLegalLawContext(laws, cleanQuestion);
   const docsContext = buildLegalDocumentContext(uniqueDocuments, cleanQuestion);
+  const codigosContext = buildLegalCodigosContext(codigos, cleanQuestion);
 
   if (!laws.length) {
     await wahaSendTextLogged({
@@ -2293,7 +2486,8 @@ async function answerLegalConsultation({
     history,
     question: cleanQuestion,
     lawsContext,
-    docsContext
+    docsContext,
+    codigosContext
   });
 
   if (!answer) {
@@ -2301,7 +2495,8 @@ async function answerLegalConsultation({
       history,
       question: cleanQuestion,
       lawsContext,
-      docsContext
+      docsContext,
+      codigosContext
     });
   }
 
@@ -2318,7 +2513,8 @@ async function answerLegalConsultation({
     const docNames = explicitDocQuestion
       ? summarizeDocumentRefsForThread(uniqueDocuments).slice(0, 2).map((item) => item.name).filter(Boolean)
       : [];
-    const sources = Array.from(new Set([...lawNames, ...docNames].filter(Boolean)));
+    const codigoNames = summarizeCodigoRefs(codigos).slice(0, 2).map((item) => item.title).filter(Boolean);
+    const sources = Array.from(new Set([...lawNames, ...codigoNames, ...docNames].filter(Boolean)));
     if (!sources.length) return answer;
     if (normalizeForIntent(answer).includes('fuente:')) return answer;
     return `${answer}\n\nFuente: ${sources.join(', ')}`;
@@ -2660,7 +2856,7 @@ async function detectIntentWithAI(text) {
 
   const system = `Clasifica la intención del usuario para un menú de WhatsApp de Brify.
 Devuelve SOLO JSON válido con este formato:
-{"intent":"menu|legal|create_group|share_group|upload_file|list_groups|list_files|create_document|analyze_document|unknown","confidence":0.0}
+{"intent":"menu|legal|create_group|share_group|upload_file|list_groups|list_files|analyze_document|unknown","confidence":0.0}
 Reglas:
 - No agregues texto fuera del JSON.
 - Si el usuario pide "asesor legal/abogado/ley" => legal
@@ -2669,7 +2865,6 @@ Reglas:
 - "subir/adjuntar archivo" => upload_file
 - "ver/listar grupos/carpetas" => list_groups
 - "ver/listar documentos/imagenes" => list_files
-- "crear documento/plantilla" => create_document
 - "analizar/resumir documento" => analyze_document
 - Si hay duda => unknown con baja confianza.`;
 
@@ -6045,7 +6240,7 @@ async function continueWithFreshIntent({ session, chatId, text, sessionName }) {
     await startUploadFileFlow({ session, chatId, text: nextText, sessionName });
     return true;
   }
-  if (['legal', 'list_files', 'create_document', 'analyze_document'].includes(explicitIntent.intent)) {
+  if (['legal', 'list_files', 'analyze_document'].includes(explicitIntent.intent)) {
     await enterBranch(session, chatId, sessionName, explicitIntent.intent);
     return true;
   }
@@ -7658,14 +7853,6 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   } else if (intent.intent === 'menu_6') {
     if (!hasDrive) {
       await updateWspSession(session.id, { current_branch: 'await_drive', branch_context: {} });
-      await wahaSendText(chatId, `Para crear documentos necesito que vincules tu Google Drive: ${BRIFY_PROFILE_URL}`, sessionName);
-      return;
-    }
-    await enterBranch(session, chatId, sessionName, 'create_document');
-    return;
-  } else if (intent.intent === 'menu_7') {
-    if (!hasDrive) {
-      await updateWspSession(session.id, { current_branch: 'await_drive', branch_context: {} });
       await wahaSendText(chatId, `Para analizar documentos necesito que vincules tu Google Drive: ${BRIFY_PROFILE_URL}`, sessionName);
       return;
     }
@@ -7728,12 +7915,6 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       return;
     }
     await enterBranch(session, chatId, sessionName, 'list_groups');
-    return;
-  }
-
-  if (intent.intent === 'create_document') {
-    session = await updateWspSession(session.id, { current_branch: 'crear_documento', branch_context: { stage: 'choose_mode' } });
-    await handleCrearDocumento({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
