@@ -44,6 +44,23 @@ const GEMINI_API_KEY =
   process.env.REACT_APP_GOOGLE_GEMINI_API_KEY ||
   process.env.GOOGLE_GEMINI_API_KEY ||
   '';
+const OPENAI_API_KEY =
+  process.env.OPENAI_API_KEY ||
+  process.env.REACT_APP_OPENAI_API_KEY ||
+  '';
+const OPENAI_BASE_URL =
+  process.env.OPENAI_BASE_URL ||
+  process.env.REACT_APP_OPENAI_BASE_URL ||
+  'https://api.openai.com/v1';
+const OPENAI_EMBEDDINGS_MODEL =
+  process.env.OPENAI_EMBEDDINGS_MODEL ||
+  process.env.REACT_APP_OPENAI_EMBEDDINGS_MODEL ||
+  'text-embedding-3-large';
+const OPENAI_EMBEDDINGS_DIMENSIONS = Number(
+  process.env.OPENAI_EMBEDDINGS_DIMENSIONS ||
+    process.env.REACT_APP_OPENAI_EMBEDDINGS_DIMENSIONS ||
+    '768'
+);
 const GEMINI_EMBEDDINGS_MODEL =
   process.env.GEMINI_EMBEDDINGS_MODEL ||
   process.env.REACT_APP_GEMINI_EMBEDDINGS_MODEL ||
@@ -120,6 +137,18 @@ function summarizeSupabaseError(error, extra = {}) {
     code: error?.code || null,
     details: error?.details || null,
     hint: error?.hint || null
+  };
+}
+
+function summarizeOpenAIError(error, extra = {}) {
+  return {
+    ...extra,
+    message: error?.message || null,
+    name: error?.name || null,
+    status: error?.status || null,
+    type: error?.type || null,
+    code: error?.code || null,
+    param: error?.param || null
   };
 }
 
@@ -261,8 +290,124 @@ async function geminiEmbedTextsDetailed(texts, taskType = 'RETRIEVAL_DOCUMENT') 
   return { embeddings: out.length ? out : null, error: null };
 }
 
+async function openaiEmbedTextsDetailed(texts, taskType = 'RETRIEVAL_DOCUMENT') {
+  if (!WAHA_EMBEDDINGS_ENABLED) {
+    return { embeddings: null, error: { reason: 'embeddings_disabled' } };
+  }
+  if (!OPENAI_API_KEY) {
+    return { embeddings: null, error: { reason: 'missing_openai_api_key' } };
+  }
+  const inputs = Array.isArray(texts) ? texts.map((t) => String(t || '').trim()).filter(Boolean) : [];
+  if (!inputs.length) {
+    return { embeddings: null, error: { reason: 'missing_input_texts' } };
+  }
+
+  const timeoutMs = Number.isFinite(WAHA_EMBEDDINGS_TIMEOUT_MS) && WAHA_EMBEDDINGS_TIMEOUT_MS > 0 ? WAHA_EMBEDDINGS_TIMEOUT_MS : 15000;
+  const out = [];
+
+  for (let inputIndex = 0; inputIndex < inputs.length; inputIndex++) {
+    const input = inputs[inputIndex];
+    const body = {
+      model: OPENAI_EMBEDDINGS_MODEL,
+      input,
+      encoding_format: 'float'
+    };
+    if (/^text-embedding-3-/i.test(OPENAI_EMBEDDINGS_MODEL) && Number.isFinite(OPENAI_EMBEDDINGS_DIMENSIONS) && OPENAI_EMBEDDINGS_DIMENSIONS > 0) {
+      body.dimensions = OPENAI_EMBEDDINGS_DIMENSIONS;
+    }
+
+    let response = null;
+    try {
+      response = await fetchWithTimeout(
+        `${String(OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')}/embeddings`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${OPENAI_API_KEY}`
+          },
+          body: JSON.stringify(body)
+        },
+        timeoutMs
+      );
+    } catch (error) {
+      return {
+        embeddings: null,
+        error: {
+          reason: 'openai_request_failed',
+          model: OPENAI_EMBEDDINGS_MODEL,
+          task_type: taskType,
+          input_index: inputIndex,
+          input_chars: input.length,
+          attempts: [
+            summarizeOpenAIError(error, { form: 'openai_embeddings_create', ok: false })
+          ]
+        }
+      };
+    }
+
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (_) {
+      data = null;
+    }
+
+    if (!response.ok) {
+      const apiError = data?.error || {};
+      return {
+        embeddings: null,
+        error: {
+          reason: 'openai_embeddings_failed',
+          model: OPENAI_EMBEDDINGS_MODEL,
+          task_type: taskType,
+          input_index: inputIndex,
+          input_chars: input.length,
+          attempts: [
+            summarizeOpenAIError(
+              {
+                message: apiError?.message || `OpenAI embeddings HTTP ${response.status}`,
+                status: response.status,
+                type: apiError?.type || null,
+                code: apiError?.code || null,
+                param: apiError?.param || null
+              },
+              { form: 'openai_embeddings_create', ok: false }
+            )
+          ]
+        }
+      };
+    }
+
+    const values = Array.isArray(data?.data) && Array.isArray(data.data[0]?.embedding) ? data.data[0].embedding : null;
+    if (!Array.isArray(values)) {
+      return {
+        embeddings: null,
+        error: {
+          reason: 'openai_missing_embedding_values',
+          model: OPENAI_EMBEDDINGS_MODEL,
+          task_type: taskType,
+          input_index: inputIndex,
+          input_chars: input.length,
+          attempts: [
+            {
+              form: 'openai_embeddings_create',
+              ok: false,
+              response_keys: Object.keys(data || {}).slice(0, 8)
+            }
+          ]
+        }
+      };
+    }
+
+    out.push(normalizeEmbeddingTo768(values));
+  }
+
+  return { embeddings: out.length ? out : null, error: null };
+}
+
 async function geminiEmbedTexts(texts, taskType = 'RETRIEVAL_DOCUMENT') {
-  const detailed = await geminiEmbedTextsDetailed(texts, taskType);
+  const detailed = await openaiEmbedTextsDetailed(texts, taskType);
   return detailed?.embeddings || null;
 }
 
@@ -270,17 +415,23 @@ async function buildEmbeddingsWithFallback(texts, taskType = 'RETRIEVAL_DOCUMENT
   const inputs = Array.isArray(texts) ? texts.map((t) => String(t || '').trim()).filter(Boolean) : [];
   if (!inputs.length) return { embeddings: null, provider: null };
 
-  const detailed = await geminiEmbedTextsDetailed(inputs, taskType);
-  const geminiEmbeddings = detailed?.embeddings;
-  if (Array.isArray(geminiEmbeddings) && geminiEmbeddings.length === inputs.length) {
-    return { embeddings: geminiEmbeddings, provider: 'gemini', error: null };
+  const openaiDetailed = await openaiEmbedTextsDetailed(inputs, taskType);
+  const openaiEmbeddings = openaiDetailed?.embeddings;
+  if (Array.isArray(openaiEmbeddings) && openaiEmbeddings.length === inputs.length) {
+    return {
+      embeddings: openaiEmbeddings,
+      provider: 'openai',
+      model: OPENAI_EMBEDDINGS_MODEL,
+      error: null
+    };
   }
 
   const deterministicEmbeddings = inputs.map((input) => generateDeterministicEmbedding(input));
   return {
     embeddings: deterministicEmbeddings,
     provider: 'deterministic_fallback',
-    error: detailed?.error || { reason: 'unknown_gemini_embedding_failure' }
+    model: openaiDetailed?.error ? OPENAI_EMBEDDINGS_MODEL : null,
+    error: openaiDetailed?.error || { reason: 'unknown_openai_embedding_failure' }
   };
 }
 
@@ -2751,6 +2902,7 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
   const embeddingBuild = await buildEmbeddingsWithFallback(chunks, 'RETRIEVAL_DOCUMENT');
   const embeddings = embeddingBuild?.embeddings;
   const embeddingProvider = embeddingBuild?.provider || null;
+  const embeddingModel = embeddingBuild?.model || null;
   const embeddingError = embeddingBuild?.error || null;
   if (!embeddings || embeddings.length !== chunks.length) {
     await upsertDocumentoAdministradorByFile({
@@ -2766,11 +2918,12 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
           chunk_count: chunks.length,
           extraction_attempts: extractionAttempts,
           embedding_provider: embeddingProvider,
+          embedding_model: embeddingModel,
           embedding_error: embeddingError
         }
       }
     });
-    return { ok: false, reason: 'embed_failed', extractor, text_chars: extractedChars, chunks: chunks.length, attempts: extractionAttempts, embedding_provider: embeddingProvider, embedding_error: embeddingError };
+    return { ok: false, reason: 'embed_failed', extractor, text_chars: extractedChars, chunks: chunks.length, attempts: extractionAttempts, embedding_provider: embeddingProvider, embedding_model: embeddingModel, embedding_error: embeddingError };
   }
 
   try {
@@ -2789,8 +2942,7 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
       chunk_index: idx,
       chunk_of_total: chunks.length
     },
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
+    created_at: new Date().toISOString()
   }));
   const { error: insertError } = await supabase.from('documentos_entrenador').insert(rows);
   if (insertError) {
@@ -2813,6 +2965,7 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
           chunk_count: chunks.length,
           extraction_attempts: extractionAttempts,
           embedding_provider: embeddingProvider,
+          embedding_model: embeddingModel,
           embedding_error: embeddingError,
           chunk_insert_error: chunkInsertError
         }
@@ -2827,6 +2980,7 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
       chunks: chunks.length,
       attempts: extractionAttempts,
       embedding_provider: embeddingProvider,
+      embedding_model: embeddingModel,
       embedding_error: embeddingError,
       chunk_insert_error: chunkInsertError
     };
@@ -2850,12 +3004,13 @@ async function vectorizeDriveFileToSupabase({ userId, userEmail, fileId, fileNam
         extraction_chars: extractedChars,
         extraction_attempts: extractionAttempts,
         embedding_provider: embeddingProvider,
+        embedding_model: embeddingModel,
         embedding_error: embeddingError
       }
     }
   });
 
-  return { ok: true, chunks: chunks.length, extractor, text_chars: extractedChars, attempts: extractionAttempts, embedding_provider: embeddingProvider, embedding_error: embeddingError };
+  return { ok: true, chunks: chunks.length, extractor, text_chars: extractedChars, attempts: extractionAttempts, embedding_provider: embeddingProvider, embedding_model: embeddingModel, embedding_error: embeddingError };
 }
 
 async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mimeType, fileSize, text, source, phoneNumber }) {
@@ -2913,14 +3068,15 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
   const embeddingBuild = await buildEmbeddingsWithFallback(chunks, 'RETRIEVAL_DOCUMENT');
   const embeddings = embeddingBuild?.embeddings;
   const embeddingProvider = embeddingBuild?.provider || null;
+  const embeddingModel = embeddingBuild?.model || null;
   const embeddingError = embeddingBuild?.error || null;
   if (!embeddings || embeddings.length !== chunks.length) {
     await upsertDocumentoAdministradorByFile({
       userEmail,
       fileId,
-      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_embed_error', source: source || 'text', embedding_provider: embeddingProvider, embedding_error: embeddingError } }
+      patch: { ...wspPatch, pendiente: true, metadata: { vector_status: 'pending_embed_error', source: source || 'text', embedding_provider: embeddingProvider, embedding_model: embeddingModel, embedding_error: embeddingError } }
     });
-    return { ok: false, reason: 'embed_failed', embedding_provider: embeddingProvider, embedding_error: embeddingError };
+    return { ok: false, reason: 'embed_failed', embedding_provider: embeddingProvider, embedding_model: embeddingModel, embedding_error: embeddingError };
   }
 
   try {
@@ -2940,8 +3096,7 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
       chunk_of_total: chunks.length,
       source: source || 'text'
     },
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
+    created_at: new Date().toISOString()
   }));
 
   const { error: insertError } = await supabase.from('documentos_entrenador').insert(rows);
@@ -2961,6 +3116,7 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
           chunk_count: chunks.length,
           source: source || 'text',
           embedding_provider: embeddingProvider,
+          embedding_model: embeddingModel,
           embedding_error: embeddingError,
           chunk_insert_error: chunkInsertError
         }
@@ -2972,6 +3128,7 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
       reason: 'chunk_insert_failed_main_saved',
       chunks: chunks.length,
       embedding_provider: embeddingProvider,
+      embedding_model: embeddingModel,
       embedding_error: embeddingError,
       chunk_insert_error: chunkInsertError
     };
@@ -2985,11 +3142,11 @@ async function vectorizeTextToSupabaseForFile({ userEmail, fileId, fileName, mim
       content: trimmed.slice(0, 12000),
       embedding: serializeVectorForDb(embeddings[0]),
       pendiente: false,
-      metadata: { vector_status: 'ready', vectorized_at: new Date().toISOString(), chunk_count: chunks.length, source: source || 'text', embedding_provider: embeddingProvider, embedding_error: embeddingError }
+      metadata: { vector_status: 'ready', vectorized_at: new Date().toISOString(), chunk_count: chunks.length, source: source || 'text', embedding_provider: embeddingProvider, embedding_model: embeddingModel, embedding_error: embeddingError }
     }
   });
 
-  return { ok: true, chunks: chunks.length, embedding_provider: embeddingProvider, embedding_error: embeddingError };
+  return { ok: true, chunks: chunks.length, embedding_provider: embeddingProvider, embedding_model: embeddingModel, embedding_error: embeddingError };
 }
 
 async function handleCrearGrupo({ session, chatId, text, sessionName }) {
@@ -3939,6 +4096,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
           mime_type: vectorized?.mime_type || mt || null,
           extraction_attempts: Array.isArray(vectorized?.attempts) ? vectorized.attempts.slice(0, 6) : null,
           embedding_provider: vectorized?.embedding_provider || null,
+          embedding_model: vectorized?.embedding_model || null,
           embedding_error: vectorized?.embedding_error || null,
           chunk_insert_error: vectorized?.chunk_insert_error || null
         });
@@ -4076,7 +4234,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
       try {
         await supabase
           .from('documentos_entrenador')
-          .update({ folder_id: targetGroup.folder_id, updated_at: new Date().toISOString() })
+          .update({ folder_id: targetGroup.folder_id })
           .eq('entrenador', user.email)
           .eq('metadata->>file_id', uploadedFile.file_id);
       } catch (_) {}
@@ -5047,11 +5205,11 @@ async function semanticSearchUserDocs({ userId, query, limit = 5 }) {
   if (!userEmail) return [];
 
   let embedding = null;
-  let usedMinimax = false;
+  let usedProviderEmbedding = false;
   try {
     const embs = await geminiEmbedTexts([q], 'RETRIEVAL_QUERY');
     embedding = Array.isArray(embs) && embs[0] ? embs[0] : null;
-    usedMinimax = Boolean(embedding);
+    usedProviderEmbedding = Boolean(embedding);
   } catch (_) {
     embedding = null;
   }
@@ -5080,7 +5238,7 @@ async function semanticSearchUserDocs({ userId, query, limit = 5 }) {
     }
   } catch (_) {}
 
-  if (usedMinimax) {
+  if (usedProviderEmbedding) {
     try {
       const det = generateDeterministicEmbedding(q);
       const { data, error } = await supabase.rpc('match_documentos_administrador', {
