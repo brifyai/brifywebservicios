@@ -543,6 +543,7 @@ function isLikelyDocumentSearch(text) {
   const t = normalizeForIntent(text);
   if (!t) return false;
   if (isLikelyLegalTopic(t) || isLikelyLawSearch(t)) return false;
+  if (isLikelyDocumentKnowledgeQuestion(text) || wantsDocumentLink(text)) return true;
   const hasVerb = t.includes('busca') || t.includes('buscar') || t.includes('encuentra') || t.includes('encontrar') || t.includes('muestrame') || t.includes('muéstrame');
   const hasDocHint =
     t.includes('document') ||
@@ -735,6 +736,133 @@ function extractNameContainsQuery(text) {
   if (q.length < 2) return null;
   if (q.length > 80) q = q.slice(0, 80).trim();
   return q || null;
+}
+
+function isLikelyDocumentKnowledgeQuestion(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  if (isLikelyLegalTopic(t) || isLikelyLawSearch(t)) return false;
+
+  if (extractDocumentReferenceName(text)) return true;
+
+  const patterns = [
+    'segun mi documento',
+    'según mi documento',
+    'segun el documento',
+    'según el documento',
+    'segun mis documentos',
+    'según mis documentos',
+    'segun la informacion subida',
+    'según la información subida',
+    'segun la informacion que te subi',
+    'según la información que te subí',
+    'basado en mis documentos',
+    'basado en mi documento',
+    'que dice mi documento',
+    'qué dice mi documento',
+    'que dice el documento',
+    'qué dice el documento',
+    'resume mi documento',
+    'resumeme mi documento',
+    'resúmeme mi documento',
+    'explica mi documento',
+    'analiza mi documento',
+    'segun mis archivos',
+    'según mis archivos'
+  ];
+  if (patterns.some((p) => t.includes(p))) return true;
+
+  const hasQuestionVerb =
+    t.includes('que dice') ||
+    t.includes('qué dice') ||
+    t.includes('resume') ||
+    t.includes('resumeme') ||
+    t.includes('resúmeme') ||
+    t.includes('explica') ||
+    t.includes('analiza') ||
+    t.includes('segun') ||
+    t.includes('según');
+  const hasDocHint =
+    t.includes('document') ||
+    t.includes('archivo') ||
+    t.includes('pdf') ||
+    t.includes('informacion subida') ||
+    t.includes('información subida');
+
+  return hasQuestionVerb && hasDocHint;
+}
+
+function wantsDocumentLink(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  return (
+    t.includes('link') ||
+    t.includes('enlace') ||
+    t.includes('abrir') ||
+    t.includes('acceder') ||
+    t.includes('pasame el documento') ||
+    t.includes('pásame el documento')
+  );
+}
+
+function cleanDocumentNameCandidate(value) {
+  let name = String(value || '').trim();
+  if (!name) return null;
+  name = name
+    .replace(/^[“”"'`]+|[“”"'`]+$/g, '')
+    .replace(/\b(sobre|acerca|respecto|que|qué|donde|dónde|para|con|del|de la|de los|de las)\b[\s\S]*$/i, '')
+    .replace(/[.,;:!?()]+$/g, '')
+    .trim();
+  return name.length >= 2 ? name : null;
+}
+
+function extractDocumentReferenceName(text) {
+  const quoted = extractQuoted(text);
+  if (quoted) return cleanDocumentNameCandidate(quoted);
+
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const patterns = [
+    /(?:segun|según)\s+(?:mi|el|mis)?\s*(?:documento|archivo|pdf)\s+([^,?\n]+)$/i,
+    /(?:resume|resumeme|resúmeme|analiza|explica|revisa)\s+(?:mi|el)?\s*(?:documento|archivo|pdf)\s+([^,?\n]+)$/i,
+    /(?:link|enlace|abrir|acceder)\s+(?:del|de|a)?\s*(?:documento|archivo|pdf)\s+([^,?\n]+)$/i,
+    /(?:documento|archivo|pdf)\s+([^,?\n]+?)\s+(?:que|qué|sobre|acerca|respecto|donde|dónde|para|con)\b/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    const candidate = cleanDocumentNameCandidate(match?.[1]);
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+function sanitizeSearchFragment(text) {
+  return String(text || '')
+    .replace(/[%_]/g, ' ')
+    .replace(/[,()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractRelevantDocExcerpt(content, query, maxChars = 900) {
+  const raw = String(content || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  if (!query) return raw.slice(0, maxChars);
+
+  const normalizedQuery = normalizeForIntent(query);
+  const terms = normalizedQuery.split(' ').filter((t) => t.length > 3).slice(0, 8);
+  const lowerRaw = raw.toLowerCase();
+  let at = -1;
+  for (const term of terms) {
+    at = lowerRaw.indexOf(term);
+    if (at >= 0) break;
+  }
+  if (at < 0) return raw.slice(0, maxChars);
+
+  const start = Math.max(0, at - Math.floor(maxChars * 0.25));
+  const end = Math.min(raw.length, start + maxChars);
+  return raw.slice(start, end).trim();
 }
 
 async function minimaxRewriteForWhatsApp(text) {
@@ -952,6 +1080,9 @@ function detectIntentRuleBased(text) {
   }
   if (t.includes('subir') || t.includes('adjuntar') || t.includes('enviar archivo') || t.includes('cargar archivo')) {
     return { intent: 'upload_file', confidence: 0.8 };
+  }
+  if ((t.includes('listar') || t.includes('ver') || t.includes('mostrar')) && (t.includes('grupo') || t.includes('carpeta'))) {
+    return { intent: 'list_groups', confidence: 0.78 };
   }
   if ((t.includes('listar') || t.includes('ver') || t.includes('mostrar')) && (t.includes('document') || t.includes('archivo') || t.includes('imagen'))) {
     return { intent: 'list_files', confidence: 0.75 };
@@ -1819,13 +1950,14 @@ async function detectIntentWithAI(text) {
 
   const system = `Clasifica la intención del usuario para un menú de WhatsApp de Brify.
 Devuelve SOLO JSON válido con este formato:
-{"intent":"menu|legal|create_group|share_group|upload_file|list_files|create_document|analyze_document|unknown","confidence":0.0}
+{"intent":"menu|legal|create_group|share_group|upload_file|list_groups|list_files|create_document|analyze_document|unknown","confidence":0.0}
 Reglas:
 - No agregues texto fuera del JSON.
 - Si el usuario pide "asesor legal/abogado/ley" => legal
 - "crear grupo/carpeta" => create_group
 - "compartir grupo/dar acceso" => share_group
 - "subir/adjuntar archivo" => upload_file
+- "ver/listar grupos/carpetas" => list_groups
 - "ver/listar documentos/imagenes" => list_files
 - "crear documento/plantilla" => create_document
 - "analizar/resumir documento" => analyze_document
@@ -2149,6 +2281,57 @@ function pickGroupFromInput(groups, input) {
   return findGroupByName(groups, input);
 }
 
+function findGroupMentionInText(groups, text) {
+  const haystack = normalizeForIntent(text);
+  if (!haystack || !Array.isArray(groups) || !groups.length) return null;
+  const ordered = [...groups].sort(
+    (a, b) => normalizeForIntent(b?.group_name || '').length - normalizeForIntent(a?.group_name || '').length
+  );
+  return (
+    ordered.find((group) => {
+      const normalizedName = normalizeForIntent(group?.group_name || '');
+      return normalizedName && haystack.includes(normalizedName);
+    }) || null
+  );
+}
+
+function cleanContinuationText(text) {
+  let value = String(text || '').trim();
+  if (!value) return '';
+  value = value.replace(/^[\s,.;:!?¡¿)\]-]+/, '').trim();
+  value = value.replace(/^(y|e|pero|igual|entonces|ahora|ahora bien|despues|después|de paso)\b[\s,.;:!?-]*/i, '').trim();
+  value = value.replace(/^[\s,.;:!?¡¿)\]-]+/, '').trim();
+  return value;
+}
+
+function extractContinuationAfterKeepInPlace(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return '';
+  const patterns = [
+    /^(?:gracias[\s,.;:!?-]*)?(?:no\s+te\s+preocupes|deja(?:lo)?\s+ahi|déja(?:lo)?\s+ahi|deja(?:lo)?\s+ahí|déja(?:lo)?\s+ahí|asi\s+esta\s+bien|así\s+está\s+bien|asi\s+esta|así\s+está|esta\s+bien|está\s+bien|no\s+gracias)([\s\S]*)$/i,
+    /^(?:gracias[\s,.;:!?-]*)?(?:no)([\s\S]*)$/i
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (match?.[1]) {
+      const continuation = cleanContinuationText(match[1]);
+      if (continuation) return continuation;
+    }
+  }
+  return '';
+}
+
+function extractContinuationAfterGroupReference(text, groupName) {
+  const raw = String(text || '').trim();
+  const target = String(groupName || '').trim();
+  if (!raw || !target) return '';
+  const lowerRaw = raw.toLowerCase();
+  const lowerTarget = target.toLowerCase();
+  const at = lowerRaw.indexOf(lowerTarget);
+  if (at < 0) return '';
+  return cleanContinuationText(raw.slice(at + target.length));
+}
+
 async function createDriveFolder({ userId, parentFolderId, name }) {
   const drive = await getDriveClientForUser(userId);
   const response = await drive.files.create({
@@ -2249,6 +2432,66 @@ async function upsertFolderShareRecords({ ownerUserId, adminEmail, folderId, ema
   }
 
   return results;
+}
+
+async function createRegisteredGroupForUser({ session, userEmail, groupName }) {
+  const finalGroupName = String(groupName || '').trim();
+  if (!session?.user_id || !userEmail || finalGroupName.length < 2) {
+    throw new Error('Faltan datos para crear el grupo');
+  }
+
+  const rootFolderId = await resolveRootFolderIdForUser(userEmail, session.user_id, session.phone_number, { sessionId: session.id });
+  if (!rootFolderId) {
+    throw new Error('No encontré la carpeta raíz del usuario');
+  }
+
+  const folder = await createDriveFolder({
+    userId: session.user_id,
+    parentFolderId: rootFolderId,
+    name: finalGroupName
+  });
+
+  try {
+    const groupRecord = await upsertGrupoDriveRecord({
+      ownerUserId: session.user_id,
+      userEmail,
+      folderId: folder.id,
+      groupName: finalGroupName,
+      extension: 'brify'
+    });
+    await setWspSessionGlobal(session.id, {
+      last_group_record_result: {
+        ok: true,
+        group_name: finalGroupName,
+        folder_id: folder.id,
+        grupos_drive_id: groupRecord?.id || null,
+        ts: new Date().toISOString()
+      }
+    });
+  } catch (groupRecordError) {
+    await setWspSessionGlobal(session.id, {
+      last_group_record_result: {
+        ok: false,
+        group_name: finalGroupName,
+        folder_id: folder.id,
+        error: {
+          message: groupRecordError?.message || 'unknown',
+          code: groupRecordError?.code || null,
+          details: groupRecordError?.details || null,
+          hint: groupRecordError?.hint || null
+        },
+        ts: new Date().toISOString()
+      }
+    });
+    throw groupRecordError;
+  }
+
+  return {
+    id: null,
+    group_name: finalGroupName,
+    folder_id: folder.id,
+    administrador: userEmail
+  };
 }
 
 async function shareDriveFolder({ userId, folderId, emails, role, ownerUserId, adminEmail }) {
@@ -4135,20 +4378,41 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
     const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
     const groups = await listUserGroupsByEmail(user?.email);
     const groupMention = extractGroupMention(textTrim);
-    const picked = groupMention ? findGroupByName(groups, groupMention) : null;
+    const picked = findGroupMentionInText(groups, textTrim) || (groupMention ? findGroupByName(groups, groupMention) : null);
+    const continuationAfterKeep = extractContinuationAfterKeepInPlace(textTrim);
 
     if (yn === false || textLower.includes('dejalo ahi') || textLower.includes('déjalo ahi') || textLower.includes('asi esta') || textLower.includes('así está')) {
-      await returnSessionToCasual(session.id);
+      const casualSession = await returnSessionToCasual(session.id);
+      if (continuationAfterKeep) {
+        await wahaSendText(chatId, `Perfecto 🙌 Lo dejo donde está.`, sessionName, { skipRewrite: true });
+        await continueWithFreshIntent({ session: casualSession || session, chatId, text: continuationAfterKeep, sessionName });
+        return;
+      }
       await wahaSendText(chatId, `Perfecto 🙌 Lo dejo donde está. ¿Qué necesitas ahora?`, sessionName, { skipRewrite: true });
       return;
     }
 
     if (picked) {
+      const followUpAfterMove = extractContinuationAfterGroupReference(textTrim, picked.group_name);
       const updated = await updateWspSession(session.id, {
         current_branch: 'subir_archivo',
-        branch_context: { ...ctx, stage: 'move_now', selectedGroup: picked }
+        branch_context: { ...ctx, stage: 'move_now', selectedGroup: picked, follow_up_after_move: followUpAfterMove || null }
       });
       await handleSubirArchivo({ session: updated, chatId, text: textTrim, sessionName, payload });
+      return;
+    }
+
+    if (groupMention && !picked) {
+      await updateWspSession(session.id, {
+        current_branch: 'subir_archivo',
+        branch_context: { ...ctx, stage: 'resolve_missing_move_group', groups, missing_group_name: groupMention }
+      });
+      await wahaSendText(
+        chatId,
+        `No encontré el grupo "${groupMention}" 😕\n\nSi quieres, lo creo y muevo el archivo ahí. Si no, dime el grupo correcto.`,
+        sessionName,
+        { skipRewrite: true }
+      );
       return;
     }
 
@@ -4168,10 +4432,9 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
     }
 
     if (textTrim) {
-      await handleCasualConversation({ session, chatId, text: textTrim, sessionName });
-      await wahaSendText(chatId, `Sigo atento por si quieres mover "${uploadedFile.file_name || 'el archivo'}" a un grupo 🙌`, sessionName, {
-        skipRewrite: true
-      });
+      const casualSession = await returnSessionToCasual(session.id);
+      await wahaSendText(chatId, `Perfecto 🙌 Lo dejo donde está.`, sessionName, { skipRewrite: true });
+      await continueWithFreshIntent({ session: casualSession || session, chatId, text: textTrim, sessionName });
       return;
     }
     await wahaSendText(chatId, `Si quieres, puedo mover "${uploadedFile.file_name || 'el archivo'}" a uno de tus grupos 🙌`, sessionName, {
@@ -4182,23 +4445,128 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
 
   if (ctx.stage === 'choose_move_group') {
     const groups = Array.isArray(ctx.groups) ? ctx.groups : [];
-    const picked = pickGroupFromInput(groups, textTrim);
+    const yn = normalizeYesNo(textTrim);
+    const picked = pickGroupFromInput(groups, textTrim) || findGroupMentionInText(groups, textTrim);
+    const groupMention = extractGroupMention(textTrim);
+    const continuationAfterKeep = extractContinuationAfterKeepInPlace(textTrim);
+    if (yn === false || textLower.includes('dejalo ahi') || textLower.includes('déjalo ahi') || textLower.includes('asi esta') || textLower.includes('así está')) {
+      const casualSession = await returnSessionToCasual(session.id);
+      if (continuationAfterKeep) {
+        await wahaSendText(chatId, `Perfecto 🙌 Lo dejo donde está.`, sessionName, { skipRewrite: true });
+        await continueWithFreshIntent({ session: casualSession || session, chatId, text: continuationAfterKeep, sessionName });
+        return;
+      }
+      await wahaSendText(chatId, `Perfecto 🙌 Lo dejo donde está. ¿Qué necesitas ahora?`, sessionName, { skipRewrite: true });
+      return;
+    }
     if (!picked) {
-      if (textTrim) {
-        await handleCasualConversation({ session, chatId, text: textTrim, sessionName });
-        await wahaSendText(chatId, `Sigo atento por si quieres elegir el grupo al que movemos el archivo 📁`, sessionName, {
-          skipRewrite: true
+      if (groupMention) {
+        await updateWspSession(session.id, {
+          current_branch: 'subir_archivo',
+          branch_context: { ...ctx, stage: 'resolve_missing_move_group', missing_group_name: groupMention }
         });
+        await wahaSendText(
+          chatId,
+          `No encontré el grupo "${groupMention}" 😕\n\nSi quieres, lo creo y muevo el archivo ahí. Si no, dime el grupo correcto.`,
+          sessionName,
+          { skipRewrite: true }
+        );
+        return;
+      }
+      if (textTrim) {
+        const casualSession = await returnSessionToCasual(session.id);
+        await wahaSendText(chatId, `Perfecto 🙌 Lo dejo donde está.`, sessionName, { skipRewrite: true });
+        await continueWithFreshIntent({ session: casualSession || session, chatId, text: textTrim, sessionName });
         return;
       }
       await wahaSendText(chatId, `Elige un grupo válido 🙌 (número o nombre)`, sessionName);
       return;
     }
+    const followUpAfterMove = extractContinuationAfterGroupReference(textTrim, picked.group_name);
     const updated = await updateWspSession(session.id, {
       current_branch: 'subir_archivo',
-      branch_context: { ...ctx, stage: 'move_now', selectedGroup: picked }
+      branch_context: { ...ctx, stage: 'move_now', selectedGroup: picked, follow_up_after_move: followUpAfterMove || null }
     });
     await handleSubirArchivo({ session: updated, chatId, text: textTrim, sessionName, payload });
+    return;
+  }
+
+  if (ctx.stage === 'resolve_missing_move_group') {
+    const missingGroupName = String(ctx.missing_group_name || '').trim();
+    const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+    const groups = Array.isArray(ctx.groups) && ctx.groups.length ? ctx.groups : await listUserGroupsByEmail(user?.email);
+    const yn = normalizeYesNo(textTrim);
+    const picked = pickGroupFromInput(groups, textTrim) || findGroupMentionInText(groups, textTrim);
+    const continuationAfterKeep = extractContinuationAfterKeepInPlace(textTrim);
+    const wantsCreate =
+      yn === true ||
+      textLower.includes('crea') ||
+      textLower.includes('crear') ||
+      textLower.includes('crealo') ||
+      textLower.includes('créalo') ||
+      textLower.includes('crea ese grupo') ||
+      textLower.includes('crea el grupo');
+
+    if (yn === false || textLower.includes('dejalo ahi') || textLower.includes('déjalo ahi') || textLower.includes('asi esta') || textLower.includes('así está')) {
+      const casualSession = await returnSessionToCasual(session.id);
+      if (continuationAfterKeep) {
+        await wahaSendText(chatId, `Perfecto 🙌 Lo dejo donde está.`, sessionName, { skipRewrite: true });
+        await continueWithFreshIntent({ session: casualSession || session, chatId, text: continuationAfterKeep, sessionName });
+        return;
+      }
+      await wahaSendText(chatId, `Perfecto 🙌 Lo dejo donde está. ¿Qué necesitas ahora?`, sessionName, { skipRewrite: true });
+      return;
+    }
+
+    if (picked) {
+      const followUpAfterMove = extractContinuationAfterGroupReference(textTrim, picked.group_name);
+      const updated = await updateWspSession(session.id, {
+        current_branch: 'subir_archivo',
+        branch_context: { ...ctx, stage: 'move_now', groups, selectedGroup: picked, follow_up_after_move: followUpAfterMove || null }
+      });
+      await handleSubirArchivo({ session: updated, chatId, text: textTrim, sessionName, payload });
+      return;
+    }
+
+    if (wantsCreate && missingGroupName) {
+      try {
+        if (!user?.email) throw new Error('No pude obtener el correo del usuario');
+        const createdGroup = await createRegisteredGroupForUser({
+          session,
+          userEmail: user.email,
+          groupName: missingGroupName
+        });
+        const updated = await updateWspSession(session.id, {
+          current_branch: 'subir_archivo',
+          branch_context: { ...ctx, stage: 'move_now', groups: [], selectedGroup: createdGroup, follow_up_after_move: null }
+        });
+        await wahaSendText(chatId, `Perfecto 🙌 Creé "${createdGroup.group_name}". Ahora muevo el archivo ahí.`, sessionName, {
+          skipRewrite: true
+        });
+        await handleSubirArchivo({ session: updated, chatId, text: textTrim, sessionName, payload });
+        return;
+      } catch (createError) {
+        await returnSessionToCasual(session.id);
+        await wahaSendText(chatId, `No pude crear "${missingGroupName}" 😕\n\nSi quieres, dime el grupo correcto o lo intentamos de nuevo.`, sessionName, {
+          skipRewrite: true
+        });
+        return;
+      }
+    }
+
+    if (textTrim) {
+      await wahaSendText(
+        chatId,
+        `Puedo hacer dos cosas con "${missingGroupName || 'ese grupo'}":\n\n1️⃣ Crearlo y mover el archivo ahí\n2️⃣ Moverlo a un grupo existente\n\nDime "créalo" o escribe el grupo correcto 🙌`,
+        sessionName,
+        { skipRewrite: true }
+      );
+      return;
+    }
+
+    await wahaSendText(chatId, `Dime si quieres que cree "${missingGroupName || 'ese grupo'}" o escribe el grupo correcto 🙌`, sessionName, {
+      skipRewrite: true
+    });
     return;
   }
 
@@ -4244,13 +4612,17 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
         file_id: uploadedFile.file_id,
         folder_id: targetGroup.folder_id
       });
-      await returnSessionToCasual(session.id);
+      const casualSession = await returnSessionToCasual(session.id);
+      const followUpAfterMove = cleanContinuationText(ctx.follow_up_after_move || extractContinuationAfterGroupReference(textTrim, targetGroup.group_name));
       await wahaSendText(
         chatId,
         `✅ Listo. Moví "${moved.name || uploadedFile.file_name || 'el archivo'}" a "${targetGroup.group_name}".\n${moved.webViewLink || uploadedFile.webViewLink || ''}`.trim(),
         sessionName,
         { skipRewrite: true }
       );
+      if (followUpAfterMove) {
+        await continueWithFreshIntent({ session: casualSession || session, chatId, text: followUpAfterMove, sessionName });
+      }
     } catch (moveError) {
       await noteUploadProcessing(session.id, {
         ok: false,
@@ -4304,16 +4676,24 @@ async function handleListarArchivos({ session, chatId, text, sessionName }) {
       return;
     }
 
-    const lines = files.slice(0, 12).map((f, idx) => {
-      const icon = f.mimeType?.startsWith('image/') ? '🖼️' : '📄';
-      const link = f.webViewLink ? `\n${f.webViewLink}` : '';
-      return `${idx + 1}️⃣ ${icon} ${f.name}${idx < 5 ? link : ''}`;
+    const folderLabel = ctx.saveTarget === 'group' ? String(ctx.selectedGroup?.group_name || '').trim() || 'Grupo' : 'Carpeta raíz';
+    const listedFiles = files.slice(0, 12);
+    const lines = listedFiles.map((f, idx) => {
+      const label = f.mimeType?.startsWith('image/') ? 'Img' : 'Doc';
+      return `${idx + 1}️⃣ ${label}: ${f.name} - Carpeta: ${folderLabel}`;
     });
 
-    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    await updateWspSession(session.id, {
+      current_branch: 'listar_archivos',
+      branch_context: {
+        stage: 'pick_file',
+        files: listedFiles,
+        folder_label: folderLabel
+      }
+    });
     await wahaSendText(
       chatId,
-      `Encontré esto${q ? ` para "${q}"` : ''} 👇\n\n${lines.join('\n\n')}\n\nSi quieres buscar otra cosa, dime la palabra clave.`,
+      `Encontré esto${q ? ` para "${q}"` : ''} 👇\n\n${lines.join('\n\n')}\n\nSi quieres el link de alguno, escribe su número.`,
       sessionName
     );
     return;
@@ -4439,8 +4819,16 @@ async function handleListarArchivos({ session, chatId, text, sessionName }) {
       await wahaSendText(chatId, `No encontré archivos en esa carpeta 📭\n\n¿Algo más? Escribe "menú" 🙌`, sessionName);
       return;
     }
-    const lines = files.map((f, idx) => `${idx + 1}️⃣ ${f.mimeType?.startsWith('image/') ? '🖼️' : '📄'} ${f.name}`);
-    await updateWspSession(session.id, { current_branch: 'listar_archivos', branch_context: { stage: 'pick_file', files } });
+    const folderLabel = ctx.saveTarget === 'group' ? String(ctx.selectedGroup?.group_name || '').trim() || 'Grupo' : 'Carpeta raíz';
+    const listedFiles = files.slice(0, 12);
+    const lines = listedFiles.map((f, idx) => {
+      const label = f.mimeType?.startsWith('image/') ? 'Img' : 'Doc';
+      return `${idx + 1}️⃣ ${label}: ${f.name} - Carpeta: ${folderLabel}`;
+    });
+    await updateWspSession(session.id, {
+      current_branch: 'listar_archivos',
+      branch_context: { stage: 'pick_file', files: listedFiles, folder_label: folderLabel }
+    });
     await wahaSendText(chatId, `Aquí están tus archivos 📋\n\n${lines.join('\n')}\n\nEscribe el número para ver el link.`, sessionName);
     return;
   }
@@ -4454,9 +4842,40 @@ async function handleListarArchivos({ session, chatId, text, sessionName }) {
       return;
     }
     await updateWspSession(session.id, { current_branch: null, branch_context: {} });
-    await wahaSendText(chatId, `🔗 ${picked.name}\n${picked.webViewLink || 'Link no disponible'}\n\n¿Quieres ver otro? Escribe "listar documentos" o "menú" 🙌`, sessionName);
+    const folderLabel = String(ctx.folder_label || '').trim() || 'Carpeta raíz';
+    await wahaSendText(
+      chatId,
+      `🔗 Doc: ${picked.name}\n📁 Carpeta: ${folderLabel}\n${picked.webViewLink || 'Link no disponible'}\n\n¿Quieres ver otro? Escribe "listar documentos" o "menú" 🙌`,
+      sessionName
+    );
     return;
   }
+}
+
+async function handleListarGrupos({ session, chatId, text, sessionName }) {
+  const textLower = normalizeForIntent(text);
+  if (isMenuTrigger(textLower)) {
+    await showMainMenu({ session, chatId, sessionName });
+    return;
+  }
+
+  const { data: user, error } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+  if (error || !user?.email) {
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    await wahaSendText(chatId, `No pude obtener tu usuario 😕 Escribe "menú" para reiniciar.`, sessionName);
+    return;
+  }
+
+  const groups = await listUserGroupsByEmail(user.email);
+  if (!groups.length) {
+    await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+    await wahaSendText(chatId, `Aún no tienes grupos creados 📭\n\nSi quieres, puedo crear uno.`, sessionName);
+    return;
+  }
+
+  const lines = groups.slice(0, 20).map((g, idx) => `${idx + 1}️⃣ Grupo: ${g.group_name}`);
+  await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+  await wahaSendText(chatId, `Estos son tus grupos disponibles 📂\n\n${lines.join('\n')}\n\nSi quieres trabajar con uno, dime su nombre.`, sessionName);
 }
 
 async function handleAnalizarDocumento({ session, chatId, text, sessionName, payload }) {
@@ -4788,6 +5207,15 @@ async function enterBranch(session, chatId, sessionName, branch) {
     return true;
   }
 
+  if (branch === 'list_groups') {
+    await updateWspSession(session.id, {
+      current_branch: 'listar_grupos',
+      branch_context: {}
+    });
+    await handleListarGrupos({ session: { ...session, current_branch: 'listar_grupos', branch_context: {} }, chatId, text: '', sessionName });
+    return true;
+  }
+
   if (branch === 'list_files') {
     await updateWspSession(session.id, {
       current_branch: 'listar_archivos',
@@ -4875,6 +5303,50 @@ async function startShareGroupFlow({ session, chatId, text, sessionName }) {
     branch_context: { stage: 'start', prefilled_emails: directEmails, prefilled_group_name: groupNameHint || null }
   });
   await handleCompartirGrupo({ session: updated, chatId, text: groupNameHint || textTrim, sessionName });
+  return true;
+}
+
+async function continueWithFreshIntent({ session, chatId, text, sessionName }) {
+  const nextText = normalizeIncomingText(text);
+  if (!nextText) return false;
+  const textLower = normalizeForIntent(nextText);
+  if (!textLower) return false;
+
+  if (isMenuTrigger(textLower)) {
+    await showMainMenu({ session, chatId, sessionName });
+    return true;
+  }
+
+  if (isExplicitCreateGroupRequest(nextText)) {
+    await startCreateGroupFlow({ session, chatId, text: nextText, sessionName });
+    return true;
+  }
+
+  const explicitIntent = detectIntentRuleBased(nextText);
+  if (explicitIntent.intent === 'share_group') {
+    await startShareGroupFlow({ session, chatId, text: nextText, sessionName });
+    return true;
+  }
+  if (explicitIntent.intent === 'list_groups') {
+    await enterBranch(session, chatId, sessionName, 'list_groups');
+    return true;
+  }
+  if (explicitIntent.intent === 'upload_file') {
+    await startUploadFileFlow({ session, chatId, text: nextText, sessionName });
+    return true;
+  }
+  if (['legal', 'list_files', 'create_document', 'analyze_document'].includes(explicitIntent.intent)) {
+    await enterBranch(session, chatId, sessionName, explicitIntent.intent);
+    return true;
+  }
+
+  const casualSession = session?.current_branch === 'casual' ? session : await returnSessionToCasual(session.id, {});
+  await handleCasualConversation({
+    session: casualSession || { ...session, current_branch: 'casual', branch_context: {} },
+    chatId,
+    text: nextText,
+    sessionName
+  });
   return true;
 }
 
@@ -5299,6 +5771,225 @@ async function semanticSearchUserDocs({ userId, query, limit = 5 }) {
     .slice(0, limit);
 
   return scored;
+}
+
+async function findUserDocumentsByNameHint({ userId, nameHint, limit = 3 }) {
+  const hint = cleanDocumentNameCandidate(nameHint);
+  if (!userId || !hint) return [];
+
+  const { data: user } = await supabase.from('users').select('email').eq('id', userId).single();
+  const userEmail = user?.email;
+  if (!userEmail) return [];
+
+  const safeHint = sanitizeSearchFragment(hint);
+  const normalizedHint = normalizeForIntent(hint);
+  const normalizedHintCompact = normalizedHint.replace(/[^a-z0-9]+/g, '_');
+
+  let query = supabase
+    .from('documentos_administrador')
+    .select('name,file_id,content,metadata,created_at,nombre_limpio')
+    .eq('administrador', userEmail);
+
+  if (safeHint) {
+    query = query.or(`name.ilike.%${safeHint}%,nombre_limpio.ilike.%${normalizedHintCompact}%`);
+  }
+
+  const { data, error } = await query.order('created_at', { ascending: false }).limit(12);
+  if (error || !Array.isArray(data)) return [];
+
+  return data
+    .map((doc) => {
+      const normalizedName = normalizeForIntent(doc?.name || '');
+      let score = 0;
+      if (normalizedName === normalizedHint) score += 200;
+      if (normalizedName.includes(normalizedHint)) score += 120;
+      if (normalizedHint.includes(normalizedName) && normalizedName) score += 60;
+      if (String(doc?.nombre_limpio || '').includes(normalizedHintCompact)) score += 100;
+      if (doc?.name && normalizeForIntent(doc.name.replace(/\.[a-z0-9]+$/i, '')) === normalizedHint.replace(/\.[a-z0-9]+$/i, '')) score += 140;
+      return {
+        name: doc?.name,
+        fileId: doc?.file_id,
+        content: String(doc?.content || ''),
+        metadata: doc?.metadata || {},
+        created_at: doc?.created_at || null,
+        score
+      };
+    })
+    .filter((doc) => doc.fileId && doc.name && doc.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
+async function loadUserDocsByFileIds({ userId, fileIds }) {
+  const ids = Array.from(new Set((Array.isArray(fileIds) ? fileIds : []).map((id) => String(id || '').trim()).filter(Boolean)));
+  if (!userId || !ids.length) return [];
+
+  const { data: user } = await supabase.from('users').select('email').eq('id', userId).single();
+  const userEmail = user?.email;
+  if (!userEmail) return [];
+
+  const { data, error } = await supabase
+    .from('documentos_administrador')
+    .select('name,file_id,content,metadata,created_at')
+    .eq('administrador', userEmail)
+    .in('file_id', ids);
+
+  if (error || !Array.isArray(data)) return [];
+
+  const byId = new Map(data.map((doc) => [String(doc.file_id), doc]));
+  return ids
+    .map((id) => byId.get(id))
+    .filter(Boolean)
+    .map((doc) => ({
+      name: doc?.name,
+      fileId: doc?.file_id,
+      content: String(doc?.content || ''),
+      metadata: doc?.metadata || {},
+      created_at: doc?.created_at || null
+    }));
+}
+
+async function minimaxAnswerFromUserDocs({ question, documents, preferredDocumentName }) {
+  if (!MINIMAX_API_KEY || !WAHA_MINIMAX_ENABLED) return '';
+  const docs = Array.isArray(documents) ? documents.filter((d) => d?.name && d?.content) : [];
+  if (!docs.length) return '';
+
+  const context = docs
+    .slice(0, 3)
+    .map((doc, idx) => {
+      const excerpt = extractRelevantDocExcerpt(doc.content, question, 1200);
+      return `Documento ${idx + 1}: ${doc.name}\nContenido relevante:\n${excerpt || '(sin contenido útil)'}`;
+    })
+    .join('\n\n');
+
+  const system = `Eres Brify respondiendo preguntas en WhatsApp usando SOLO documentos del usuario.
+Responde en español chileno neutral, claro, humano y útil.
+No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras).
+No inventes información. Si el contexto no alcanza, dilo explícitamente.
+Si hay un documento preferido, priorízalo.
+Responde primero la consulta y al final agrega una línea breve con "Fuente:" seguida de los nombres de los documentos usados.
+No entregues links salvo que el usuario los pida.`;
+
+  try {
+    const response = await fetchWithTimeout(
+      MINIMAX_ENDPOINT,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${MINIMAX_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: MINIMAX_MODEL,
+          system,
+          temperature: 0.2,
+          max_tokens: 700,
+          messages: [
+            {
+              role: 'user',
+              content: `Documento preferido: ${preferredDocumentName || '(ninguno)'}\n\nPregunta del usuario:\n${String(question || '').trim()}\n\nContexto documental:\n${context}\n\nResponde usando solo este contexto:`
+            }
+          ]
+        })
+      },
+      Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 9000
+    );
+
+    if (!response.ok) return '';
+    const data = await response.json().catch(() => ({}));
+    let raw = data?.content;
+    if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+    if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+    return typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function buildFallbackAnswerFromUserDocs({ question, documents, preferredDocumentName, includeLinks = false }) {
+  const docs = Array.isArray(documents) ? documents.filter((d) => d?.name) : [];
+  if (!docs.length) return '';
+
+  if (includeLinks) {
+    const lines = docs.slice(0, 3).map((doc, idx) => `${idx + 1}️⃣ ${doc.name}\n${driveOpenLink(doc.fileId) || 'Link no disponible'}`);
+    return `Encontré estos accesos${preferredDocumentName ? ` para "${preferredDocumentName}"` : ''} 👇\n\n${lines.join('\n\n')}`;
+  }
+
+  const topDoc = docs[0];
+  const excerpt = extractRelevantDocExcerpt(topDoc.content, question, 420) || String(topDoc.content || '').replace(/\s+/g, ' ').trim().slice(0, 420);
+  const sourceNames = docs.slice(0, 2).map((doc) => doc.name).join(', ');
+  if (!excerpt) {
+    return `Encontré información relacionada${preferredDocumentName ? ` en "${preferredDocumentName}"` : ''}, pero no alcancé a extraer suficiente contenido para responder con seguridad.\n\nFuente: ${sourceNames}`;
+  }
+  return `Revisé ${preferredDocumentName ? `"${preferredDocumentName}"` : `"${topDoc.name}"`} y esto es lo más relevante que encontré: ${excerpt}${excerpt.length >= 400 ? '…' : ''}\n\nFuente: ${sourceNames}`;
+}
+
+async function handleDocumentKnowledgeQuery({ session, chatId, text, sessionName }) {
+  const question = normalizeIncomingText(text);
+  if (!question) return false;
+
+  const wantsLink = wantsDocumentLink(question);
+  const preferredDocumentName = extractDocumentReferenceName(question);
+  const shouldAnswer = isLikelyDocumentKnowledgeQuestion(question);
+  if (!wantsLink && !shouldAnswer) return false;
+
+  let freshCtx = session?.branch_context || {};
+  try {
+    const updatedAfterUser = await appendGlobalHistory(session.id, freshCtx, 'user', question);
+    freshCtx = updatedAfterUser?.branch_context || freshCtx;
+  } catch (_) {}
+
+  let documents = [];
+  if (preferredDocumentName) {
+    documents = await findUserDocumentsByNameHint({ userId: session.user_id, nameHint: preferredDocumentName, limit: wantsLink ? 3 : 2 });
+    if (!documents.length) {
+      const notFoundReply = `No encontré un documento que coincida con "${preferredDocumentName}" en tu banco informativo 😕\n\nSi quieres, prueba con el nombre exacto o pídeme que lo busque de otra forma.`;
+      try {
+        await appendGlobalHistory(session.id, freshCtx, 'assistant', notFoundReply);
+      } catch (_) {}
+      await wahaSendText(chatId, notFoundReply, sessionName, { skipRewrite: true });
+      return true;
+    }
+  }
+
+  if (!documents.length) {
+    const results = await semanticSearchUserDocs({ userId: session.user_id, query: question, limit: wantsLink ? 3 : 4 });
+    if (!results.length) return false;
+    documents = await loadUserDocsByFileIds({ userId: session.user_id, fileIds: results.map((r) => r.fileId) });
+    if (!documents.length) return false;
+  }
+
+  let answer = '';
+  if (wantsLink) {
+    answer = buildFallbackAnswerFromUserDocs({
+      question,
+      documents,
+      preferredDocumentName,
+      includeLinks: true
+    });
+  } else {
+    answer = await minimaxAnswerFromUserDocs({
+      question,
+      documents,
+      preferredDocumentName
+    });
+    if (!answer) {
+      answer = buildFallbackAnswerFromUserDocs({
+        question,
+        documents,
+        preferredDocumentName,
+        includeLinks: false
+      });
+    }
+  }
+
+  if (!answer) return false;
+
+  try {
+    await appendGlobalHistory(session.id, freshCtx, 'assistant', answer);
+  } catch (_) {}
+  await wahaSendText(chatId, answer, sessionName, { skipRewrite: true });
+  return true;
 }
 
 function buildClauseBaseLegal(values) {
@@ -6028,6 +6719,11 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     return;
   }
 
+  if (session.current_branch && explicitIntent.intent === 'list_groups' && session.current_branch !== 'listar_grupos') {
+    await enterBranch(session, chatId, sessionName, 'list_groups');
+    return;
+  }
+
   if (session.current_branch === 'asesor_legal') {
     await handleAsesorLegal({ session, chatId, text: textTrim, sessionName });
     return;
@@ -6050,6 +6746,11 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
 
   if (session.current_branch === 'listar_archivos') {
     await handleListarArchivos({ session, chatId, text: textTrim, sessionName });
+    return;
+  }
+
+  if (session.current_branch === 'listar_grupos') {
+    await handleListarGrupos({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
@@ -6154,6 +6855,11 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   }
 
   if (!session.current_branch && isLikelyDocumentSearch(textTrim)) {
+    const handledKnowledgeQuery = await handleDocumentKnowledgeQuery({ session, chatId, text: textTrim, sessionName });
+    if (handledKnowledgeQuery) {
+      return;
+    }
+
     const results = await semanticSearchUserDocs({ userId: session.user_id, query: textTrim, limit: 5 });
     if (!results.length) {
       await handleCasualConversation({ session, chatId, text: textTrim, sessionName });
@@ -6294,6 +7000,16 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     }
     session = await updateWspSession(session.id, { current_branch: 'listar_archivos', branch_context: { stage: 'choose_location' } });
     await handleListarArchivos({ session, chatId, text: textTrim, sessionName });
+    return;
+  }
+
+  if (intent.intent === 'list_groups') {
+    if (!hasDrive) {
+      await updateWspSession(session.id, { current_branch: 'await_drive', branch_context: {} });
+      await wahaSendText(chatId, `Para listar grupos necesito que vincules tu Google Drive: ${BRIFY_PROFILE_URL}`, sessionName);
+      return;
+    }
+    await enterBranch(session, chatId, sessionName, 'list_groups');
     return;
   }
 
