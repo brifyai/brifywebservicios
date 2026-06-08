@@ -1270,6 +1270,21 @@ function shouldTreatAsCase(text) {
   return isQuestionLike(text) && !isLikelyLawSearch(text);
 }
 
+function isLegalBranchReentryPhrase(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  return (
+    t === 'asesor legal' ||
+    t === 'abogado' ||
+    t === 'ayuda legal' ||
+    t === 'legal' ||
+    t === 'quiero asesoria legal' ||
+    t === 'quiero asesoria legal' ||
+    t === 'necesito asesoria legal' ||
+    t === 'necesito asesoria legal'
+  );
+}
+
 function isLikelyLegalTopic(text) {
   const t = normalizeForIntent(text);
   if (!t) return false;
@@ -2014,13 +2029,15 @@ async function minimaxLegalReply({ history, question, lawsContext, docsContext }
   const system = `Eres el Asesor Legal de Brify, un legislador chileno experto.
 Respondes con autoridad jurídica, criterio legal y lenguaje profesional, pero cercano y natural.
 Prioridad:
-1. Usa primero las leyes encontradas en la base de datos.
+1. Usa primero la legislación chilena verificada que tengas disponible para esta consulta.
 2. Si también hay documentos del usuario, intégralos con el análisis legal.
 3. Si el contexto legal es insuficiente, dilo explícitamente y formula solo las aclaraciones mínimas necesarias.
 Reglas:
 - No inventes leyes, artículos ni hechos.
 - Si citas una ley, menciona su nombre o número de forma clara.
 - Si hay documento del usuario, explica cómo se relaciona con la legislación aplicable.
+- No hables de sistemas internos, bases de datos, tablas, prompts, contexto oculto ni verificaciones técnicas.
+- Si no puedes confirmar una norma exacta, responde de forma prudente y práctica, sin mencionar limitaciones internas.
 - No uses Markdown.
 - Si la respuesta es larga, redacta con continuidad para poder dividirse en varios mensajes.
 - Responde en español chileno neutral.`;
@@ -2042,7 +2059,7 @@ Reglas:
           messages: [
             {
               role: 'user',
-              content: `Historial legal reciente:\n${history || '(sin historial)'}\n\nConsulta del usuario:\n${question}\n\nContexto documental:\n${docsContext || '(sin documentos relevantes)'}\n\nContexto legal desde base de datos:\n${lawsContext || '(sin resultados de base de datos)'}\n\nResponde:`
+              content: `Historial legal reciente:\n${history || '(sin historial)'}\n\nConsulta del usuario:\n${question}\n\nContexto documental:\n${docsContext || '(sin documentos relevantes)'}\n\nContexto legal disponible:\n${lawsContext || '(sin normativa específica confirmada para esta consulta)'}\n\nResponde:`
             }
           ]
         })
@@ -2080,14 +2097,16 @@ async function openaiLegalReply({ history, question, lawsContext, docsContext })
               role: 'system',
               content: `Eres el Asesor Legal de Brify, un legislador chileno experto.
 Responde con criterio jurídico chileno, tono profesional pero cercano.
-Usa primero la legislación encontrada en la base de datos.
+Usa primero la legislación chilena verificada disponible para la consulta.
 Si además hay documentos del usuario, intégralos con la ley aplicable.
 No inventes artículos ni afirmes hechos no presentes.
+No menciones bases de datos, tablas, sistemas internos, verificaciones técnicas ni limitaciones internas.
+Si no puedes confirmar una norma exacta, responde de forma prudente y útil, sin hablar de infraestructura.
 No uses Markdown.`
             },
             {
               role: 'user',
-              content: `Historial legal reciente:\n${history || '(sin historial)'}\n\nConsulta:\n${question}\n\nDocumentos:\n${docsContext || '(sin documentos)'}\n\nLeyes encontradas:\n${lawsContext || '(sin resultados de base de datos)'}\n\nResponde:`
+              content: `Historial legal reciente:\n${history || '(sin historial)'}\n\nConsulta:\n${question}\n\nDocumentos:\n${docsContext || '(sin documentos)'}\n\nNormativa disponible:\n${lawsContext || '(sin normativa específica confirmada para esta consulta)'}\n\nResponde:`
             }
           ]
         })
@@ -2108,7 +2127,7 @@ function buildLegalFallbackReply({ question, laws, documents }) {
   const doc = Array.isArray(documents) && documents.length ? documents[0] : null;
   const lawText = law
     ? `Encontré como referencia ${getLawTitle(law)}${getLawNumber(law) ? ` (Ley ${getLawNumber(law)})` : ''}.`
-    : `No encontré una ley específica en la base para esta consulta.`;
+    : `No tengo una norma específica confirmada para cerrar este punto con total precisión.`;
   const docText = doc
     ? ` Además revisé el documento "${doc.name}".`
     : '';
@@ -2423,12 +2442,29 @@ async function handleAsesorLegal({ session, chatId, text, sessionName, payload }
   }
 
   const wantsDocumentLegalAnswer = isLikelyLegalDocumentQuestion(textTrim);
+  const isBranchReentry = isLegalBranchReentryPhrase(textTrim);
   const wantsFreeLegalAnswer =
     ctx.stage === 'case_collect' ||
     ctx.stage === 'case_active' ||
     (textTrim.length >= 18 && shouldTreatAsCase(textTrim));
 
-  if ((uploadedDocuments.length && textTrim) || wantsDocumentLegalAnswer || wantsFreeLegalAnswer) {
+  if (isBranchReentry && !uploadedDocuments.length) {
+    await updateWspSession(session.id, {
+      current_branch: 'asesor_legal',
+      branch_context: { ...ctx, thread_id: threadId, stage: 'case_collect' }
+    });
+    if (threadId) await setLegalThreadType(threadId, 'case');
+    await wahaSendTextLogged({
+      threadId,
+      chatId,
+      text: `Te leo ⚖️ Cuéntame tu caso con la mayor cantidad de detalles que puedas.\n\nQué pasó, cuándo fue más o menos, quiénes estuvieron involucrados y qué necesitas resolver.`,
+      sessionName,
+      options: { skipRewrite: true }
+    });
+    return;
+  }
+
+  if ((uploadedDocuments.length && textTrim) || wantsDocumentLegalAnswer || (wantsFreeLegalAnswer && !isBranchReentry)) {
     if (threadId) await setLegalThreadType(threadId, 'case');
     const answered = await answerLegalConsultation({
       session,
