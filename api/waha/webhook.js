@@ -56,6 +56,10 @@ const OPENAI_EMBEDDINGS_MODEL =
   process.env.OPENAI_EMBEDDINGS_MODEL ||
   process.env.REACT_APP_OPENAI_EMBEDDINGS_MODEL ||
   'text-embedding-3-large';
+const OPENAI_CHAT_MODEL =
+  process.env.OPENAI_CHAT_MODEL ||
+  process.env.REACT_APP_OPENAI_CHAT_MODEL ||
+  'gpt-4.1-mini';
 const OPENAI_EMBEDDINGS_DIMENSIONS = Number(
   process.env.OPENAI_EMBEDDINGS_DIMENSIONS ||
     process.env.REACT_APP_OPENAI_EMBEDDINGS_DIMENSIONS ||
@@ -727,13 +731,14 @@ function extractNameContainsQuery(text) {
   const raw = String(text || '').trim();
   if (!raw) return null;
   let q = raw
-    .replace(/\b(mu[eé]strame|muestra|ver|listar|lista|busca|buscar|encuentra|mostrar)\b/gi, ' ')
+    .replace(/\b(listame|listáme|mu[eé]strame|muestra|ens[eé]ñame|ensename|ver|listar|lista|busca|buscar|encuentra|mostrar|dame)\b/gi, ' ')
     .replace(/\b(archivos?|documentos?|im[aá]genes?|fotos?)\b/gi, ' ')
-    .replace(/\b(relacionados?\s+con|sobre|acerca\s+de|de|del|la|el|los|las)\b/gi, ' ')
+    .replace(/\b(relacionados?\s+con|sobre|acerca\s+de|de|del|la|el|los|las|mi|mis|mio|míos|mias|mías)\b/gi, ' ')
     .replace(/\b(grupo)\b\s+.+$/i, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (q.length < 2) return null;
+  if (['mi', 'mis', 'mio', 'mios', 'mia', 'mias'].includes(normalizeForIntent(q))) return null;
   if (q.length > 80) q = q.slice(0, 80).trim();
   return q || null;
 }
@@ -805,11 +810,28 @@ function wantsDocumentLink(text) {
   );
 }
 
+function hasListIntentVerb(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  return (
+    t.includes('listar') ||
+    t.includes('listame') ||
+    t.includes('ver') ||
+    t.includes('mostrar') ||
+    t.includes('muestrame') ||
+    t.includes('ensename') ||
+    t.includes('dame')
+  );
+}
+
 function cleanDocumentNameCandidate(value) {
   let name = String(value || '').trim();
   if (!name) return null;
   name = name
     .replace(/^[“”"'`]+|[“”"'`]+$/g, '')
+    .replace(/\ben\s+el\s+grupo\b[\s\S]*$/i, '')
+    .replace(/\ben\s+la\s+carpeta\b[\s\S]*$/i, '')
+    .replace(/^(de|del|la|el|los|las)\s+/i, '')
     .replace(/\b(sobre|acerca|respecto|que|qué|donde|dónde|para|con|del|de la|de los|de las)\b[\s\S]*$/i, '')
     .replace(/[.,;:!?()]+$/g, '')
     .trim();
@@ -1081,10 +1103,10 @@ function detectIntentRuleBased(text) {
   if (t.includes('subir') || t.includes('adjuntar') || t.includes('enviar archivo') || t.includes('cargar archivo')) {
     return { intent: 'upload_file', confidence: 0.8 };
   }
-  if ((t.includes('listar') || t.includes('ver') || t.includes('mostrar')) && (t.includes('grupo') || t.includes('carpeta'))) {
+  if (hasListIntentVerb(t) && (t.includes('grupo') || t.includes('carpeta'))) {
     return { intent: 'list_groups', confidence: 0.78 };
   }
-  if ((t.includes('listar') || t.includes('ver') || t.includes('mostrar')) && (t.includes('document') || t.includes('archivo') || t.includes('imagen'))) {
+  if (hasListIntentVerb(t) && (t.includes('document') || t.includes('archivo') || t.includes('imagen'))) {
     return { intent: 'list_files', confidence: 0.75 };
   }
   if (t.includes('crear documento') || t.includes('crear doc') || (t.includes('hacer') && t.includes('documento')) || t.includes('plantilla')) {
@@ -1359,6 +1381,52 @@ Reglas:
   }
 }
 
+async function openaiCasualReply({ history, userMessage }) {
+  if (!OPENAI_API_KEY) return '';
+  const system = `Eres Brify en WhatsApp. Responde en español chileno neutral, humano, cercano y útil.
+Objetivo: conversar de forma natural y detectar cuándo hay que activar una capacidad de Brify.
+Reglas:
+- Si el usuario hace una pregunta general o conversa de cualquier tema, respóndela con normalidad. No digas que solo ayudas con grupos, archivos o temas legales.
+- Si el usuario solo saluda o conversa, responde amable y sigue la conversación.
+- Si detectas una intención de Brify pero falta un dato para ejecutar, pide solo la mínima aclaración necesaria.
+- Si la intención ya está clara, responde de forma breve y alineada con esa intención, sin obligar al usuario a usar menús ni números.
+- No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
+- No inventes datos.`;
+
+  try {
+    const response = await fetchWithTimeout(
+      `${String(OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')}/chat/completions`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: OPENAI_CHAT_MODEL,
+          temperature: 0.6,
+          max_tokens: 450,
+          messages: [
+            { role: 'system', content: system },
+            {
+              role: 'user',
+              content: `Historial reciente:\n${history || '(sin historial)'}\n\nMensaje actual:\n${String(userMessage || '').trim()}\n\nResponde:`
+            }
+          ]
+        })
+      },
+      Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+    );
+
+    if (!response.ok) return '';
+    const data = await response.json().catch(() => ({}));
+    const raw = data?.choices?.[0]?.message?.content;
+    return typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
+  } catch (_) {
+    return '';
+  }
+}
+
 async function handleCasualConversation({ session, chatId, text, sessionName }) {
   const ctx = session.branch_context || {};
   const userText = normalizeIncomingText(text);
@@ -1383,8 +1451,16 @@ async function handleCasualConversation({ session, chatId, text, sessionName }) 
     }
   }
 
+  if (!answer && OPENAI_API_KEY) {
+    try {
+      answer = await openaiCasualReply({ history: historyText, userMessage: userText });
+    } catch (_) {
+      answer = '';
+    }
+  }
+
   if (!answer) {
-    if (!WAHA_MINIMAX_ENABLED || !MINIMAX_API_KEY) {
+    if (!WAHA_MINIMAX_ENABLED && !OPENAI_API_KEY && !MINIMAX_API_KEY) {
       answer = `Te leo 🙌\n\nAhora mismo no tengo el chat inteligente habilitado, pero igual puedo ayudarte con acciones.\n\nDime qué necesitas hacer:\n📤 Subir archivos\n📋 Listar archivos\n📁 Crear grupos\n🤝 Compartir grupos\n\nSi quieres reiniciar, escribe "menú".`;
     } else {
       answer = `Tuve un problema respondiendo 😕\n\nPrueba de nuevo en unos segundos.\n\nSi quieres hacer una acción, dime algo como:\n📁 "crear grupo Marketing"\n🤝 "compartir grupo Ventas con correo@empresa.com"\n📤 "subir archivo"\n📋 "listar archivos"\n\nO escribe "menú".`;
@@ -6719,6 +6795,16 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     return;
   }
 
+  if ((isLikelyDocumentKnowledgeQuestion(textTrim) || wantsDocumentLink(textTrim)) && session.current_branch !== 'subir_archivo') {
+    const handledKnowledgeQuery = await handleDocumentKnowledgeQuery({ session, chatId, text: textTrim, sessionName });
+    if (handledKnowledgeQuery) {
+      if (session.current_branch && session.current_branch !== 'casual') {
+        session = await returnSessionToCasual(session.id, {});
+      }
+      return;
+    }
+  }
+
   if (session.current_branch && explicitIntent.intent === 'list_groups' && session.current_branch !== 'listar_grupos') {
     await enterBranch(session, chatId, sessionName, 'list_groups');
     return;
@@ -6818,9 +6904,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
 
   const listQuery = extractNameContainsQuery(textTrim);
   const wantsList =
-    textLower.includes('listar') ||
-    textLower.includes('muestrame') ||
-    textLower.includes('muéstrame') ||
+    hasListIntentVerb(textLower) ||
     textLower.includes('mostrar') ||
     textLower.includes('busca') ||
     textLower.includes('buscar') ||
