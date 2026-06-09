@@ -1087,6 +1087,16 @@ function buildDocumentFallbackSummary(content, query, maxChars = 1100) {
   return summary;
 }
 
+function buildDocumentAnalysisClosing({ mismatch, useLegalLens, fileName }) {
+  if (mismatch?.mismatch) {
+    return `Si quieres, ahora puedo ayudarte a buscar el documento correcto en tu Drive o revisar otro archivo para comparar.`;
+  }
+  if (useLegalLens) {
+    return `Si quieres, puedo profundizar en una cláusula, resumirte los riesgos o comparar este archivo con otro documento.`;
+  }
+  return `Si quieres, puedo profundizar en una parte específica del archivo, resumirlo más simple o revisar otro documento relacionado.`;
+}
+
 async function minimaxRewriteForWhatsApp(text) {
   if (!WAHA_MINIMAX_ENABLED) return text;
   if (!MINIMAX_API_KEY) return text;
@@ -7609,6 +7619,7 @@ async function generateDocumentAnalysisReply({ question, fileName, textContent, 
   if (!content) return '';
   const useLegalLens = isLegalStyleDocumentAnalysis({ question: cleanQuestion, fileName });
   const mismatch = detectDocumentExpectationMismatch({ question: cleanQuestion, fileName, textContent: content });
+  const closing = buildDocumentAnalysisClosing({ mismatch, useLegalLens, fileName });
 
   if (MINIMAX_API_KEY) {
     const system = useLegalLens
@@ -7618,13 +7629,13 @@ Si el documento parece contrato, tributario, societario o de firma, prioriza: al
 No inventes normas ni cites leyes si no aparecen o no son necesarias. Si algo no se puede afirmar con seguridad, dilo con claridad.
 Si el usuario esperaba un contrato o documento legal y el archivo en realidad no corresponde a eso, dilo de forma explícita al inicio, explica qué tipo de documento sí es y luego entrega igual un análisis útil del contenido.
 La respuesta debe quedar siempre completa, cerrada y sin frases cortadas. Si falta espacio, condensa, pero no la dejes a medias.
-Entrega: 1) lectura general, 2) cláusulas o puntos clave, 3) riesgos/alertas, 4) recomendaciones o pasos sugeridos.`
+Entrega obligatoria y en este orden: 1) conclusión inicial, 2) qué documento parece ser realmente, 3) puntos clave, 4) riesgos/alertas, 5) siguiente paso sugerido. Cierra siempre con una frase que invite a continuar la conversación.`
       : `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
 No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
 Si el usuario pidió opinión, además del resumen indica observaciones prácticas, riesgos o puntos sensibles.
 Si el usuario esperaba un tipo de documento específico y el archivo subido no coincide, dilo con claridad al inicio y luego analiza igual el documento real.
 La respuesta debe quedar siempre completa, cerrada y sin frases cortadas. Si falta espacio, condensa, pero no la dejes a medias.
-Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o preguntas de seguimiento si aplica.`;
+Entrega obligatoria y en este orden: 1) conclusión inicial, 2) qué documento parece ser realmente, 3) puntos clave, 4) observaciones o riesgos, 5) siguiente paso sugerido. Cierra siempre con una frase que invite a continuar la conversación.`;
     try {
       const response = await fetchWithTimeout(
         MINIMAX_ENDPOINT,
@@ -7642,7 +7653,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o pregu
             messages: [
               {
                 role: 'user',
-                content: `Documento: ${String(fileName || 'Documento').trim()}\n\nConsulta original del usuario:\n${cleanQuestion || 'Analiza este documento'}\n\nEvaluación preliminar:\n${mismatch.mismatch ? `El usuario esperaba un documento legal o contractual, pero el contenido no parece corresponder a eso${mismatch.detectedType ? ` y se parece más a ${mismatch.detectedType}` : ''}. Debes decirlo claramente al inicio y luego analizar igual el documento real.` : 'Mantén el análisis alineado con la intención original del usuario.'}\n\nContenido:\n${content.slice(0, 14000)}\n\nAnaliza este documento y responde a la consulta del usuario:`
+                content: `Documento: ${String(fileName || 'Documento').trim()}\n\nConsulta original del usuario:\n${cleanQuestion || 'Analiza este documento'}\n\nEvaluación preliminar:\n${mismatch.mismatch ? `El usuario esperaba un documento legal o contractual, pero el contenido no parece corresponder a eso${mismatch.detectedType ? ` y se parece más a ${mismatch.detectedType}` : ''}. Debes decirlo claramente al inicio y luego analizar igual el documento real.` : 'Mantén el análisis alineado con la intención original del usuario.'}\n\nCierre esperado:\nTermina con una frase tipo: "${closing}"\n\nContenido:\n${content.slice(0, 14000)}\n\nAnaliza este documento y responde a la consulta del usuario:`
               }
             ]
           })
@@ -7666,12 +7677,12 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o pregu
   }
   if (mismatch.mismatch) {
     const intro = `Este documento no parece ser ${normalizeForIntent(cleanQuestion).includes('contrato') ? 'un contrato' : 'el tipo de documento legal que esperabas'}. ${mismatch.detectedType ? `Más bien parece ${mismatch.detectedType}.` : 'Más bien parece un documento no legal o informativo.'}`;
-    return `${intro}\n\nIgualmente, esto es lo más relevante que encontré en ${fileName ? `"${fileName}"` : 'el archivo'}: ${fallbackSummary}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
+    return `${intro}\n\nQué encontré realmente en ${fileName ? `"${fileName}"` : 'el archivo'}:\n${fallbackSummary}\n\nMi recomendación:\nSi tu idea era revisar un contrato, probablemente el archivo correcto tiene otro nombre o está en otra carpeta. ${closing}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
   }
   if (useLegalLens) {
-    return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} con enfoque legal y esto es lo más relevante que encontré: ${fallbackSummary}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
+    return `Conclusión inicial:\nRevisé ${fileName ? `"${fileName}"` : 'el documento'} con enfoque legal.\n\nPuntos más relevantes:\n${fallbackSummary}\n\nSiguiente paso sugerido:\n${closing}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
   }
-  return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} y esto es lo más relevante que encontré: ${fallbackSummary}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
+  return `Conclusión inicial:\nRevisé ${fileName ? `"${fileName}"` : 'el documento'}.\n\nPuntos más relevantes:\n${fallbackSummary}\n\nSiguiente paso sugerido:\n${closing}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
 }
 
 async function analyzeDocumentFileAndReply({ session, chatId, sessionName, question, file }) {
