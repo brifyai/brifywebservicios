@@ -1854,6 +1854,41 @@ async function tryResolvePendingFollowup({ session, chatId, text, sessionName, p
     }
 
     const userText = normalizeIncomingText(text);
+    const media = extractMediaFromPayload(payload);
+    const cleanedCtx = withPendingFollowup(ctx, null);
+
+    if (
+      media?.url &&
+      pending?.subtype === 'upload_missing_document_for_analysis' &&
+      normalizeIncomingText(pending?.source_user_text || '')
+    ) {
+      const uploadSession = await updateWspSession(session.id, {
+        current_branch: 'subir_archivo',
+        branch_context: {
+          stage: 'save_now',
+          saveTarget: pending?.save_target === 'group' && pending?.selected_group?.folder_id ? 'group' : 'root',
+          selectedGroup: pending?.save_target === 'group' ? pending?.selected_group || null : null,
+          pending: {
+            url: normalizeMediaUrl(media.url),
+            mimetype: media.mimetype,
+            filename: media.filename
+          },
+          after_upload_action: {
+            type: 'analyze_document',
+            question: normalizeIncomingText(pending?.source_user_text || '')
+          }
+        }
+      });
+      await handleSubirArchivo({
+        session: uploadSession || session,
+        chatId,
+        text,
+        sessionName,
+        payload
+      });
+      return { handled: true, session: uploadSession || session };
+    }
+
     if (!userText) return { handled: false, session };
 
     const optionId = await resolvePendingFollowupOption(pending, userText);
@@ -1871,7 +1906,6 @@ async function tryResolvePendingFollowup({ session, chatId, text, sessionName, p
     }
 
     const action = buildPendingFollowupAction(pending, optionId);
-    const cleanedCtx = withPendingFollowup(ctx, null);
     if (!action) {
       const cleared = await updateWspSession(session.id, { branch_context: cleanedCtx });
       return { handled: false, session: cleared || session };
@@ -8747,7 +8781,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     }
   }
 
-  if (!media?.url && (!session.current_branch || session.current_branch === 'casual')) {
+  if (!session.current_branch || session.current_branch === 'casual') {
     const pendingResult = await tryResolvePendingFollowup({ session, chatId, text: textTrim, sessionName, payload });
     if (pendingResult.handled) return;
     session = pendingResult.session || session;
