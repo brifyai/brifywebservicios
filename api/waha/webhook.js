@@ -1746,65 +1746,65 @@ async function tryResolvePendingFollowup({ session, chatId, text, sessionName, p
   const pending = getPendingFollowup(ctx);
   if (!pending) return { handled: false, session };
 
-  if (isPendingFollowupExpired(pending)) {
-    const cleared = await updateWspSession(session.id, { branch_context: withPendingFollowup(ctx, null) });
-    return { handled: false, session: cleared || session };
-  }
-
-  const userText = normalizeIncomingText(text);
-  if (!userText) return { handled: false, session };
-
-  const optionId = await resolvePendingFollowupOption(pending, userText);
-  if (!optionId) {
-    if (isLikelyFreshUserTurn(userText)) {
+  try {
+    if (isPendingFollowupExpired(pending)) {
       const cleared = await updateWspSession(session.id, { branch_context: withPendingFollowup(ctx, null) });
       return { handled: false, session: cleared || session };
     }
-    if (isShortReplyForPending(userText)) {
-      await wahaSendText(chatId, pending.prompt || `¿Cuál opción prefieres?`, sessionName, { skipRewrite: true });
-      return { handled: true, session };
+
+    const userText = normalizeIncomingText(text);
+    if (!userText) return { handled: false, session };
+
+    const optionId = await resolvePendingFollowupOption(pending, userText);
+    if (!optionId) {
+      if (isLikelyFreshUserTurn(userText)) {
+        const cleared = await updateWspSession(session.id, { branch_context: withPendingFollowup(ctx, null) });
+        return { handled: false, session: cleared || session };
+      }
+      if (isShortReplyForPending(userText)) {
+        await wahaSendText(chatId, pending.prompt || `¿Cuál opción prefieres?`, sessionName, { skipRewrite: true });
+        return { handled: true, session };
+      }
+      const cleared = await updateWspSession(session.id, { branch_context: withPendingFollowup(ctx, null) });
+      return { handled: false, session: cleared || session };
     }
-    const cleared = await updateWspSession(session.id, { branch_context: withPendingFollowup(ctx, null) });
-    return { handled: false, session: cleared || session };
-  }
 
-  const action = buildPendingFollowupAction(pending, optionId);
-  const cleanedCtx = withPendingFollowup(ctx, null);
-  if (!action) {
-    const cleared = await updateWspSession(session.id, { branch_context: cleanedCtx });
-    return { handled: false, session: cleared || session };
-  }
+    const action = buildPendingFollowupAction(pending, optionId);
+    const cleanedCtx = withPendingFollowup(ctx, null);
+    if (!action) {
+      const cleared = await updateWspSession(session.id, { branch_context: cleanedCtx });
+      return { handled: false, session: cleared || session };
+    }
 
-  if (action.route === 'legal_case') {
-    const nextSession = await updateWspSession(session.id, {
-      current_branch: 'asesor_legal',
-      branch_context: { ...cleanedCtx, stage: 'choose_mode' }
-    });
-    await handleAsesorLegal({ session: nextSession, chatId, text: action.text, sessionName, payload });
-    return { handled: true, session: nextSession };
-  }
+    if (action.route === 'legal_case') {
+      const nextSession = await updateWspSession(session.id, {
+        current_branch: 'asesor_legal',
+        branch_context: { ...cleanedCtx, stage: 'choose_mode' }
+      });
+      await handleAsesorLegal({ session: nextSession, chatId, text: action.text, sessionName, payload });
+      return { handled: true, session: nextSession };
+    }
 
-  if (action.route === 'casual') {
-    const nextSession = await returnSessionToCasual(session.id, cleanedCtx);
-    await handleCasualConversation({ session: nextSession, chatId, text: action.text, sessionName });
-    return { handled: true, session: nextSession };
-  }
+    if (action.route === 'casual') {
+      const nextSession = await returnSessionToCasual(session.id, cleanedCtx);
+      await handleCasualConversation({ session: nextSession, chatId, text: action.text, sessionName });
+      return { handled: true, session: nextSession };
+    }
 
-  if (action.route === 'upload_for_analysis') {
-    const nextSession = await returnSessionToCasual(session.id, cleanedCtx);
-    await startUploadForAnalysis({
-      session: nextSession || session,
-      chatId,
-      sessionName,
-      question: action.analysis_question || action.text,
-      saveTarget: action.save_target || 'root',
-      selectedGroup: action.selected_group || null
-    });
-    return { handled: true, session: nextSession || session };
-  }
+    if (action.route === 'upload_for_analysis') {
+      const nextSession = await returnSessionToCasual(session.id, cleanedCtx);
+      await startUploadForAnalysis({
+        session: nextSession || session,
+        chatId,
+        sessionName,
+        question: action.analysis_question || action.text,
+        saveTarget: action.save_target || 'root',
+        selectedGroup: action.selected_group || null
+      });
+      return { handled: true, session: nextSession || session };
+    }
 
-  if (action.route === 'create_group_and_upload_for_analysis') {
-    try {
+    if (action.route === 'create_group_and_upload_for_analysis') {
       const baseSession = await returnSessionToCasual(session.id, cleanedCtx);
       const createdGroup = await ensureUserGroupExists({
         session: baseSession || session,
@@ -1829,7 +1829,50 @@ async function tryResolvePendingFollowup({ session, chatId, text, sessionName, p
         selectedGroup: createdGroup
       });
       return { handled: true, session: baseSession || session };
-    } catch (_) {
+    }
+
+    if (action.route === 'reply_text') {
+      const nextSession = await returnSessionToCasual(session.id, cleanedCtx);
+      await wahaSendText(chatId, action.text, sessionName, { skipRewrite: true });
+      return { handled: true, session: nextSession || session };
+    }
+
+    const cleared = await updateWspSession(session.id, { branch_context: cleanedCtx });
+    return { handled: false, session: cleared || session };
+  } catch (error) {
+    console.error('[WAHA webhook] tryResolvePendingFollowup error:', {
+      sessionId: session?.id || null,
+      pendingSubtype: pending?.subtype || pending?.type || null,
+      message: error?.message || 'unknown'
+    });
+
+    if (pending?.subtype === 'create_group_upload_and_analyze_document') {
+      try {
+        const cleanedCtx = withPendingFollowup(ctx, null);
+        const baseSession = await returnSessionToCasual(session.id, cleanedCtx);
+        const createdGroup = await ensureUserGroupExists({
+          session: baseSession || session,
+          groupName: String(pending?.group_name || '').trim()
+        });
+        if (createdGroup?.folder_id) {
+          await wahaSendText(chatId, `Perfecto 🙌 Dejé listo el grupo "${createdGroup.group_name}".`, sessionName, { skipRewrite: true });
+          await startUploadForAnalysis({
+            session: baseSession || session,
+            chatId,
+            sessionName,
+            question: normalizeIncomingText(pending?.source_user_text || ''),
+            saveTarget: 'group',
+            selectedGroup: createdGroup
+          });
+          return { handled: true, session: baseSession || session };
+        }
+      } catch (fallbackError) {
+        console.error('[WAHA webhook] pending create_group fallback error:', {
+          sessionId: session?.id || null,
+          groupName: pending?.group_name || null,
+          message: fallbackError?.message || 'unknown'
+        });
+      }
       await wahaSendText(
         chatId,
         `Tuve un problema preparando ese grupo 😕\n\nSi quieres, súbeme el documento igual y lo reviso desde la carpeta raíz.`,
@@ -1838,16 +1881,15 @@ async function tryResolvePendingFollowup({ session, chatId, text, sessionName, p
       );
       return { handled: true, session };
     }
-  }
 
-  if (action.route === 'reply_text') {
-    const nextSession = await returnSessionToCasual(session.id, cleanedCtx);
-    await wahaSendText(chatId, action.text, sessionName, { skipRewrite: true });
-    return { handled: true, session: nextSession || session };
+    await wahaSendText(
+      chatId,
+      `Tuve un problema continuando esa acción 😕\n\nSi quieres, dime nuevamente qué prefieres y seguimos desde ahí.`,
+      sessionName,
+      { skipRewrite: true }
+    );
+    return { handled: true, session };
   }
-
-  const cleared = await updateWspSession(session.id, { branch_context: cleanedCtx });
-  return { handled: false, session: cleared || session };
 }
 
 function isShortLegalPreferenceReply(text) {
