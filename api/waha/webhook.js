@@ -8526,6 +8526,12 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     }
   }
 
+  if (!media?.url && (!session.current_branch || session.current_branch === 'casual')) {
+    const pendingResult = await tryResolvePendingFollowup({ session, chatId, text: textTrim, sessionName, payload });
+    if (pendingResult.handled) return;
+    session = pendingResult.session || session;
+  }
+
   if (isExplicitCreateGroupRequest(textTrim) && session.current_branch !== 'crear_grupo') {
     await startCreateGroupFlow({ session, chatId, text: textTrim, sessionName });
     return;
@@ -8559,12 +8565,6 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       sessionName
     });
     if (handledExistingDriveAnalysis) return;
-  }
-
-  if (!media?.url && (!session.current_branch || session.current_branch === 'casual')) {
-    const pendingResult = await tryResolvePendingFollowup({ session, chatId, text: textTrim, sessionName, payload });
-    if (pendingResult.handled) return;
-    session = pendingResult.session || session;
   }
 
   if (session.current_branch && explicitIntent.intent === 'list_groups' && session.current_branch !== 'listar_grupos') {
