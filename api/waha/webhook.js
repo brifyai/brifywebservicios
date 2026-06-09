@@ -1573,6 +1573,43 @@ function isPendingFollowupExpired(pending) {
   return Date.now() - createdAt > 1000 * 60 * 30;
 }
 
+function isSmallTypoMatch(input, keyword) {
+  const a = normalizeForIntent(input).replace(/\s+/g, ' ').trim();
+  const b = normalizeForIntent(keyword).replace(/\s+/g, ' ').trim();
+  if (!a || !b) return false;
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+
+  const compactA = a.replace(/\s+/g, '');
+  const compactB = b.replace(/\s+/g, '');
+  if (!compactA || !compactB) return false;
+
+  if (Math.abs(compactA.length - compactB.length) > 1) return false;
+  if (compactA.length < 4 || compactB.length < 4) return false;
+
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < compactA.length && j < compactB.length) {
+    if (compactA[i] === compactB[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    edits++;
+    if (edits > 1) return false;
+    if (compactA.length > compactB.length) {
+      i++;
+    } else if (compactB.length > compactA.length) {
+      j++;
+    } else {
+      i++;
+      j++;
+    }
+  }
+  if (i < compactA.length || j < compactB.length) edits++;
+  return edits <= 1;
+}
+
 function resolvePendingFollowupByKeywords(pending, text) {
   const input = normalizeForIntent(text);
   if (!input) return null;
@@ -1581,7 +1618,7 @@ function resolvePendingFollowupByKeywords(pending, text) {
     const keywords = Array.isArray(option?.keywords) ? option.keywords : [];
     if (keywords.some((keyword) => {
       const k = normalizeForIntent(keyword);
-      return k && (input === k || input.includes(k));
+      return k && (input === k || input.includes(k) || isSmallTypoMatch(input, k));
     })) {
       return String(option.id || '').trim() || null;
     }
