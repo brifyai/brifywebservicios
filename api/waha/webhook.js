@@ -1735,8 +1735,8 @@ async function startUploadForAnalysis({ session, chatId, sessionName, question, 
   });
   const groupName = String(selectedGroup?.group_name || '').trim();
   const message = groupName
-    ? `Perfecto 🙌 Súbelo por aquí y lo guardaré en "${groupName}". Apenas llegue, lo analizo de inmediato.`
-    : `Perfecto 🙌 Súbelo por aquí. Apenas llegue, lo analizo de inmediato.`;
+    ? `Ahora sube tu documento por aquí 📎 Lo guardaré en "${groupName}" y apenas llegue lo analizo.`
+    : `Ahora sube tu documento por aquí 📎 Apenas llegue lo analizo.`;
   await wahaSendText(chatId, message, sessionName, { skipRewrite: true });
   return updated;
 }
@@ -2333,6 +2333,13 @@ async function wahaSendLongTextLogged({ threadId, chatId, text, sessionName, opt
   const chunks = splitLongWhatsAppResponse(text, 1400);
   for (const chunk of chunks) {
     await wahaSendTextLogged({ threadId, chatId, text: chunk, sessionName, options });
+  }
+}
+
+async function wahaSendLongText({ chatId, text, sessionName, options }) {
+  const chunks = splitLongWhatsAppResponse(text, 1400);
+  for (const chunk of chunks) {
+    await wahaSendText(chatId, chunk, sessionName, options);
   }
 }
 
@@ -5712,7 +5719,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
         const locationLine = ctx.saveTarget === 'group' ? ` en "${folderName}"` : '';
         await wahaSendText(
           chatId,
-          `✅ Listo. Guardé "${file.name}"${locationLine}.\n${file.webViewLink}\n\nAhora lo estoy revisando para darte el análisis 🙌`,
+          `✅ Listo. Guardé "${file.name}"${locationLine}.\n${file.webViewLink}\n\n🧐 Estamos analizando tu documento para darte una respuesta completa.`,
           sessionName,
           { skipRewrite: true }
         );
@@ -7425,10 +7432,14 @@ async function generateDocumentAnalysisReply({ question, fileName, textContent, 
 No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
 Si el documento parece contrato, tributario, societario o de firma, prioriza: alcance, obligaciones, riesgos, vacíos, inconsistencias, puntos sensibles y siguientes pasos.
 No inventes normas ni cites leyes si no aparecen o no son necesarias. Si algo no se puede afirmar con seguridad, dilo con claridad.
+Si el usuario esperaba un contrato o documento legal y el archivo en realidad no corresponde a eso, dilo de forma explícita al inicio, explica qué tipo de documento sí es y luego entrega igual un análisis útil del contenido.
+La respuesta debe quedar siempre completa, cerrada y sin frases cortadas. Si falta espacio, condensa, pero no la dejes a medias.
 Entrega: 1) lectura general, 2) cláusulas o puntos clave, 3) riesgos/alertas, 4) recomendaciones o pasos sugeridos.`
       : `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
 No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
 Si el usuario pidió opinión, además del resumen indica observaciones prácticas, riesgos o puntos sensibles.
+Si el usuario esperaba un tipo de documento específico y el archivo subido no coincide, dilo con claridad al inicio y luego analiza igual el documento real.
+La respuesta debe quedar siempre completa, cerrada y sin frases cortadas. Si falta espacio, condensa, pero no la dejes a medias.
 Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o preguntas de seguimiento si aplica.`;
     try {
       const response = await fetchWithTimeout(
@@ -7443,7 +7454,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o pregu
             model: MINIMAX_MODEL,
             system,
             temperature: 0.35,
-            max_tokens: 900,
+            max_tokens: 1200,
             messages: [
               {
                 role: 'user',
@@ -7470,9 +7481,9 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o pregu
     return `Encontré el documento${fileName ? ` "${fileName}"` : ''}, pero no alcancé a extraer contenido suficiente para darte una opinión confiable${webViewLink ? `.\n\nLink: ${webViewLink}` : '.'}`;
   }
   if (useLegalLens) {
-    return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} con enfoque legal y esto es lo más relevante que encontré: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink: ${webViewLink}` : ''}`;
+    return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} con enfoque legal y esto es lo más relevante que encontré: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
   }
-  return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} y esto es lo más relevante que encontré: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink: ${webViewLink}` : ''}`;
+  return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} y esto es lo más relevante que encontré: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
 }
 
 async function analyzeDocumentFileAndReply({ session, chatId, sessionName, question, file }) {
@@ -7505,7 +7516,7 @@ async function analyzeDocumentFileAndReply({ session, chatId, sessionName, quest
   });
   if (!analysis) return false;
 
-  await wahaSendText(chatId, analysis, sessionName, { skipRewrite: true });
+  await wahaSendLongText({ chatId, text: analysis, sessionName, options: { skipRewrite: true } });
   return true;
 }
 
