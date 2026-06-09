@@ -5504,14 +5504,14 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
       if (picked) {
         const updated = await updateWspSession(session.id, {
           current_branch: 'subir_archivo',
-          branch_context: { stage: 'save_now', saveTarget: 'group', selectedGroup: picked, pending }
+          branch_context: { ...ctx, stage: 'save_now', saveTarget: 'group', selectedGroup: picked, pending }
         });
         await handleSubirArchivo({ session: updated, chatId, text, sessionName, payload });
         return;
       }
       if (groups.length) {
         const lines = groups.slice(0, 15).map((g, idx) => `${idx + 1}️⃣ 📁 ${g.group_name}`);
-        await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { stage: 'choose_group', groups, pending, saveTarget: 'group' } });
+        await updateWspSession(session.id, { current_branch: 'subir_archivo', branch_context: { ...ctx, stage: 'choose_group', groups, pending, saveTarget: 'group' } });
         await wahaSendText(chatId, `No encontré el grupo "${groupMention}" 😕\n\nElige uno:\n\n${lines.join('\n')}\n\nEscribe el número o el nombre.`, sessionName);
         return;
       }
@@ -5519,7 +5519,13 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
 
     const updated = await updateWspSession(session.id, {
       current_branch: 'subir_archivo',
-      branch_context: { stage: 'save_now', saveTarget: 'root', pending }
+      branch_context: {
+        ...ctx,
+        stage: 'save_now',
+        saveTarget: ctx.saveTarget === 'group' && ctx.selectedGroup?.folder_id ? 'group' : 'root',
+        selectedGroup: ctx.saveTarget === 'group' ? ctx.selectedGroup || null : null,
+        pending
+      }
     });
     await handleSubirArchivo({ session: updated, chatId, text, sessionName, payload });
     return;
