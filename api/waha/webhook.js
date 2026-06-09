@@ -912,6 +912,17 @@ function cleanDocumentNameCandidate(value) {
   return name.length >= 2 ? name : null;
 }
 
+function stripTrailingPoliteness(value) {
+  let text = String(value || '').trim();
+  if (!text) return '';
+  text = text
+    .replace(/\b(?:por\s+favor|porfavor|porfa|porfis|porfi|gracias|graciass|graciass|pls|please)\b[\s.!?,;:]*$/i, '')
+    .replace(/\b(?:muchas\s+gracias|mil\s+gracias)\b[\s.!?,;:]*$/i, '')
+    .replace(/[.,;:!?()]+$/g, '')
+    .trim();
+  return text;
+}
+
 function extractDocumentReferenceName(text) {
   const quoted = extractQuoted(text);
   if (quoted) return cleanDocumentNameCandidate(quoted);
@@ -937,13 +948,13 @@ function extractDocumentContainerName(text) {
   const raw = String(text || '').trim();
   if (!raw) return null;
   const patterns = [
-    /\b(?:en|de|del)\s+la\s+carpeta\s+([^,.\n]+?)(?:\s+(?:por|para|y|que|del|de la|de el|con)\b|$)/i,
-    /\b(?:en|de|del)\s+el\s+grupo\s+([^,.\n]+?)(?:\s+(?:por|para|y|que|del|de la|de el|con)\b|$)/i,
-    /\bcarpeta\s+([^,.\n]+?)(?:\s+(?:por|para|y|que|del|de la|de el|con)\b|$)/i
+    /\b(?:en|de|del)\s+la\s+carpeta\s+([^,.\n]+?)(?:\s+(?:por|para|y|que|del|de la|de el|con|gracias)\b|$)/i,
+    /\b(?:en|de|del)\s+el\s+grupo\s+([^,.\n]+?)(?:\s+(?:por|para|y|que|del|de la|de el|con|gracias)\b|$)/i,
+    /\bcarpeta\s+([^,.\n]+?)(?:\s+(?:por|para|y|que|del|de la|de el|con|gracias)\b|$)/i
   ];
   for (const pattern of patterns) {
     const match = raw.match(pattern);
-    const candidate = cleanDocumentNameCandidate(match?.[1]);
+    const candidate = cleanDocumentNameCandidate(stripTrailingPoliteness(match?.[1]));
     if (candidate) return candidate;
   }
   return null;
@@ -7570,10 +7581,10 @@ async function handleExistingDriveDocumentAnalysisQuery({ session, chatId, text,
         subtype: 'create_group_upload_and_analyze_document',
         source_user_text: question,
         group_name: containerHint,
-        prompt: `No encontré una carpeta o grupo llamado "${containerHint}" 😕\n\nSi quieres, puedo hacer una de estas dos cosas:\n\n1️⃣ 📁 Crear "${containerHint}", esperar tu documento y analizarlo ahí\n2️⃣ 📤 Subir el documento ahora a la carpeta raíz y analizarlo igual`,
+        prompt: `No encontré una carpeta o grupo llamado "${containerHint}" 😕\n\nSi quieres, puedo hacer estas dos cosas: 📁 crear "${containerHint}", esperar tu documento y analizarlo ahí; o 📤 subir el documento ahora a la carpeta raíz y analizarlo igual.\n\nIndícame qué prefieres: crear primero la carpeta/grupo o subir directamente el documento.`,
         options: [
-          { id: 'create_group_upload', label: 'Crear grupo y subir', keywords: buildOptionKeywords(['crear grupo', 'crear carpeta', 'crear', 'si', 'sí', 'hazlo', 'dale'], 0) },
-          { id: 'upload_root', label: 'Subir a raíz', keywords: buildOptionKeywords(['subir', 'raiz', 'raíz', 'root', 'sin grupo'], 1) },
+          { id: 'create_group_upload', label: 'Crear grupo y subir', keywords: buildOptionKeywords(['crear grupo', 'crear carpeta', 'crear primero la carpeta', 'crear primero el grupo', 'crea la carpeta', 'crea el grupo', 'primero crea', 'hazlo', 'dale con la carpeta'], 0) },
+          { id: 'upload_root', label: 'Subir a raíz', keywords: buildOptionKeywords(['subir', 'subir documento', 'subir directamente', 'subir el documento', 'mejor subo', 'adjuntarlo ahora', 'raiz', 'raíz', 'root', 'sin grupo'], 1) },
           { id: 'later', label: 'Más tarde', keywords: ['no', 'despues', 'después', 'mas tarde', 'más tarde', 'luego'] }
         ],
         created_at: new Date().toISOString()
@@ -7625,10 +7636,10 @@ async function handleExistingDriveDocumentAnalysisQuery({ session, chatId, text,
       save_target: preferredUploadGroup?.folder_id ? 'group' : 'root',
       selected_group: preferredUploadGroup?.folder_id ? preferredUploadGroup : null,
       prompt: documentHint
-        ? `No encontré un documento claro que coincida con "${documentHint}"${containerHint ? ` en "${containerHint}"` : ''} 😕\n\nSi quieres, puedes:\n\n1️⃣ 📤 Subirlo ahora y lo analizo en cuanto llegue${preferredUploadGroup?.group_name ? ` dentro de "${preferredUploadGroup.group_name}"` : ''}\n2️⃣ ⏳ Dejarlo para después`
-        : `No pude identificar con claridad qué documento del Drive quieres que analice 😕\n\nSi quieres, puedes:\n\n1️⃣ 📤 Subirlo ahora y lo analizo en cuanto llegue\n2️⃣ ⏳ Dejarlo para después`,
+        ? `No encontré un documento claro que coincida con "${documentHint}"${containerHint ? ` en "${containerHint}"` : ''} 😕\n\nSi quieres, puedes 📤 subirlo ahora y lo analizo en cuanto llegue${preferredUploadGroup?.group_name ? ` dentro de "${preferredUploadGroup.group_name}"` : ''}, o dejarlo para después.\n\nDime si prefieres subir el documento ahora o dejarlo pendiente.`
+        : `No pude identificar con claridad qué documento del Drive quieres que analice 😕\n\nSi quieres, puedes 📤 subirlo ahora y lo analizo en cuanto llegue, o dejarlo para después.\n\nDime si prefieres subir el documento ahora o dejarlo pendiente.`,
       options: [
-        { id: 'upload_now', label: 'Subir ahora', keywords: buildOptionKeywords(['subir', 'adjuntar', 'enviar', 'si', 'sí', 'dale', 'hagamoslo', 'hagámoslo'], 0) },
+        { id: 'upload_now', label: 'Subir ahora', keywords: buildOptionKeywords(['subir', 'subir ahora', 'subir documento', 'adjuntar', 'adjuntarlo', 'enviar', 'mandarlo', 'dale', 'hagamoslo', 'hagámoslo'], 0) },
         { id: 'later', label: 'Más tarde', keywords: buildOptionKeywords(['no', 'despues', 'después', 'mas tarde', 'más tarde', 'luego'], 1) }
       ],
       created_at: new Date().toISOString()
