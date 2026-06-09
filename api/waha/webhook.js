@@ -1033,6 +1033,60 @@ function extractRelevantDocExcerpt(content, query, maxChars = 900) {
   return raw.slice(start, end).trim();
 }
 
+function trimToNaturalBoundary(text, maxChars = 1100) {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  if (raw.length <= maxChars) return raw;
+
+  const boundaryChars = ['. ', '! ', '? ', '; ', ': ', '\n', ', '];
+  let cut = -1;
+  for (const boundary of boundaryChars) {
+    const idx = raw.lastIndexOf(boundary, maxChars);
+    if (idx > cut) cut = idx + boundary.trimEnd().length;
+  }
+  if (cut < Math.floor(maxChars * 0.6)) {
+    cut = raw.lastIndexOf(' ', maxChars);
+  }
+  if (cut < 1) cut = maxChars;
+  return raw.slice(0, cut).trim().replace(/[,:;\-–]+$/, '').trim();
+}
+
+function buildDocumentFallbackSummary(content, query, maxChars = 1100) {
+  const raw = String(content || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+
+  const excerpt = extractRelevantDocExcerpt(raw, query, Math.max(900, maxChars)) || raw;
+  const normalizedQuery = normalizeForIntent(query);
+  const terms = normalizedQuery.split(' ').filter((t) => t.length > 3).slice(0, 8);
+  const segments = excerpt
+    .split(/(?<=[.!?;:])\s+|\s{2,}/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (!segments.length) return trimToNaturalBoundary(excerpt, maxChars);
+
+  const ranked = segments
+    .map((segment, index) => {
+      const normalizedSegment = normalizeForIntent(segment);
+      const score = terms.reduce((acc, term) => acc + (normalizedSegment.includes(term) ? 2 : 0), 0) + Math.min(segment.length / 120, 2);
+      return { segment, index, score };
+    })
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, 5)
+    .sort((a, b) => a.index - b.index);
+
+  let summary = '';
+  for (const item of ranked) {
+    const next = summary ? `${summary} ${item.segment}` : item.segment;
+    if (next.length > maxChars) break;
+    summary = next;
+  }
+
+  summary = trimToNaturalBoundary(summary || excerpt, maxChars);
+  if (!/[.!?]$/.test(summary)) summary = `${summary}.`;
+  return summary;
+}
+
 async function minimaxRewriteForWhatsApp(text) {
   if (!WAHA_MINIMAX_ENABLED) return text;
   if (!MINIMAX_API_KEY) return text;
@@ -7606,18 +7660,18 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o pregu
     } catch (_) {}
   }
 
-  const excerpt = extractRelevantDocExcerpt(content, cleanQuestion, 420) || content.slice(0, 420);
-  if (!excerpt) {
+  const fallbackSummary = buildDocumentFallbackSummary(content, cleanQuestion, 1050);
+  if (!fallbackSummary) {
     return `Encontré el documento${fileName ? ` "${fileName}"` : ''}, pero no alcancé a extraer contenido suficiente para darte una opinión confiable${webViewLink ? `.\n\nLink: ${webViewLink}` : '.'}`;
   }
   if (mismatch.mismatch) {
     const intro = `Este documento no parece ser ${normalizeForIntent(cleanQuestion).includes('contrato') ? 'un contrato' : 'el tipo de documento legal que esperabas'}. ${mismatch.detectedType ? `Más bien parece ${mismatch.detectedType}.` : 'Más bien parece un documento no legal o informativo.'}`;
-    return `${intro}\n\nIgualmente, esto es lo más relevante que encontré en ${fileName ? `"${fileName}"` : 'el archivo'}: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
+    return `${intro}\n\nIgualmente, esto es lo más relevante que encontré en ${fileName ? `"${fileName}"` : 'el archivo'}: ${fallbackSummary}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
   }
   if (useLegalLens) {
-    return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} con enfoque legal y esto es lo más relevante que encontré: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
+    return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} con enfoque legal y esto es lo más relevante que encontré: ${fallbackSummary}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
   }
-  return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} y esto es lo más relevante que encontré: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
+  return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} y esto es lo más relevante que encontré: ${fallbackSummary}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
 }
 
 async function analyzeDocumentFileAndReply({ session, chatId, sessionName, question, file }) {
@@ -7650,7 +7704,12 @@ async function analyzeDocumentFileAndReply({ session, chatId, sessionName, quest
   });
   if (!analysis) return false;
 
-  await wahaSendLongText({ chatId, text: analysis, sessionName, options: { skipRewrite: true } });
+  await wahaStartTyping(chatId, sessionName).catch(() => null);
+  try {
+    await wahaSendLongText({ chatId, text: analysis, sessionName, options: { skipRewrite: true } });
+  } finally {
+    await wahaStopTyping(chatId, sessionName).catch(() => null);
+  }
   return true;
 }
 
