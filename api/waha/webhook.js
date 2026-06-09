@@ -2314,6 +2314,8 @@ function splitLongWhatsAppResponse(text, maxChars = 1400) {
   while (remaining.length > maxChars) {
     let cut = remaining.lastIndexOf('\n', maxChars);
     if (cut < Math.floor(maxChars * 0.45)) cut = remaining.lastIndexOf('. ', maxChars);
+    if (cut < Math.floor(maxChars * 0.45)) cut = remaining.lastIndexOf('! ', maxChars);
+    if (cut < Math.floor(maxChars * 0.45)) cut = remaining.lastIndexOf('? ', maxChars);
     if (cut < Math.floor(maxChars * 0.45)) cut = remaining.lastIndexOf(' ', maxChars);
     if (cut < 1) cut = maxChars;
     const chunk = remaining.slice(0, cut).trim();
@@ -2323,9 +2325,8 @@ function splitLongWhatsAppResponse(text, maxChars = 1400) {
   if (remaining) parts.push(remaining);
 
   return parts.map((part, index) => {
-    if (index === 0 && parts.length > 1) return `${part}\n\nContinúo en el siguiente mensaje...`;
-    if (index < parts.length - 1) return `Esto es la parte ${index + 1}, sigo...\n\n${part}\n\nContinúo en el siguiente mensaje...`;
-    return parts.length > 1 ? `Parte ${index + 1}:\n\n${part}` : part;
+    if (index === 0) return part;
+    return `Continuo con el análisis 👇\n\n${part}`;
   });
 }
 
@@ -5723,6 +5724,7 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
           sessionName,
           { skipRewrite: true }
         );
+        await wahaSendText(chatId, `⏳ Dentro de poco tendré tu respuesta.`, sessionName, { skipRewrite: true });
         await analyzeDocumentFileAndReply({
           session: casualSession || session,
           chatId,
@@ -7420,11 +7422,60 @@ function isLegalStyleDocumentAnalysis({ question, fileName }) {
   return keywords.some((keyword) => combined.includes(keyword));
 }
 
+function detectDocumentExpectationMismatch({ question, fileName, textContent }) {
+  const expectedLegal = isLegalStyleDocumentAnalysis({ question, fileName });
+  const normalized = normalizeForIntent(String(textContent || '').slice(0, 5000));
+  if (!expectedLegal || !normalized) {
+    return { expectedLegal, looksLegal: expectedLegal, mismatch: false, detectedType: null };
+  }
+
+  const legalKeywords = [
+    'contrato',
+    'clausula',
+    'cláusula',
+    'arrend',
+    'anexo',
+    'finiquito',
+    'mandante',
+    'prestador',
+    'servicio',
+    'vigencia',
+    'partes',
+    'obligacion',
+    'obligación',
+    'firma',
+    'tribut',
+    'factura',
+    'boleta',
+    'impuesto',
+    'sii',
+    'sociedad',
+    'representante legal'
+  ];
+  const nonLegalHints = [
+    { type: 'una guia de ejercicios', keywords: ['burpee', 'burpees', 'entrenamiento', 'rutina', 'ejercicio', 'ejercicios', 'cardio'] },
+    { type: 'un manual o instructivo', keywords: ['manual', 'instructivo', 'instrucciones', 'paso a paso', 'tutorial'] },
+    { type: 'una guia informativa', keywords: ['guia', 'guía', 'recomendaciones', 'consejos', 'introduccion', 'introducción'] }
+  ];
+
+  const legalHits = legalKeywords.filter((keyword) => normalized.includes(keyword)).length;
+  const detectedNonLegal = nonLegalHints.find((item) => item.keywords.some((keyword) => normalized.includes(keyword))) || null;
+  const looksLegal = legalHits >= 3;
+  const mismatch = expectedLegal && !looksLegal;
+  return {
+    expectedLegal,
+    looksLegal,
+    mismatch,
+    detectedType: detectedNonLegal?.type || null
+  };
+}
+
 async function generateDocumentAnalysisReply({ question, fileName, textContent, webViewLink }) {
   const cleanQuestion = normalizeIncomingText(question);
   const content = normalizeExtractedText(textContent);
   if (!content) return '';
   const useLegalLens = isLegalStyleDocumentAnalysis({ question: cleanQuestion, fileName });
+  const mismatch = detectDocumentExpectationMismatch({ question: cleanQuestion, fileName, textContent: content });
 
   if (MINIMAX_API_KEY) {
     const system = useLegalLens
@@ -7458,7 +7509,7 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o pregu
             messages: [
               {
                 role: 'user',
-                content: `Documento: ${String(fileName || 'Documento').trim()}\n\nConsulta del usuario:\n${cleanQuestion || 'Analiza este documento'}\n\nContenido:\n${content.slice(0, 14000)}\n\nAnaliza este documento y responde a la consulta del usuario:`
+                content: `Documento: ${String(fileName || 'Documento').trim()}\n\nConsulta original del usuario:\n${cleanQuestion || 'Analiza este documento'}\n\nEvaluación preliminar:\n${mismatch.mismatch ? `El usuario esperaba un documento legal o contractual, pero el contenido no parece corresponder a eso${mismatch.detectedType ? ` y se parece más a ${mismatch.detectedType}` : ''}. Debes decirlo claramente al inicio y luego analizar igual el documento real.` : 'Mantén el análisis alineado con la intención original del usuario.'}\n\nContenido:\n${content.slice(0, 14000)}\n\nAnaliza este documento y responde a la consulta del usuario:`
               }
             ]
           })
@@ -7479,6 +7530,10 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o pregu
   const excerpt = extractRelevantDocExcerpt(content, cleanQuestion, 420) || content.slice(0, 420);
   if (!excerpt) {
     return `Encontré el documento${fileName ? ` "${fileName}"` : ''}, pero no alcancé a extraer contenido suficiente para darte una opinión confiable${webViewLink ? `.\n\nLink: ${webViewLink}` : '.'}`;
+  }
+  if (mismatch.mismatch) {
+    const intro = `Este documento no parece ser ${normalizeForIntent(cleanQuestion).includes('contrato') ? 'un contrato' : 'el tipo de documento legal que esperabas'}. ${mismatch.detectedType ? `Más bien parece ${mismatch.detectedType}.` : 'Más bien parece un documento no legal o informativo.'}`;
+    return `${intro}\n\nIgualmente, esto es lo más relevante que encontré en ${fileName ? `"${fileName}"` : 'el archivo'}: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
   }
   if (useLegalLens) {
     return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} con enfoque legal y esto es lo más relevante que encontré: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink del archivo: ${webViewLink}` : ''}`;
