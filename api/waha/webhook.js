@@ -1614,12 +1614,120 @@ function buildPendingFollowupAction(pending, optionId) {
     }
   }
 
+  if (pending?.subtype === 'upload_missing_document_for_analysis') {
+    if (optionId === 'upload_now') {
+      return {
+        route: 'upload_for_analysis',
+        text: sourceUserText,
+        analysis_question: sourceUserText,
+        save_target: pending?.save_target === 'group' ? 'group' : 'root',
+        selected_group: pending?.selected_group || null
+      };
+    }
+    if (optionId === 'later') {
+      return {
+        route: 'reply_text',
+        text: `Perfecto 🙌 Cuando quieras, súbeme el documento y lo analizo al tiro.`
+      };
+    }
+  }
+
+  if (pending?.subtype === 'create_group_upload_and_analyze_document') {
+    if (optionId === 'create_group_upload') {
+      return {
+        route: 'create_group_and_upload_for_analysis',
+        text: sourceUserText,
+        analysis_question: sourceUserText,
+        group_name: String(pending?.group_name || '').trim() || null
+      };
+    }
+    if (optionId === 'upload_root') {
+      return {
+        route: 'upload_for_analysis',
+        text: sourceUserText,
+        analysis_question: sourceUserText,
+        save_target: 'root',
+        selected_group: null
+      };
+    }
+    if (optionId === 'later') {
+      return {
+        route: 'reply_text',
+        text: `Dale 🙌 Cuando tengas el documento, me lo envías y lo analizo contigo.`
+      };
+    }
+  }
+
   return null;
 }
 
 async function persistPendingFollowup(sessionId, ctx, pending) {
   const branchContext = withPendingFollowup(ctx, pending);
   return updateWspSession(sessionId, { branch_context: branchContext });
+}
+
+async function ensureUserGroupExists({ session, groupName }) {
+  const cleanGroupName = String(groupName || '').trim();
+  if (!session?.user_id || !cleanGroupName) return null;
+
+  const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+  const userEmail = user?.email;
+  if (!userEmail) return null;
+
+  const existingGroups = await listUserGroupsByEmail(userEmail);
+  const existing = findGroupByName(existingGroups, cleanGroupName);
+  if (existing) return existing;
+
+  const rootFolderId = await resolveRootFolderIdForUser(userEmail, session.user_id, session.phone_number, { sessionId: session.id });
+  if (!rootFolderId) return null;
+
+  const folder = await createDriveFolder({ userId: session.user_id, parentFolderId: rootFolderId, name: cleanGroupName });
+  const record = await upsertGrupoDriveRecord({
+    ownerUserId: session.user_id,
+    userEmail,
+    folderId: folder.id,
+    groupName: cleanGroupName,
+    extension: 'brify'
+  });
+  await setWspSessionGlobal(session.id, {
+    last_group_record_result: {
+      ok: true,
+      folder_id: folder.id,
+      group_name: cleanGroupName,
+      source: 'analysis_missing_group_auto_create',
+      record_id: record?.id || null,
+      ts: new Date().toISOString()
+    }
+  });
+
+  return {
+    id: record?.id || null,
+    group_name: cleanGroupName,
+    folder_id: folder.id,
+    administrador: userEmail
+  };
+}
+
+async function startUploadForAnalysis({ session, chatId, sessionName, question, saveTarget = 'root', selectedGroup = null }) {
+  const branchContext = {
+    stage: 'wait_file',
+    saveTarget: saveTarget === 'group' && selectedGroup?.folder_id ? 'group' : 'root',
+    ...(saveTarget === 'group' && selectedGroup?.folder_id ? { selectedGroup } : {}),
+    after_upload_action: {
+      type: 'analyze_document',
+      question: normalizeIncomingText(question)
+    }
+  };
+  const updated = await updateWspSession(session.id, {
+    current_branch: 'subir_archivo',
+    branch_context: branchContext
+  });
+  const groupName = String(selectedGroup?.group_name || '').trim();
+  const message = groupName
+    ? `Perfecto 🙌 Súbelo por aquí y lo guardaré en "${groupName}". Apenas llegue, lo analizo de inmediato.`
+    : `Perfecto 🙌 Súbelo por aquí. Apenas llegue, lo analizo de inmediato.`;
+  await wahaSendText(chatId, message, sessionName, { skipRewrite: true });
+  return updated;
 }
 
 async function tryResolvePendingFollowup({ session, chatId, text, sessionName, payload }) {
@@ -1669,6 +1777,62 @@ async function tryResolvePendingFollowup({ session, chatId, text, sessionName, p
     const nextSession = await returnSessionToCasual(session.id, cleanedCtx);
     await handleCasualConversation({ session: nextSession, chatId, text: action.text, sessionName });
     return { handled: true, session: nextSession };
+  }
+
+  if (action.route === 'upload_for_analysis') {
+    const nextSession = await returnSessionToCasual(session.id, cleanedCtx);
+    await startUploadForAnalysis({
+      session: nextSession || session,
+      chatId,
+      sessionName,
+      question: action.analysis_question || action.text,
+      saveTarget: action.save_target || 'root',
+      selectedGroup: action.selected_group || null
+    });
+    return { handled: true, session: nextSession || session };
+  }
+
+  if (action.route === 'create_group_and_upload_for_analysis') {
+    try {
+      const baseSession = await returnSessionToCasual(session.id, cleanedCtx);
+      const createdGroup = await ensureUserGroupExists({
+        session: baseSession || session,
+        groupName: action.group_name
+      });
+      if (!createdGroup?.folder_id) {
+        await wahaSendText(
+          chatId,
+          `No pude dejar listo ese grupo ahora mismo 😕\n\nSi quieres, súbeme el documento igual y lo analizo desde la carpeta raíz.`,
+          sessionName,
+          { skipRewrite: true }
+        );
+        return { handled: true, session: baseSession || session };
+      }
+      await wahaSendText(chatId, `Perfecto 🙌 Dejé listo el grupo "${createdGroup.group_name}".`, sessionName, { skipRewrite: true });
+      await startUploadForAnalysis({
+        session: baseSession || session,
+        chatId,
+        sessionName,
+        question: action.analysis_question || action.text,
+        saveTarget: 'group',
+        selectedGroup: createdGroup
+      });
+      return { handled: true, session: baseSession || session };
+    } catch (_) {
+      await wahaSendText(
+        chatId,
+        `Tuve un problema preparando ese grupo 😕\n\nSi quieres, súbeme el documento igual y lo reviso desde la carpeta raíz.`,
+        sessionName,
+        { skipRewrite: true }
+      );
+      return { handled: true, session };
+    }
+  }
+
+  if (action.route === 'reply_text') {
+    const nextSession = await returnSessionToCasual(session.id, cleanedCtx);
+    await wahaSendText(chatId, action.text, sessionName, { skipRewrite: true });
+    return { handled: true, session: nextSession || session };
   }
 
   const cleared = await updateWspSession(session.id, { branch_context: cleanedCtx });
@@ -5525,7 +5689,29 @@ async function handleSubirArchivo({ session, chatId, text, sessionName, payload 
           }
         });
       }
-      if (ctx.saveTarget === 'group') {
+      const afterUploadAction = ctx.after_upload_action && typeof ctx.after_upload_action === 'object' ? ctx.after_upload_action : null;
+      if (afterUploadAction?.type === 'analyze_document') {
+        const casualSession = await returnSessionToCasual(session.id);
+        const locationLine = ctx.saveTarget === 'group' ? ` en "${folderName}"` : '';
+        await wahaSendText(
+          chatId,
+          `✅ Listo. Guardé "${file.name}"${locationLine}.\n${file.webViewLink}\n\nAhora lo estoy revisando para darte el análisis 🙌`,
+          sessionName,
+          { skipRewrite: true }
+        );
+        await analyzeDocumentFileAndReply({
+          session: casualSession || session,
+          chatId,
+          sessionName,
+          question: afterUploadAction.question || `Analiza ${file.name}`,
+          file: {
+            id: file.id,
+            name: file.name,
+            mimeType: file.mimeType || pending.mimetype || null,
+            webViewLink: file.webViewLink || null
+          }
+        });
+      } else if (ctx.saveTarget === 'group') {
         await returnSessionToCasual(session.id);
         await wahaSendText(
           chatId,
@@ -7312,14 +7498,15 @@ async function handleExistingDriveDocumentAnalysisQuery({ session, chatId, text,
 
   const documentHint = extractAnalysisDocumentHint(question);
   const containerHint = extractDocumentContainerName(question);
+  let preferredUploadGroup = null;
 
-  let candidates = [];
+  let namedCandidates = [];
   if (documentHint) {
-    const named = await findUserDocumentsByNameHint({ userId: session.user_id, nameHint: documentHint, limit: 5 });
-    candidates.push(...named);
+    namedCandidates = await findUserDocumentsByNameHint({ userId: session.user_id, nameHint: documentHint, limit: 5 });
   }
 
-  if (!candidates.length || !documentHint) {
+  let candidates = [...namedCandidates];
+  if (!documentHint) {
     const semantic = await semanticSearchUserDocs({ userId: session.user_id, query: question, limit: 5 });
     if (semantic.length) {
       const loaded = await loadUserDocsByFileIds({ userId: session.user_id, fileIds: semantic.map((item) => item.fileId) });
@@ -7350,6 +7537,7 @@ async function handleExistingDriveDocumentAnalysisQuery({ session, chatId, text,
     const groups = await listUserGroupsByEmail(user?.email);
     const pickedGroup = findGroupByName(groups, containerHint);
     if (pickedGroup?.folder_id) {
+      preferredUploadGroup = pickedGroup;
       const driveFiles = await listDriveFiles({
         userId: session.user_id,
         folderId: pickedGroup.folder_id,
@@ -7375,6 +7563,25 @@ async function handleExistingDriveDocumentAnalysisQuery({ session, chatId, text,
         await wahaSendText(chatId, `Encontré varios documentos en "${pickedGroup.group_name}" 👇\n\n${lines.join('\n')}\n\nEscribe el número del que quieres analizar.`, sessionName);
         return true;
       }
+    }
+    if (!pickedGroup) {
+      const pending = {
+        type: 'choice',
+        subtype: 'create_group_upload_and_analyze_document',
+        source_user_text: question,
+        group_name: containerHint,
+        prompt: `No encontré una carpeta o grupo llamado "${containerHint}" 😕\n\nSi quieres, puedo hacer una de estas dos cosas:\n\n1️⃣ 📁 Crear "${containerHint}", esperar tu documento y analizarlo ahí\n2️⃣ 📤 Subir el documento ahora a la carpeta raíz y analizarlo igual`,
+        options: [
+          { id: 'create_group_upload', label: 'Crear grupo y subir', keywords: buildOptionKeywords(['crear grupo', 'crear carpeta', 'crear', 'si', 'sí', 'hazlo', 'dale'], 0) },
+          { id: 'upload_root', label: 'Subir a raíz', keywords: buildOptionKeywords(['subir', 'raiz', 'raíz', 'root', 'sin grupo'], 1) },
+          { id: 'later', label: 'Más tarde', keywords: ['no', 'despues', 'después', 'mas tarde', 'más tarde', 'luego'] }
+        ],
+        created_at: new Date().toISOString()
+      };
+      const persisted = await persistPendingFollowup(session.id, session.branch_context || {}, pending).catch(() => null);
+      if (persisted) session = persisted;
+      await wahaSendText(chatId, pending.prompt, sessionName, { skipRewrite: true });
+      return true;
     }
   }
 
@@ -7411,10 +7618,24 @@ async function handleExistingDriveDocumentAnalysisQuery({ session, chatId, text,
   }
 
   if (!uniqueCandidates.length) {
-    const notFoundReply = documentHint
-      ? `No encontré un documento claro que coincida con "${documentHint}"${containerHint ? ` en "${containerHint}"` : ''} 😕\n\nSi quieres, dime el nombre exacto, indícame mejor la carpeta o adjunta el archivo y lo analizo.`
-      : `No pude identificar con claridad qué documento del Drive quieres que analice 😕\n\nSi quieres, dime el nombre exacto del archivo, la carpeta/grupo donde está o adjúntalo aquí.`;
-    await wahaSendText(chatId, notFoundReply, sessionName, { skipRewrite: true });
+    const pending = {
+      type: 'choice',
+      subtype: 'upload_missing_document_for_analysis',
+      source_user_text: question,
+      save_target: preferredUploadGroup?.folder_id ? 'group' : 'root',
+      selected_group: preferredUploadGroup?.folder_id ? preferredUploadGroup : null,
+      prompt: documentHint
+        ? `No encontré un documento claro que coincida con "${documentHint}"${containerHint ? ` en "${containerHint}"` : ''} 😕\n\nSi quieres, puedes:\n\n1️⃣ 📤 Subirlo ahora y lo analizo en cuanto llegue${preferredUploadGroup?.group_name ? ` dentro de "${preferredUploadGroup.group_name}"` : ''}\n2️⃣ ⏳ Dejarlo para después`
+        : `No pude identificar con claridad qué documento del Drive quieres que analice 😕\n\nSi quieres, puedes:\n\n1️⃣ 📤 Subirlo ahora y lo analizo en cuanto llegue\n2️⃣ ⏳ Dejarlo para después`,
+      options: [
+        { id: 'upload_now', label: 'Subir ahora', keywords: buildOptionKeywords(['subir', 'adjuntar', 'enviar', 'si', 'sí', 'dale', 'hagamoslo', 'hagámoslo'], 0) },
+        { id: 'later', label: 'Más tarde', keywords: buildOptionKeywords(['no', 'despues', 'después', 'mas tarde', 'más tarde', 'luego'], 1) }
+      ],
+      created_at: new Date().toISOString()
+    };
+    const persisted = await persistPendingFollowup(session.id, session.branch_context || {}, pending).catch(() => null);
+    if (persisted) session = persisted;
+    await wahaSendText(chatId, pending.prompt, sessionName, { skipRewrite: true });
     return true;
   }
 
