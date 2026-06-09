@@ -7176,13 +7176,54 @@ function mapStoredDocToAnalysisFile(doc) {
   };
 }
 
+function isLegalStyleDocumentAnalysis({ question, fileName }) {
+  const combined = normalizeForIntent(`${String(question || '').trim()} ${String(fileName || '').trim()}`);
+  if (!combined) return false;
+  const keywords = [
+    'contrato',
+    'clausula',
+    'cláusula',
+    'anexo',
+    'firma',
+    'firmado',
+    'firmar',
+    'tribut',
+    'impuesto',
+    'sii',
+    'boleta',
+    'factura',
+    'declaracion',
+    'declaración',
+    'finiquito',
+    'demanda',
+    'poder',
+    'escritura',
+    'arrend',
+    'representacion',
+    'representación',
+    'sociedad',
+    'prestacion de servicios',
+    'prestación de servicios',
+    'terminos y condiciones',
+    'términos y condiciones'
+  ];
+  return keywords.some((keyword) => combined.includes(keyword));
+}
+
 async function generateDocumentAnalysisReply({ question, fileName, textContent, webViewLink }) {
   const cleanQuestion = normalizeIncomingText(question);
   const content = normalizeExtractedText(textContent);
   if (!content) return '';
+  const useLegalLens = isLegalStyleDocumentAnalysis({ question: cleanQuestion, fileName });
 
   if (MINIMAX_API_KEY) {
-    const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
+    const system = useLegalLens
+      ? `Eres un analista legal de documentos en WhatsApp para Brify. Responde en español, claro, útil y con criterio jurídico práctico.
+No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
+Si el documento parece contrato, tributario, societario o de firma, prioriza: alcance, obligaciones, riesgos, vacíos, inconsistencias, puntos sensibles y siguientes pasos.
+No inventes normas ni cites leyes si no aparecen o no son necesarias. Si algo no se puede afirmar con seguridad, dilo con claridad.
+Entrega: 1) lectura general, 2) cláusulas o puntos clave, 3) riesgos/alertas, 4) recomendaciones o pasos sugeridos.`
+      : `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
 No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
 Si el usuario pidió opinión, además del resumen indica observaciones prácticas, riesgos o puntos sensibles.
 Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o preguntas de seguimiento si aplica.`;
@@ -7224,6 +7265,9 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o pregu
   const excerpt = extractRelevantDocExcerpt(content, cleanQuestion, 420) || content.slice(0, 420);
   if (!excerpt) {
     return `Encontré el documento${fileName ? ` "${fileName}"` : ''}, pero no alcancé a extraer contenido suficiente para darte una opinión confiable${webViewLink ? `.\n\nLink: ${webViewLink}` : '.'}`;
+  }
+  if (useLegalLens) {
+    return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} con enfoque legal y esto es lo más relevante que encontré: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink: ${webViewLink}` : ''}`;
   }
   return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} y esto es lo más relevante que encontré: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink: ${webViewLink}` : ''}`;
 }
