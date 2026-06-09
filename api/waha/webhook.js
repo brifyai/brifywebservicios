@@ -53,18 +53,52 @@ const OPENAI_BASE_URL =
   process.env.REACT_APP_OPENAI_BASE_URL ||
   'https://api.openai.com/v1';
 const OPENAI_EMBEDDINGS_MODEL =
+  process.env.EMBEDDINGS_MODEL ||
+  process.env.REACT_APP_EMBEDDINGS_MODEL ||
   process.env.OPENAI_EMBEDDINGS_MODEL ||
   process.env.REACT_APP_OPENAI_EMBEDDINGS_MODEL ||
-  'text-embedding-3-large';
+  'nvidia/llama-nemotron-embed-1b-v2';
 const OPENAI_CHAT_MODEL =
   process.env.OPENAI_CHAT_MODEL ||
   process.env.REACT_APP_OPENAI_CHAT_MODEL ||
   'gpt-4.1-mini';
+const EMBEDDINGS_API_KEY =
+  process.env.EMBEDDINGS_API_KEY ||
+  process.env.REACT_APP_EMBEDDINGS_API_KEY ||
+  process.env.OPENROUTER_API_KEY ||
+  process.env.REACT_APP_OPENROUTER_API_KEY ||
+  OPENAI_API_KEY;
+const EMBEDDINGS_BASE_URL =
+  process.env.EMBEDDINGS_BASE_URL ||
+  process.env.REACT_APP_EMBEDDINGS_BASE_URL ||
+  process.env.OPENROUTER_BASE_URL ||
+  process.env.REACT_APP_OPENROUTER_BASE_URL ||
+  process.env.OPENAI_BASE_URL ||
+  process.env.REACT_APP_OPENAI_BASE_URL ||
+  'https://openrouter.ai/api/v1';
 const OPENAI_EMBEDDINGS_DIMENSIONS = Number(
   process.env.OPENAI_EMBEDDINGS_DIMENSIONS ||
     process.env.REACT_APP_OPENAI_EMBEDDINGS_DIMENSIONS ||
+    process.env.EMBEDDINGS_DIMENSIONS ||
+    process.env.REACT_APP_EMBEDDINGS_DIMENSIONS ||
     '768'
 );
+const EMBEDDINGS_INPUT_TYPE_MODE =
+  process.env.EMBEDDINGS_INPUT_TYPE_MODE ||
+  process.env.REACT_APP_EMBEDDINGS_INPUT_TYPE_MODE ||
+  'auto';
+const EMBEDDINGS_HTTP_REFERER =
+  process.env.EMBEDDINGS_HTTP_REFERER ||
+  process.env.REACT_APP_EMBEDDINGS_HTTP_REFERER ||
+  process.env.OPENROUTER_HTTP_REFERER ||
+  process.env.REACT_APP_OPENROUTER_HTTP_REFERER ||
+  '';
+const EMBEDDINGS_APP_TITLE =
+  process.env.EMBEDDINGS_APP_TITLE ||
+  process.env.REACT_APP_EMBEDDINGS_APP_TITLE ||
+  process.env.OPENROUTER_APP_TITLE ||
+  process.env.REACT_APP_OPENROUTER_APP_TITLE ||
+  'Brify';
 const GEMINI_EMBEDDINGS_MODEL =
   process.env.GEMINI_EMBEDDINGS_MODEL ||
   process.env.REACT_APP_GEMINI_EMBEDDINGS_MODEL ||
@@ -154,6 +188,39 @@ function summarizeOpenAIError(error, extra = {}) {
     code: error?.code || null,
     param: error?.param || null
   };
+}
+
+function shouldSendEmbeddingDimensions(modelName, baseUrl) {
+  const model = String(modelName || '').trim().toLowerCase();
+  const url = String(baseUrl || '').trim().toLowerCase();
+  return Boolean(
+    model &&
+    Number.isFinite(OPENAI_EMBEDDINGS_DIMENSIONS) &&
+    OPENAI_EMBEDDINGS_DIMENSIONS > 0 &&
+    (
+      /^text-embedding-3-/i.test(model) ||
+      model.includes('nvidia/llama-nemotron-embed-1b-v2') ||
+      url.includes('openrouter.ai')
+    )
+  );
+}
+
+function resolveEmbeddingInputType(taskType, baseUrl) {
+  const mode = String(EMBEDDINGS_INPUT_TYPE_MODE || 'auto').trim().toLowerCase();
+  if (!mode || mode === 'off' || mode === 'none' || mode === 'disabled') return null;
+
+  const normalizedTask = String(taskType || '').trim().toUpperCase();
+  const defaultType = normalizedTask === 'RETRIEVAL_QUERY' ? 'search_query' : 'search_document';
+
+  if (mode === 'query_passage') {
+    return normalizedTask === 'RETRIEVAL_QUERY' ? 'query' : 'passage';
+  }
+  if (mode === 'search') return defaultType;
+  if (mode !== 'auto') return mode;
+
+  const url = String(baseUrl || '').trim().toLowerCase();
+  if (url.includes('openrouter.ai')) return defaultType;
+  return null;
 }
 
 function extractEmbeddingValues(result) {
@@ -298,8 +365,8 @@ async function openaiEmbedTextsDetailed(texts, taskType = 'RETRIEVAL_DOCUMENT') 
   if (!WAHA_EMBEDDINGS_ENABLED) {
     return { embeddings: null, error: { reason: 'embeddings_disabled' } };
   }
-  if (!OPENAI_API_KEY) {
-    return { embeddings: null, error: { reason: 'missing_openai_api_key' } };
+  if (!EMBEDDINGS_API_KEY) {
+    return { embeddings: null, error: { reason: 'missing_embeddings_api_key' } };
   }
   const inputs = Array.isArray(texts) ? texts.map((t) => String(t || '').trim()).filter(Boolean) : [];
   if (!inputs.length) {
@@ -316,20 +383,27 @@ async function openaiEmbedTextsDetailed(texts, taskType = 'RETRIEVAL_DOCUMENT') 
       input,
       encoding_format: 'float'
     };
-    if (/^text-embedding-3-/i.test(OPENAI_EMBEDDINGS_MODEL) && Number.isFinite(OPENAI_EMBEDDINGS_DIMENSIONS) && OPENAI_EMBEDDINGS_DIMENSIONS > 0) {
+    if (shouldSendEmbeddingDimensions(OPENAI_EMBEDDINGS_MODEL, EMBEDDINGS_BASE_URL)) {
       body.dimensions = OPENAI_EMBEDDINGS_DIMENSIONS;
     }
+    const inputType = resolveEmbeddingInputType(taskType, EMBEDDINGS_BASE_URL);
+    if (inputType) body.input_type = inputType;
 
     let response = null;
     try {
+      const headers = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${EMBEDDINGS_API_KEY}`
+      };
+      if (String(EMBEDDINGS_BASE_URL || '').toLowerCase().includes('openrouter.ai')) {
+        if (EMBEDDINGS_HTTP_REFERER) headers['HTTP-Referer'] = EMBEDDINGS_HTTP_REFERER;
+        if (EMBEDDINGS_APP_TITLE) headers['X-Title'] = EMBEDDINGS_APP_TITLE;
+      }
       response = await fetchWithTimeout(
-        `${String(OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')}/embeddings`,
+        `${String(EMBEDDINGS_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '')}/embeddings`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${OPENAI_API_KEY}`
-          },
+          headers,
           body: JSON.stringify(body)
         },
         timeoutMs
@@ -424,7 +498,7 @@ async function buildEmbeddingsWithFallback(texts, taskType = 'RETRIEVAL_DOCUMENT
   if (Array.isArray(openaiEmbeddings) && openaiEmbeddings.length === inputs.length) {
     return {
       embeddings: openaiEmbeddings,
-      provider: 'openai',
+      provider: String(EMBEDDINGS_BASE_URL || '').toLowerCase().includes('openrouter.ai') ? 'openrouter' : 'openai_compatible',
       model: OPENAI_EMBEDDINGS_MODEL,
       error: null
     };
@@ -1303,6 +1377,18 @@ function isLikelyLegalTopic(text) {
     'garantía',
     'arrendatario',
     'arrendador',
+    'vecino',
+    'vecina',
+    'ruido',
+    'ruidos',
+    'molesto',
+    'molestos',
+    'fiesta',
+    'fiestas',
+    'municipalidad',
+    'ordenanza',
+    'copropiedad',
+    'carabineros',
     'ley',
     'articulo',
     'artículo',
@@ -1319,6 +1405,291 @@ function getGlobalState(ctx) {
   const global = base._global && typeof base._global === 'object' ? base._global : {};
   const history = Array.isArray(global.history) ? global.history : [];
   return { history };
+}
+
+function getPendingFollowup(ctx) {
+  const pending = ctx && typeof ctx === 'object' ? ctx.pending_followup : null;
+  return pending && typeof pending === 'object' ? pending : null;
+}
+
+function withPendingFollowup(ctx, pending) {
+  const base = ctx && typeof ctx === 'object' ? { ...ctx } : {};
+  if (pending && typeof pending === 'object' && Object.keys(pending).length) {
+    base.pending_followup = pending;
+  } else {
+    delete base.pending_followup;
+  }
+  return base;
+}
+
+function isShortReplyForPending(text) {
+  const raw = normalizeIncomingText(text);
+  if (!raw) return false;
+  const words = raw.split(/\s+/).filter(Boolean);
+  if (words.length <= 5 && raw.length <= 48) return true;
+  const t = normalizeForIntent(raw);
+  return (
+    t === 'si' ||
+    t === 'sí' ||
+    t === 'no' ||
+    t === 'dale' ||
+    t === 'ok' ||
+    t === 'bueno' ||
+    t === 'esa' ||
+    t === 'esa opcion' ||
+    t === 'esa opción' ||
+    t === 'la primera' ||
+    t === 'la segunda'
+  );
+}
+
+function isLikelyFreshUserTurn(text) {
+  const raw = normalizeIncomingText(text);
+  if (!raw) return false;
+  if (isQuestionLike(raw) || shouldTreatAsCase(raw) || isLikelyLawSearch(raw) || isLikelyLegalTopic(raw)) return true;
+  const t = normalizeForIntent(raw);
+  return raw.length >= 60 || t.includes('necesito ') || t.includes('quiero ') || t.includes('tengo un problema');
+}
+
+function buildOptionKeywords(baseKeywords, index) {
+  const extras = [];
+  if (index === 0) extras.push('1', 'uno', 'primera', 'la primera', 'opcion 1', 'opción 1');
+  if (index === 1) extras.push('2', 'dos', 'segunda', 'la segunda', 'opcion 2', 'opción 2');
+  if (index === 2) extras.push('3', 'tres', 'tercera', 'la tercera', 'opcion 3', 'opción 3');
+  if (index === 3) extras.push('4', 'cuatro', 'cuarta', 'la cuarta', 'opcion 4', 'opción 4');
+  return Array.from(new Set([...(Array.isArray(baseKeywords) ? baseKeywords : []), ...extras]));
+}
+
+function buildPendingFollowupFromAssistant({ userText, assistantText }) {
+  const sourceUserText = normalizeIncomingText(userText);
+  const reply = normalizeIncomingText(assistantText);
+  const replyIntent = normalizeForIntent(reply);
+  if (!sourceUserText || !reply || !replyIntent) return null;
+
+  const offersLegalOrDraft =
+    (replyIntent.includes('redactar una carta') || replyIntent.includes('redactar un mensaje')) &&
+    (
+      (replyIntent.includes('orient') && replyIntent.includes('legal')) ||
+      replyIntent.includes('legalmente') ||
+      replyIntent.includes('pasos legales')
+    );
+
+  if (offersLegalOrDraft) {
+    return {
+      type: 'choice',
+      subtype: 'legal_or_draft',
+      source_user_text: sourceUserText,
+      source_assistant_text: reply,
+      prompt: `¿Qué prefieres en este caso?\n\n1️⃣ 📝 Redactar un mensaje o carta\n2️⃣ ⚖️ Ver la orientación legal y los pasos a seguir`,
+      options: [
+        { id: 'draft_message', label: 'Redactar mensaje o carta', keywords: buildOptionKeywords(['carta', 'mensaje', 'redactar', 'redacta', 'formal', 'escrito'], 0) },
+        { id: 'legal_guidance', label: 'Orientación legal', keywords: buildOptionKeywords(['legalmente', 'legal', 'pasos legales', 'orientacion', 'orientación', 'denunciar', 'via legal', 'vía legal'], 1) }
+      ],
+      created_at: new Date().toISOString()
+    };
+  }
+
+  return null;
+}
+
+function isPendingFollowupExpired(pending) {
+  const createdAt = pending?.created_at ? Date.parse(pending.created_at) : NaN;
+  if (!Number.isFinite(createdAt)) return false;
+  return Date.now() - createdAt > 1000 * 60 * 30;
+}
+
+function resolvePendingFollowupByKeywords(pending, text) {
+  const input = normalizeForIntent(text);
+  if (!input) return null;
+  const options = Array.isArray(pending?.options) ? pending.options : [];
+  for (const option of options) {
+    const keywords = Array.isArray(option?.keywords) ? option.keywords : [];
+    if (keywords.some((keyword) => {
+      const k = normalizeForIntent(keyword);
+      return k && (input === k || input.includes(k));
+    })) {
+      return String(option.id || '').trim() || null;
+    }
+  }
+  return null;
+}
+
+async function resolvePendingFollowupOption(pending, text) {
+  const direct = resolvePendingFollowupByKeywords(pending, text);
+  if (direct) return direct;
+  if (!isShortReplyForPending(text)) return null;
+
+  const options = Array.isArray(pending?.options) ? pending.options : [];
+  if (!options.length) return null;
+
+  const optionId = await routeStageWithAI({
+    branch: 'pending_followup',
+    stage: String(pending?.subtype || pending?.type || 'choice'),
+    text,
+    options
+  });
+  return optionId || null;
+}
+
+function buildPendingFollowupAction(pending, optionId) {
+  const sourceUserText = normalizeIncomingText(pending?.source_user_text || '');
+  if (!sourceUserText) return null;
+
+  if (pending?.subtype === 'legal_or_draft') {
+    if (optionId === 'legal_guidance') {
+      return {
+        route: 'legal_case',
+        text: `${sourceUserText}\n\nEl usuario quiere orientación legal y pasos concretos sobre este caso.`
+      };
+    }
+    if (optionId === 'draft_message') {
+      return {
+        route: 'casual',
+        text: `Ayúdame a redactar un mensaje o carta breve, clara y firme para este caso: ${sourceUserText}`
+      };
+    }
+  }
+
+  return null;
+}
+
+async function persistPendingFollowup(sessionId, ctx, pending) {
+  const branchContext = withPendingFollowup(ctx, pending);
+  return updateWspSession(sessionId, { branch_context: branchContext });
+}
+
+async function tryResolvePendingFollowup({ session, chatId, text, sessionName, payload }) {
+  const ctx = session?.branch_context || {};
+  const pending = getPendingFollowup(ctx);
+  if (!pending) return { handled: false, session };
+
+  if (isPendingFollowupExpired(pending)) {
+    const cleared = await updateWspSession(session.id, { branch_context: withPendingFollowup(ctx, null) });
+    return { handled: false, session: cleared || session };
+  }
+
+  const userText = normalizeIncomingText(text);
+  if (!userText) return { handled: false, session };
+
+  const optionId = await resolvePendingFollowupOption(pending, userText);
+  if (!optionId) {
+    if (isLikelyFreshUserTurn(userText)) {
+      const cleared = await updateWspSession(session.id, { branch_context: withPendingFollowup(ctx, null) });
+      return { handled: false, session: cleared || session };
+    }
+    if (isShortReplyForPending(userText)) {
+      await wahaSendText(chatId, pending.prompt || `¿Cuál opción prefieres?`, sessionName, { skipRewrite: true });
+      return { handled: true, session };
+    }
+    const cleared = await updateWspSession(session.id, { branch_context: withPendingFollowup(ctx, null) });
+    return { handled: false, session: cleared || session };
+  }
+
+  const action = buildPendingFollowupAction(pending, optionId);
+  const cleanedCtx = withPendingFollowup(ctx, null);
+  if (!action) {
+    const cleared = await updateWspSession(session.id, { branch_context: cleanedCtx });
+    return { handled: false, session: cleared || session };
+  }
+
+  if (action.route === 'legal_case') {
+    const nextSession = await updateWspSession(session.id, {
+      current_branch: 'asesor_legal',
+      branch_context: { ...cleanedCtx, stage: 'choose_mode' }
+    });
+    await handleAsesorLegal({ session: nextSession, chatId, text: action.text, sessionName, payload });
+    return { handled: true, session: nextSession };
+  }
+
+  if (action.route === 'casual') {
+    const nextSession = await returnSessionToCasual(session.id, cleanedCtx);
+    await handleCasualConversation({ session: nextSession, chatId, text: action.text, sessionName });
+    return { handled: true, session: nextSession };
+  }
+
+  const cleared = await updateWspSession(session.id, { branch_context: cleanedCtx });
+  return { handled: false, session: cleared || session };
+}
+
+function isShortLegalPreferenceReply(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  return (
+    t === 'legalmente' ||
+    t === 'legal' ||
+    t === 'juridicamente' ||
+    t === 'jurídicamente' ||
+    t === 'por la via legal' ||
+    t === 'por la vía legal' ||
+    t === 'los pasos legales' ||
+    t === 'pasos legales' ||
+    t === 'ayudame con los pasos legales' ||
+    t === 'ayúdame con los pasos legales' ||
+    t === 'quiero los pasos legales' ||
+    t === 'orientame legalmente' ||
+    t === 'oriéntame legalmente'
+  );
+}
+
+function lastGlobalTurnPair(history) {
+  const items = Array.isArray(history) ? history.filter(Boolean).slice(-8) : [];
+  for (let i = items.length - 1; i >= 1; i--) {
+    const assistant = items[i];
+    const user = items[i - 1];
+    if (assistant?.role === 'assistant' && user?.role === 'user') {
+      return { user, assistant };
+    }
+  }
+  return { user: null, assistant: null };
+}
+
+function assistantOfferedLegalPath(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  return (
+    t.includes('orient') && t.includes('legal') ||
+    t.includes('legalmente') ||
+    t.includes('pasos legales') ||
+    t.includes('que hacer legalmente') ||
+    t.includes('qué hacer legalmente') ||
+    t.includes('redactar una carta') ||
+    t.includes('prefieres que te oriente')
+  );
+}
+
+function buildLegalHandoffQuestion(history, currentText) {
+  const reply = normalizeIncomingText(currentText);
+  if (!isShortLegalPreferenceReply(reply)) return '';
+
+  const { user, assistant } = lastGlobalTurnPair(history);
+  const lastUserText = String(user?.content || '').trim();
+  const lastAssistantText = String(assistant?.content || '').trim();
+  if (!lastUserText || !lastAssistantText) return '';
+  if (!assistantOfferedLegalPath(lastAssistantText)) return '';
+  if (!shouldTreatAsCase(lastUserText) && !isLikelyLegalTopic(lastUserText)) return '';
+
+  return `${lastUserText}\n\nEl usuario quiere orientación legal y pasos concretos sobre este caso.`;
+}
+
+function detectCommonLegalScenario(question) {
+  const t = normalizeForIntent(question);
+  if (!t) return null;
+
+  const hasNeighborNoise =
+    (t.includes('vecino') || t.includes('vecina')) &&
+    (t.includes('ruido') || t.includes('ruidos') || t.includes('fiesta') || t.includes('fiestas') || t.includes('molesto') || t.includes('molestos'));
+  if (hasNeighborNoise) return 'neighbor_noise';
+
+  return null;
+}
+
+function buildCommonLegalScenarioFallback(question) {
+  const scenario = detectCommonLegalScenario(question);
+  if (scenario === 'neighbor_noise') {
+    return `Por lo que describes, esto sí puede abordarse por la vía legal como un problema de ruidos molestos y convivencia vecinal.\n\nLo más útil en estos casos suele ser:\n1. Reunir respaldo básico: fechas, horarios, audios, videos o testigos si los tienes.\n2. Revisar si tu comuna tiene ordenanza sobre ruidos molestos, porque muchas municipalidades regulan horarios y sanciones.\n3. Si vives en condominio o edificio, revisar también el reglamento de copropiedad y dejar constancia con administración o comité.\n4. Si el ruido ocurre de noche o en forma reiterada, puedes denunciar para que fiscalicen o dejen constancia según corresponda.\n\nSi quieres, te ayudo en dos caminos: te digo los pasos formales para denunciar o te ayudo a redactar un mensaje/carta para tu vecino.`;
+  }
+
+  return '';
 }
 
 async function appendGlobalHistory(sessionId, currentCtx, role, content) {
@@ -1517,6 +1888,8 @@ async function handleCasualConversation({ session, chatId, text, sessionName }) 
     answer = sanitizeWhatsAppText(answer);
   }
 
+  const pendingFollowup = buildPendingFollowupFromAssistant({ userText, assistantText: answer });
+
   let updatedAfterAssistant = null;
   try {
     updatedAfterAssistant = await appendGlobalHistory(session.id, freshCtx, 'assistant', answer);
@@ -1528,7 +1901,14 @@ async function handleCasualConversation({ session, chatId, text, sessionName }) 
     await wahaSendText(chatId, answer, sessionName, { skipRewrite: true });
   } catch (_) {}
 
-  return updatedAfterAssistant || session;
+  const latestSession = updatedAfterAssistant || session;
+  const latestCtx = latestSession?.branch_context || freshCtx;
+  try {
+    const nextSession = await persistPendingFollowup(session.id, latestCtx, pendingFollowup);
+    return nextSession || latestSession;
+  } catch (_) {
+    return latestSession;
+  }
 }
 
 async function getActiveLegalThread(sessionId) {
@@ -1733,6 +2113,9 @@ function expandLawQuery(query) {
   }
   if (t.includes('divorcio')) {
     expansions.push('matrimonio', 'alimentos', 'cuidado personal', 'relacion directa y regular');
+  }
+  if (t.includes('ruido') || t.includes('ruidos') || t.includes('fiesta') || t.includes('fiestas') || t.includes('vecino') || t.includes('vecina')) {
+    expansions.push('ruidos molestos', 'ordenanza municipal', 'municipalidad', 'convivencia vecinal', 'copropiedad', 'carabineros');
   }
   if (!expansions.length) return query;
   const merged = `${query} ${expansions.join(' ')}`.trim();
@@ -2314,6 +2697,9 @@ No uses Markdown.`
 }
 
 function buildLegalFallbackReply({ question, laws, documents }) {
+  const scenarioReply = buildCommonLegalScenarioFallback(question);
+  if (scenarioReply) return scenarioReply;
+
   const law = Array.isArray(laws) && laws.length ? laws[0] : null;
   const doc = Array.isArray(documents) && documents.length ? documents[0] : null;
   const lawText = law
@@ -2551,6 +2937,7 @@ async function handleAsesorLegal({ session, chatId, text, sessionName, payload }
   const textTrim = normalizeIncomingText(text);
   const textLower = normalizeForIntent(textTrim);
   const media = extractMediaFromPayload(payload);
+  const { history: globalHistory } = getGlobalState(ctx);
 
   if (isMenuTrigger(textLower)) {
     if (ctx.thread_id) {
@@ -2639,10 +3026,12 @@ async function handleAsesorLegal({ session, chatId, text, sessionName, payload }
 
   const wantsDocumentLegalAnswer = isLikelyLegalDocumentQuestion(textTrim);
   const isBranchReentry = isLegalBranchReentryPhrase(textTrim);
+  const legalHandoffQuestion = buildLegalHandoffQuestion(globalHistory, textTrim);
+  const effectiveQuestion = legalHandoffQuestion || textTrim;
   const wantsFreeLegalAnswer =
     ctx.stage === 'case_collect' ||
     ctx.stage === 'case_active' ||
-    (textTrim.length >= 18 && shouldTreatAsCase(textTrim));
+    (effectiveQuestion.length >= 18 && shouldTreatAsCase(effectiveQuestion));
 
   if (isBranchReentry && !uploadedDocuments.length) {
     await updateWspSession(session.id, {
@@ -2667,7 +3056,7 @@ async function handleAsesorLegal({ session, chatId, text, sessionName, payload }
       threadId,
       chatId,
       sessionName,
-      question: textTrim,
+      question: effectiveQuestion,
       uploadedDocuments
     });
     if (answered) return;
@@ -6079,7 +6468,7 @@ async function enterBranch(session, chatId, sessionName, branch) {
   if (branch === 'legal') {
     await updateWspSession(session.id, {
       current_branch: 'asesor_legal',
-      branch_context: { stage: 'choose_mode' }
+      branch_context: { ...(session.branch_context || {}), stage: 'choose_mode' }
     });
     await wahaSendText(
       chatId,
@@ -7490,6 +7879,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
 
   const textTrim = normalizeIncomingText(body);
   const textLower = normalizeForIntent(textTrim);
+  const media = extractMediaFromPayload(payload);
   const explicitIntent = detectIntentRuleBased(textTrim);
 
   if (isMenuTrigger(textLower)) {
@@ -7634,6 +8024,12 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     }
   }
 
+  if (!media?.url && (!session.current_branch || session.current_branch === 'casual')) {
+    const pendingResult = await tryResolvePendingFollowup({ session, chatId, text: textTrim, sessionName, payload });
+    if (pendingResult.handled) return;
+    session = pendingResult.session || session;
+  }
+
   if (session.current_branch && explicitIntent.intent === 'list_groups' && session.current_branch !== 'listar_grupos') {
     await enterBranch(session, chatId, sessionName, 'list_groups');
     return;
@@ -7679,7 +8075,6 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
     return;
   }
 
-  const media = extractMediaFromPayload(payload);
   if (media?.url) {
     if (!hasDrive) {
       await updateWspSession(session.id, { current_branch: 'await_drive', branch_context: {} });
@@ -7861,7 +8256,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   }
 
   if (intent.intent === 'legal') {
-    session = await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'choose_mode' } });
+    session = await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...(session.branch_context || {}), stage: 'choose_mode' } });
     await handleAsesorLegal({ session, chatId, text: textTrim, sessionName, payload });
     return;
   }
@@ -7925,7 +8320,7 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   }
 
   if (intent.intent === 'unknown' && (isLikelyLegalTopic(textTrim) || isLikelyLawSearch(textTrim))) {
-    session = await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { stage: 'choose_mode' } });
+    session = await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...(session.branch_context || {}), stage: 'choose_mode' } });
     await handleAsesorLegal({ session, chatId, text: textTrim, sessionName, payload });
     return;
   }

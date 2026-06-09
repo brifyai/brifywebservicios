@@ -12,16 +12,49 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey
 
 const ADMIN_SECRET = process.env.BRIFY_ADMIN_SECRET || '';
 
-const GEMINI_API_KEY =
-  process.env.GEMINI_API_KEY ||
-  process.env.REACT_APP_GEMINI_API_KEY ||
-  process.env.REACT_APP_GOOGLE_GEMINI_API_KEY ||
-  process.env.GOOGLE_GEMINI_API_KEY ||
+const OPENAI_API_KEY =
+  process.env.OPENAI_API_KEY ||
+  process.env.REACT_APP_OPENAI_API_KEY ||
   '';
-const GEMINI_EMBEDDINGS_MODEL =
-  process.env.GEMINI_EMBEDDINGS_MODEL ||
-  process.env.REACT_APP_GEMINI_EMBEDDINGS_MODEL ||
-  'text-embedding-004';
+const EMBEDDINGS_API_KEY =
+  process.env.EMBEDDINGS_API_KEY ||
+  process.env.REACT_APP_EMBEDDINGS_API_KEY ||
+  process.env.OPENROUTER_API_KEY ||
+  process.env.REACT_APP_OPENROUTER_API_KEY ||
+  OPENAI_API_KEY;
+const EMBEDDINGS_BASE_URL =
+  process.env.EMBEDDINGS_BASE_URL ||
+  process.env.REACT_APP_EMBEDDINGS_BASE_URL ||
+  process.env.OPENROUTER_BASE_URL ||
+  process.env.REACT_APP_OPENROUTER_BASE_URL ||
+  process.env.OPENAI_BASE_URL ||
+  process.env.REACT_APP_OPENAI_BASE_URL ||
+  'https://openrouter.ai/api/v1';
+const EMBEDDINGS_MODEL =
+  process.env.EMBEDDINGS_MODEL ||
+  process.env.REACT_APP_EMBEDDINGS_MODEL ||
+  process.env.OPENAI_EMBEDDINGS_MODEL ||
+  process.env.REACT_APP_OPENAI_EMBEDDINGS_MODEL ||
+  'nvidia/llama-nemotron-embed-1b-v2';
+const EMBEDDINGS_DIMENSIONS = Number(
+  process.env.EMBEDDINGS_DIMENSIONS ||
+    process.env.REACT_APP_EMBEDDINGS_DIMENSIONS ||
+    process.env.OPENAI_EMBEDDINGS_DIMENSIONS ||
+    process.env.REACT_APP_OPENAI_EMBEDDINGS_DIMENSIONS ||
+    '768'
+);
+const EMBEDDINGS_HTTP_REFERER =
+  process.env.EMBEDDINGS_HTTP_REFERER ||
+  process.env.REACT_APP_EMBEDDINGS_HTTP_REFERER ||
+  process.env.OPENROUTER_HTTP_REFERER ||
+  process.env.REACT_APP_OPENROUTER_HTTP_REFERER ||
+  '';
+const EMBEDDINGS_APP_TITLE =
+  process.env.EMBEDDINGS_APP_TITLE ||
+  process.env.REACT_APP_EMBEDDINGS_APP_TITLE ||
+  process.env.OPENROUTER_APP_TITLE ||
+  process.env.REACT_APP_OPENROUTER_APP_TITLE ||
+  'Brify';
 
 const TIMEOUT_MS = Number(process.env.WAHA_EMBEDDINGS_TIMEOUT_MS || '15000');
 const MAX_CHUNKS = Number(process.env.WAHA_EMBEDDINGS_MAX_CHUNKS || '24');
@@ -45,45 +78,71 @@ function normalizeEmbeddingTo768(vec) {
   return new Array(768).fill(0);
 }
 
+function shouldSendEmbeddingDimensions(modelName, baseUrl) {
+  const model = String(modelName || '').trim().toLowerCase();
+  const url = String(baseUrl || '').trim().toLowerCase();
+  return Boolean(
+    model &&
+    Number.isFinite(EMBEDDINGS_DIMENSIONS) &&
+    EMBEDDINGS_DIMENSIONS > 0 &&
+    (
+      /^text-embedding-3-/i.test(model) ||
+      model.includes('nvidia/llama-nemotron-embed-1b-v2') ||
+      url.includes('openrouter.ai')
+    )
+  );
+}
+
+function resolveEmbeddingInputType(embedType) {
+  const normalized = String(embedType || '').trim().toLowerCase();
+  if (normalized === 'query') return 'search_query';
+  return 'search_document';
+}
+
 async function minimaxEmbedTexts(texts, embedType = 'db') {
-  void embedType;
-  if (!GEMINI_API_KEY) return null;
+  if (!EMBEDDINGS_API_KEY) return null;
   const inputs = Array.isArray(texts) ? texts.map((t) => String(t || '').trim()).filter(Boolean) : [];
   if (!inputs.length) return null;
-
-  const { GoogleGenerativeAI } = require('@google/generative-ai');
-  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: GEMINI_EMBEDDINGS_MODEL });
 
   const out = [];
   const timeoutMs = Number.isFinite(TIMEOUT_MS) && TIMEOUT_MS > 0 ? TIMEOUT_MS : 15000;
 
   for (const input of inputs) {
-    const embedCall = async () => {
-      try {
-        return await model.embedContent({
-          content: { parts: [{ text: input }] },
-          taskType: 'RETRIEVAL_DOCUMENT'
-        });
-      } catch (_) {
-        try {
-          return await model.embedContent(input);
-        } catch (__) {
-          try {
-            return await model.embedContent({ content: input });
-          } catch (___) {
-            return null;
-          }
-        }
-      }
+    const body = {
+      model: EMBEDDINGS_MODEL,
+      input,
+      encoding_format: 'float'
     };
+    if (shouldSendEmbeddingDimensions(EMBEDDINGS_MODEL, EMBEDDINGS_BASE_URL)) {
+      body.dimensions = EMBEDDINGS_DIMENSIONS;
+    }
+    const inputType = resolveEmbeddingInputType(embedType);
+    if (inputType) body.input_type = inputType;
+
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${EMBEDDINGS_API_KEY}`
+    };
+    if (String(EMBEDDINGS_BASE_URL || '').toLowerCase().includes('openrouter.ai')) {
+      if (EMBEDDINGS_HTTP_REFERER) headers['HTTP-Referer'] = EMBEDDINGS_HTTP_REFERER;
+      if (EMBEDDINGS_APP_TITLE) headers['X-Title'] = EMBEDDINGS_APP_TITLE;
+    }
 
     const result = await Promise.race([
-      embedCall(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini embeddings timeout')), timeoutMs))
+      fetchWithTimeout(
+        `${String(EMBEDDINGS_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '')}/embeddings`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body)
+        },
+        timeoutMs
+      ),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Embeddings timeout')), timeoutMs))
     ]).catch(() => null);
-
-    const values = result?.embedding?.values;
+    if (!result?.ok) return null;
+    const data = await result.json().catch(() => null);
+    const values = Array.isArray(data?.data) && Array.isArray(data.data[0]?.embedding) ? data.data[0].embedding : null;
     if (!Array.isArray(values)) return null;
     out.push(normalizeEmbeddingTo768(values));
   }
