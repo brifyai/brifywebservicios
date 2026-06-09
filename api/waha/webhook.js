@@ -933,6 +933,67 @@ function extractDocumentReferenceName(text) {
   return null;
 }
 
+function extractDocumentContainerName(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const patterns = [
+    /\b(?:en|de|del)\s+la\s+carpeta\s+([^,.\n]+?)(?:\s+(?:por|para|y|que|del|de la|de el|con)\b|$)/i,
+    /\b(?:en|de|del)\s+el\s+grupo\s+([^,.\n]+?)(?:\s+(?:por|para|y|que|del|de la|de el|con)\b|$)/i,
+    /\bcarpeta\s+([^,.\n]+?)(?:\s+(?:por|para|y|que|del|de la|de el|con)\b|$)/i
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    const candidate = cleanDocumentNameCandidate(match?.[1]);
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+function extractAnalysisDocumentHint(text) {
+  const direct = extractDocumentReferenceName(text);
+  if (direct) return direct;
+
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const patterns = [
+    /(?:analiza|analizar|revisa|revisar|interpretar|resumir|resume|opinion|opinión|opina|dame tu opinion|dame tu opinión)\s+(?:el|la|mi)?\s*(contrato|acuerdo|anexo|demanda|escrito|pdf|documento|archivo)\b/i,
+    /\b(?:sobre|del|de la|de el)\s+(contrato|acuerdo|anexo|demanda|escrito)\b/i
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    const candidate = cleanDocumentNameCandidate(match?.[1]);
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+function isLikelyDocumentAnalysisRequest(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  const hasAnalysisVerb =
+    t.includes('analiza') ||
+    t.includes('analizar') ||
+    t.includes('revisa') ||
+    t.includes('revisar') ||
+    t.includes('interpret') ||
+    t.includes('resumir') ||
+    t.includes('resume') ||
+    t.includes('opinion') ||
+    t.includes('opinión') ||
+    t.includes('opina');
+  if (!hasAnalysisVerb) return false;
+
+  const hasDocHint =
+    t.includes('document') ||
+    t.includes('archivo') ||
+    t.includes('pdf') ||
+    t.includes('drive') ||
+    t.includes('carpeta') ||
+    t.includes('contrato') ||
+    Boolean(extractAnalysisDocumentHint(text));
+  return hasDocHint;
+}
+
 function sanitizeSearchFragment(text) {
   return String(text || '')
     .replace(/[%_]/g, ' ')
@@ -1165,6 +1226,9 @@ function detectIntentRuleBased(text) {
     if (n >= 1 && n <= 6) return { intent: `menu_${n}`, confidence: 1 };
   }
 
+  if (isLikelyDocumentAnalysisRequest(text)) {
+    return { intent: 'analyze_document', confidence: 0.82 };
+  }
   if (t.includes('asesor') || t.includes('abogad') || t.includes('legal') || t.includes('ley') || t.includes('demanda') || t.includes('contrato')) {
     return { intent: 'legal', confidence: 0.8 };
   }
@@ -6402,56 +6466,14 @@ Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de 
       await wahaSendText(chatId, `Elige un número válido 🙌`, sessionName);
       return;
     }
-
-    const textContent = await getDriveFileText({ userId: session.user_id, fileId: picked.id, mimeType: picked.mimeType });
-    if (!textContent) {
-      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
-      await wahaSendText(chatId, `Aún no puedo analizar ese tipo de archivo por WhatsApp 😕\n\nAbre el documento aquí y analízalo desde la web:\n${picked.webViewLink}\n\n¿Algo más? Escribe "menú" 🙌`, sessionName);
-      return;
-    }
-
-    let analysis = '';
-    if (MINIMAX_API_KEY) {
-      const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
-No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
-Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) preguntas de aclaración si aplica.`;
-      try {
-        const response = await fetchWithTimeout(
-          MINIMAX_ENDPOINT,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${MINIMAX_API_KEY}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model: MINIMAX_MODEL,
-              system,
-              temperature: 0.4,
-              max_tokens: 900,
-              messages: [{ role: 'user', content: `Documento:\n${textContent.slice(0, 12000)}\n\nAnaliza:` }]
-            })
-          },
-          Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
-        );
-        if (response.ok) {
-          const data = await response.json().catch(() => ({}));
-          let raw = data?.content;
-          if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
-          if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
-          analysis = typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
-        }
-      } catch (_) {
-        analysis = '';
-      }
-    }
-
-    if (!analysis) {
-      analysis = `✅ Puedo abrir el documento, pero ahora mismo no pude generar el análisis automático.\n\nLink: ${picked.webViewLink}\n\n¿Quieres intentar de nuevo o analizar otro? Escribe "analizar" 🙌`;
-    }
-
     await updateWspSession(session.id, { current_branch: null, branch_context: {} });
-    await wahaSendText(chatId, analysis, sessionName);
+    await analyzeDocumentFileAndReply({
+      session,
+      chatId,
+      sessionName,
+      question: ctx.analysis_question || textTrim || `Analiza ${picked.name || 'este documento'}`,
+      file: picked
+    });
     return;
   }
 }
@@ -7141,6 +7163,235 @@ async function loadUserDocsByFileIds({ userId, fileIds }) {
       metadata: doc?.metadata || {},
       created_at: doc?.created_at || null
     }));
+}
+
+function mapStoredDocToAnalysisFile(doc) {
+  const metadata = doc?.metadata && typeof doc.metadata === 'object' ? doc.metadata : {};
+  const mimeType = metadata.mime_type || metadata.file_type || metadata.mimetype || null;
+  return {
+    id: doc?.fileId || doc?.file_id || null,
+    name: doc?.name || '',
+    mimeType,
+    webViewLink: metadata.webViewLink || metadata.web_view_link || driveOpenLink(doc?.fileId || doc?.file_id || '')
+  };
+}
+
+async function generateDocumentAnalysisReply({ question, fileName, textContent, webViewLink }) {
+  const cleanQuestion = normalizeIncomingText(question);
+  const content = normalizeExtractedText(textContent);
+  if (!content) return '';
+
+  if (MINIMAX_API_KEY) {
+    const system = `Eres un analista de documentos en WhatsApp para Brify. Responde en español, claro y útil.
+No uses Markdown (sin asteriscos, sin guiones como viñetas, sin líneas separadoras). Si haces lista, usa emojis.
+Si el usuario pidió opinión, además del resumen indica observaciones prácticas, riesgos o puntos sensibles.
+Entrega: 1) resumen, 2) puntos clave, 3) riesgos/observaciones, 4) pasos o preguntas de seguimiento si aplica.`;
+    try {
+      const response = await fetchWithTimeout(
+        MINIMAX_ENDPOINT,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${MINIMAX_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: MINIMAX_MODEL,
+            system,
+            temperature: 0.35,
+            max_tokens: 900,
+            messages: [
+              {
+                role: 'user',
+                content: `Documento: ${String(fileName || 'Documento').trim()}\n\nConsulta del usuario:\n${cleanQuestion || 'Analiza este documento'}\n\nContenido:\n${content.slice(0, 14000)}\n\nAnaliza este documento y responde a la consulta del usuario:`
+              }
+            ]
+          })
+        },
+        Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 9000
+      );
+      if (response.ok) {
+        const data = await response.json().catch(() => ({}));
+        let raw = data?.content;
+        if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+        if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+        const cleaned = typeof raw === 'string' ? sanitizeWhatsAppText(raw) : '';
+        if (cleaned) return cleaned;
+      }
+    } catch (_) {}
+  }
+
+  const excerpt = extractRelevantDocExcerpt(content, cleanQuestion, 420) || content.slice(0, 420);
+  if (!excerpt) {
+    return `Encontré el documento${fileName ? ` "${fileName}"` : ''}, pero no alcancé a extraer contenido suficiente para darte una opinión confiable${webViewLink ? `.\n\nLink: ${webViewLink}` : '.'}`;
+  }
+  return `Revisé ${fileName ? `"${fileName}"` : 'el documento'} y esto es lo más relevante que encontré: ${excerpt}${excerpt.length >= 400 ? '…' : ''}${webViewLink ? `\n\nLink: ${webViewLink}` : ''}`;
+}
+
+async function analyzeDocumentFileAndReply({ session, chatId, sessionName, question, file }) {
+  const fileId = String(file?.id || '').trim();
+  if (!fileId) return false;
+
+  const extracted = await extractDriveFileTextAdvanced({
+    userId: session.user_id,
+    fileId,
+    mimeType: file?.mimeType || null,
+    fileName: file?.name || null
+  }).catch(() => null);
+
+  const textContent = normalizeExtractedText(extracted?.text || '');
+  if (!textContent) {
+    const openLink = file?.webViewLink || driveOpenLink(fileId);
+    await wahaSendText(
+      chatId,
+      `Encontré ${file?.name ? `"${file.name}"` : 'el documento'}, pero todavía no pude extraer texto suficiente para analizarlo por WhatsApp 😕\n\n${openLink ? `Puedes abrirlo aquí:\n${openLink}\n\n` : ''}Si quieres, súbelo o compárteme el archivo y lo revisamos por esa vía.`,
+      sessionName
+    );
+    return true;
+  }
+
+  const analysis = await generateDocumentAnalysisReply({
+    question,
+    fileName: file?.name || 'Documento',
+    textContent,
+    webViewLink: file?.webViewLink || driveOpenLink(fileId)
+  });
+  if (!analysis) return false;
+
+  await wahaSendText(chatId, analysis, sessionName, { skipRewrite: true });
+  return true;
+}
+
+async function handleExistingDriveDocumentAnalysisQuery({ session, chatId, text, sessionName }) {
+  const question = normalizeIncomingText(text);
+  if (!question || !isLikelyDocumentAnalysisRequest(question)) return false;
+
+  const documentHint = extractAnalysisDocumentHint(question);
+  const containerHint = extractDocumentContainerName(question);
+
+  let candidates = [];
+  if (documentHint) {
+    const named = await findUserDocumentsByNameHint({ userId: session.user_id, nameHint: documentHint, limit: 5 });
+    candidates.push(...named);
+  }
+
+  if (!candidates.length || !documentHint) {
+    const semantic = await semanticSearchUserDocs({ userId: session.user_id, query: question, limit: 5 });
+    if (semantic.length) {
+      const loaded = await loadUserDocsByFileIds({ userId: session.user_id, fileIds: semantic.map((item) => item.fileId) });
+      candidates.push(...loaded);
+    }
+  }
+
+  let uniqueCandidates = Array.from(
+    new Map(
+      candidates
+        .filter((doc) => doc?.fileId || doc?.file_id)
+        .map((doc) => [String(doc.fileId || doc.file_id), doc])
+    ).values()
+  );
+
+  if (containerHint && uniqueCandidates.length) {
+    const normalizedContainer = normalizeForIntent(containerHint);
+    const filtered = uniqueCandidates.filter((doc) => {
+      const metadata = doc?.metadata && typeof doc.metadata === 'object' ? doc.metadata : {};
+      const folderName = normalizeForIntent(metadata.nombre_carpeta_actual || metadata.folder_name || metadata.group_name || '');
+      return folderName && folderName.includes(normalizedContainer);
+    });
+    if (filtered.length) uniqueCandidates = filtered;
+  }
+
+  if (!uniqueCandidates.length && containerHint) {
+    const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+    const groups = await listUserGroupsByEmail(user?.email);
+    const pickedGroup = findGroupByName(groups, containerHint);
+    if (pickedGroup?.folder_id) {
+      const driveFiles = await listDriveFiles({
+        userId: session.user_id,
+        folderId: pickedGroup.folder_id,
+        kind: 'docs',
+        nameContains: documentHint || null,
+        pageSize: 8
+      }).catch(() => []);
+      if (driveFiles.length === 1) {
+        return await analyzeDocumentFileAndReply({
+          session,
+          chatId,
+          sessionName,
+          question,
+          file: driveFiles[0]
+        });
+      }
+      if (driveFiles.length > 1) {
+        const lines = driveFiles.map((f, idx) => `${idx + 1}️⃣ 📄 ${f.name}`);
+        await updateWspSession(session.id, {
+          current_branch: 'analizar_documento',
+          branch_context: { stage: 'pick_file_select', files: driveFiles, analysis_question: question }
+        });
+        await wahaSendText(chatId, `Encontré varios documentos en "${pickedGroup.group_name}" 👇\n\n${lines.join('\n')}\n\nEscribe el número del que quieres analizar.`, sessionName);
+        return true;
+      }
+    }
+  }
+
+  if (!uniqueCandidates.length && documentHint) {
+    const { data: user } = await supabase.from('users').select('email').eq('id', session.user_id).single();
+    const rootFolderId = await resolveRootFolderIdForUser(user?.email, session.user_id, session.phone_number, { sessionId: session.id }).catch(() => null);
+    if (rootFolderId) {
+      const driveFiles = await listDriveFiles({
+        userId: session.user_id,
+        folderId: rootFolderId,
+        kind: 'docs',
+        nameContains: documentHint,
+        pageSize: 8
+      }).catch(() => []);
+      if (driveFiles.length === 1) {
+        return await analyzeDocumentFileAndReply({
+          session,
+          chatId,
+          sessionName,
+          question,
+          file: driveFiles[0]
+        });
+      }
+      if (driveFiles.length > 1) {
+        const lines = driveFiles.map((f, idx) => `${idx + 1}️⃣ 📄 ${f.name}`);
+        await updateWspSession(session.id, {
+          current_branch: 'analizar_documento',
+          branch_context: { stage: 'pick_file_select', files: driveFiles, analysis_question: question }
+        });
+        await wahaSendText(chatId, `Encontré varios documentos en tu carpeta raíz que podrían calzar 👇\n\n${lines.join('\n')}\n\nEscribe el número del que quieres analizar.`, sessionName);
+        return true;
+      }
+    }
+  }
+
+  if (!uniqueCandidates.length) {
+    const notFoundReply = documentHint
+      ? `No encontré un documento claro que coincida con "${documentHint}"${containerHint ? ` en "${containerHint}"` : ''} 😕\n\nSi quieres, dime el nombre exacto, indícame mejor la carpeta o adjunta el archivo y lo analizo.`
+      : `No pude identificar con claridad qué documento del Drive quieres que analice 😕\n\nSi quieres, dime el nombre exacto del archivo, la carpeta/grupo donde está o adjúntalo aquí.`;
+    await wahaSendText(chatId, notFoundReply, sessionName, { skipRewrite: true });
+    return true;
+  }
+
+  const mappedFiles = uniqueCandidates.map(mapStoredDocToAnalysisFile).filter((file) => file.id && file.name);
+  if (mappedFiles.length === 1) {
+    return await analyzeDocumentFileAndReply({
+      session,
+      chatId,
+      sessionName,
+      question,
+      file: mappedFiles[0]
+    });
+  }
+
+  const lines = mappedFiles.slice(0, 8).map((f, idx) => `${idx + 1}️⃣ 📄 ${f.name}`);
+  await updateWspSession(session.id, {
+    current_branch: 'analizar_documento',
+    branch_context: { stage: 'pick_file_select', files: mappedFiles.slice(0, 8), analysis_question: question }
+  });
+  await wahaSendText(chatId, `Encontré varios documentos que podrían calzar con lo que pides 👇\n\n${lines.join('\n')}\n\nEscribe el número del que quieres analizar.`, sessionName);
+  return true;
 }
 
 async function minimaxAnswerFromUserDocs({ question, documents, preferredDocumentName }) {
@@ -8022,6 +8273,16 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
       }
       return;
     }
+  }
+
+  if (!media?.url && (!session.current_branch || session.current_branch === 'casual') && isLikelyDocumentAnalysisRequest(textTrim)) {
+    const handledExistingDriveAnalysis = await handleExistingDriveDocumentAnalysisQuery({
+      session,
+      chatId,
+      text: textTrim,
+      sessionName
+    });
+    if (handledExistingDriveAnalysis) return;
   }
 
   if (!media?.url && (!session.current_branch || session.current_branch === 'casual')) {

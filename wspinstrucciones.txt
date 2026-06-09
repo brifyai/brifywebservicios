@@ -169,7 +169,7 @@ Flujo:
 Flujo conversacional por pasos:
 1. "¡Vamos a crear tu documento! ✍️ ¿Qué tipo de documento necesitas?
 
-   1️⃣ 📋 Desde plantilla predefinida
+   1️⃣ 📋 Desde plantilla predefinida 
    2️⃣ 📝 Documento en blanco personalizado"
 
 ### Opción Plantilla:
