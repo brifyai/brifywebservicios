@@ -1,8 +1,11 @@
 const crypto = require('crypto');
+const fs = require('fs/promises');
+const path = require('path');
 const { Readable } = require('stream');
+const JSZip = require('jszip');
 const { createClient } = require('@supabase/supabase-js');
 const { google } = require('googleapis');
-const { plantillas, MapeoDeClaves } = require('../wspTemplates');
+const { plantillas: basePlantillas, MapeoDeClaves: baseMapeoDeClaves } = require('../wspTemplates');
 
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseServiceKey =
@@ -720,7 +723,827 @@ function isExplicitCreateGroupRequest(text) {
 function isCreateDocumentTrigger(textLower) {
   if (!textLower) return false;
   if (textLower === '6') return false;
-  return textLower.includes('crear documento') || textLower.includes('crear doc') || textLower.includes('documento');
+  return isLikelyCreateDocumentRequest(textLower);
+}
+
+const ADDITIONAL_CREATE_DOCUMENT_TEMPLATES = {
+  contrato_trabajo: {
+    nombre: 'Contrato de Trabajo',
+    variables_requeridas: [
+      'Razón Social Empleador',
+      'RUT Empleador',
+      'Domicilio Empleador',
+      'Representante Legal',
+      'Nombre Trabajador',
+      'RUT Trabajador',
+      'Domicilio Trabajador',
+      'Nacionalidad Trabajador',
+      'Estado Civil Trabajador',
+      'Cargo o Puesto',
+      'Descripción de Funciones',
+      'Lugar de Trabajo',
+      'Departamento o Área',
+      'Tipo de Contrato',
+      'Fecha de Inicio',
+      'Fecha de Término (si aplica)',
+      'Sueldo Base Mensual',
+      'Tipo de Gratificación',
+      'Otros Beneficios o Bonos',
+      'Forma de Pago',
+      'Fecha de Pago',
+      'Horas semanales',
+      'Horario',
+      'Distribución de la Jornada',
+      'Período de Prueba',
+      'Cláusulas Adicionales'
+    ],
+    contenido: `__TITULO_PRINCIPAL__CONTRATO INDIVIDUAL DE TRABAJO
+
+Empleador: {{razon_social_empleador}}
+RUT Empleador: {{rut_empleador}}
+Domicilio Empleador: {{domicilio_empleador}}
+Representante Legal: {{representante_legal}}
+
+Trabajador: {{nombre_trabajador}}
+RUT Trabajador: {{rut_trabajador}}
+Domicilio Trabajador: {{domicilio_trabajador}}
+Nacionalidad: {{nacionalidad_trabajador}}
+Estado Civil: {{estado_civil_trabajador}}
+
+Cargo: {{cargo_puesto}}
+Funciones: {{descripcion_funciones}}
+Lugar de Trabajo: {{lugar_trabajo}}
+Departamento o Área: {{departamento_area}}
+Tipo de Contrato: {{tipo_contrato}}
+Fecha de Inicio: {{fecha_inicio}}
+Fecha de Término: {{fecha_termino_aplica}}
+
+Sueldo Base Mensual: {{sueldo_base_mensual}}
+Gratificación: {{tipo_gratificacion}}
+Otros Beneficios o Bonos: {{otros_beneficios_bonos}}
+Forma de Pago: {{forma_pago}}
+Fecha de Pago: {{fecha_pago}}
+
+Horas semanales: {{horas_semanales}}
+Horario: {{horario_trabajo}}
+Distribución de la Jornada: {{distribucion_jornada}}
+Período de Prueba: {{periodo_prueba}}
+Cláusulas Adicionales: {{clausulas_adicionales}}`
+  },
+  declaracion_jurada_simple: {
+    nombre: 'Declaración Jurada Simple',
+    variables_requeridas: [
+      'Nombre Declarante',
+      'RUT Declarante',
+      'Domicilio Declarante',
+      'Contacto Declarante',
+      'Texto de la Declaración',
+      'Propósito o Destino',
+      'Institución Receptora',
+      'Documento Respaldo 1',
+      'Documento Respaldo 2',
+      'Documento Respaldo 3',
+      'Ciudad Firma',
+      'Día Firma',
+      'Mes Firma',
+      'Año Firma'
+    ],
+    contenido: `__TITULO_PRINCIPAL__DECLARACION JURADA SIMPLE
+
+Declarante: {{nombre_declarante}}
+RUT: {{rut_declarante}}
+Domicilio: {{domicilio_declarante}}
+Contacto: {{contacto_declarante}}
+
+Declaración:
+{{texto_declaracion}}
+
+Propósito o Destino: {{proposito_destino}}
+Institución Receptora: {{institucion_receptora}}
+
+Documento Respaldo 1: {{documento_respaldo_1}}
+Documento Respaldo 2: {{documento_respaldo_2}}
+Documento Respaldo 3: {{documento_respaldo_3}}
+
+Firmado en {{ciudad_firma}}, a {{dia_firma}} días del mes de {{mes_firma}} del año {{anio_firma}}.`
+  },
+  liquidacion_sueldo: {
+    nombre: 'Liquidación de Sueldo',
+    variables_requeridas: [
+      'Razón Social Empleador',
+      'RUT Empleador',
+      'Dirección Empleador',
+      'Nombre Trabajador',
+      'RUT Trabajador',
+      'Cargo Trabajador',
+      'Departamento Trabajador',
+      'Período de Remuneración',
+      'Fecha de Pago',
+      'Sueldo Base Imponible',
+      'Horas Extra Imponible',
+      'Gratificación Legal Imponible',
+      'Bono Asistencia Imponible',
+      'Bono Movilización No Imponible',
+      'Bono Colación No Imponible',
+      'Otros Haberes Imponible',
+      'Otros Haberes No Imponible',
+      'AFP',
+      'Salud',
+      'Seguro Cesantía',
+      'Impuesto Único',
+      'Otros Descuentos',
+      'Líquido a Pagar'
+    ],
+    contenido: `__TITULO_PRINCIPAL__LIQUIDACION DE SUELDO
+
+Razón Social Empleador: {{razon_social_empresa}}
+RUT Empleador: {{rut_empleador}}
+Dirección Empleador: {{direccion_empleador}}
+
+Nombre Trabajador: {{nombre_trabajador}}
+RUT Trabajador: {{rut_trabajador}}
+Cargo Trabajador: {{cargo_trabajador}}
+Departamento Trabajador: {{departamento_trabajador}}
+Período de Remuneración: {{periodo_remuneracion}}
+Fecha de Pago: {{fecha_pago}}
+
+Sueldo Base Imponible: {{sueldo_base_imponible}}
+Horas Extra Imponible: {{horas_extra_imponible}}
+Gratificación Legal Imponible: {{gratificacion_legal_imponible}}
+Bono Asistencia Imponible: {{bono_asistencia_imponible}}
+Bono Movilización No Imponible: {{bono_movilizacion_no_imponible}}
+Bono Colación No Imponible: {{bono_colacion_no_imponible}}
+Otros Haberes Imponible: {{otros_haberes_imponible}}
+Otros Haberes No Imponible: {{otros_haberes_no_imponible}}
+
+AFP: {{afp_descuento}}
+Salud: {{salud_descuento}}
+Seguro Cesantía: {{seguro_cesantia_descuento}}
+Impuesto Único: {{impuesto_unico_descuento}}
+Otros Descuentos: {{otros_descuentos}}
+Líquido a Pagar: {{liquido_pagar}}`
+  },
+  carta_renuncia: {
+    nombre: 'Carta de Renuncia',
+    variables_requeridas: [
+      'Ciudad',
+      'Día Firma',
+      'Mes Firma',
+      'Año Firma',
+      'Nombre Trabajador',
+      'RUT Trabajador',
+      'Cargo Trabajador',
+      'Área o Departamento',
+      'Nombre Empleador o Representante',
+      'Cargo Destinatario',
+      'Empresa',
+      'Fecha Efectiva de Término',
+      'Días de Aviso Previo',
+      'Motivos de la Renuncia'
+    ],
+    contenido: `__TITULO_PRINCIPAL__CARTA DE RENUNCIA VOLUNTARIA
+
+Ciudad: {{ciudad}}
+Fecha: {{dia_firma}} de {{mes_firma}} de {{anio_firma}}
+
+Nombre Trabajador: {{nombre_trabajador}}
+RUT Trabajador: {{rut_trabajador}}
+Cargo Trabajador: {{cargo_trabajador}}
+Área o Departamento: {{area_departamento}}
+
+Destinatario: {{nombre_empleador_representante}}
+Cargo Destinatario: {{cargo_destinatario}}
+Empresa: {{empresa}}
+
+Fecha Efectiva de Término: {{fecha_efectiva_termino}}
+Días de Aviso Previo: {{dias_aviso_previo}}
+
+Motivos de la Renuncia:
+{{motivos_renuncia}}`
+  },
+  mandato_simple: {
+    nombre: 'Mandato Simple',
+    variables_requeridas: [
+      'Nombre Mandante',
+      'RUT Mandante',
+      'Domicilio Mandante',
+      'Contacto Mandante',
+      'Nombre Mandatario',
+      'RUT Mandatario',
+      'Domicilio Mandatario',
+      'Contacto Mandatario',
+      'Gestión 1',
+      'Gestión 2',
+      'Gestión 3',
+      'Nombre de la Entidad',
+      'Tipo de Entidad',
+      'Dirección de la Entidad',
+      'Monto Máximo Autorizado',
+      'Otras Facultades',
+      'Fecha de Inicio',
+      'Fecha de Expiración',
+      'Restricciones Específicas'
+    ],
+    contenido: `__TITULO_PRINCIPAL__MANDATO SIMPLE
+
+Mandante: {{nombre_mandante}}
+RUT Mandante: {{rut_mandante}}
+Domicilio Mandante: {{domicilio_mandante}}
+Contacto Mandante: {{contacto_mandante}}
+
+Mandatario: {{nombre_mandatario}}
+RUT Mandatario: {{rut_mandatario}}
+Domicilio Mandatario: {{domicilio_mandatario}}
+Contacto Mandatario: {{contacto_mandatario}}
+
+Gestión 1: {{gestion_1}}
+Gestión 2: {{gestion_2}}
+Gestión 3: {{gestion_3}}
+
+Nombre de la Entidad: {{nombre_entidad}}
+Tipo de Entidad: {{tipo_entidad}}
+Dirección de la Entidad: {{direccion_entidad}}
+Monto Máximo Autorizado: {{monto_maximo_autorizado}}
+Otras Facultades: {{otras_facultades}}
+Fecha de Inicio: {{fecha_inicio}}
+Fecha de Expiración: {{fecha_expiracion}}
+Restricciones Específicas: {{restricciones_especificas}}`
+  },
+  nda_confidencialidad: {
+    nombre: 'Acuerdo de Confidencialidad (NDA)',
+    variables_requeridas: [
+      'Nombre Parte Reveladora',
+      'RUT Parte Reveladora',
+      'Domicilio Parte Reveladora',
+      'Representante Legal Parte Reveladora',
+      'Correo Parte Reveladora',
+      'Nombre Parte Receptora',
+      'RUT Parte Receptora',
+      'Domicilio Parte Receptora',
+      'Representante Legal Parte Receptora',
+      'Correo Parte Receptora',
+      'Propósito o Proyecto Específico',
+      'Área o Industria',
+      'Descripción de Información Confidencial',
+      'Plazo de Vigencia',
+      'Ley o Jurisdicción Aplicable'
+    ],
+    contenido: `__TITULO_PRINCIPAL__ACUERDO DE CONFIDENCIALIDAD
+
+Parte Reveladora: {{nombre_parte_reveladora}}
+RUT Parte Reveladora: {{rut_parte_reveladora}}
+Domicilio Parte Reveladora: {{domicilio_parte_reveladora}}
+Representante Legal Parte Reveladora: {{representante_legal_parte_reveladora}}
+Correo Parte Reveladora: {{correo_parte_reveladora}}
+
+Parte Receptora: {{nombre_parte_receptora}}
+RUT Parte Receptora: {{rut_parte_receptora}}
+Domicilio Parte Receptora: {{domicilio_parte_receptora}}
+Representante Legal Parte Receptora: {{representante_legal_parte_receptora}}
+Correo Parte Receptora: {{correo_parte_receptora}}
+
+Propósito o Proyecto: {{proposito_proyecto_especifico}}
+Área o Industria: {{area_industria}}
+Descripción de Información Confidencial: {{descripcion_informacion_confidencial}}
+Plazo de Vigencia: {{plazo_vigencia_nda}}
+Ley o Jurisdicción Aplicable: {{ley_jurisdiccion_aplicable}}`
+  }
+};
+
+const ADDITIONAL_CREATE_DOCUMENT_KEY_MAP = {
+  'Razón Social Empleador': 'razon_social_empleador',
+  'Domicilio Empleador': 'domicilio_empleador',
+  'Representante Legal': 'representante_legal',
+  'Nacionalidad Trabajador': 'nacionalidad_trabajador',
+  'Estado Civil Trabajador': 'estado_civil_trabajador',
+  'Cargo o Puesto': 'cargo_puesto',
+  'Descripción de Funciones': 'descripcion_funciones',
+  'Lugar de Trabajo': 'lugar_trabajo',
+  'Departamento o Área': 'departamento_area',
+  'Tipo de Contrato': 'tipo_contrato',
+  'Fecha de Término (si aplica)': 'fecha_termino_aplica',
+  'Sueldo Base Mensual': 'sueldo_base_mensual',
+  'Tipo de Gratificación': 'tipo_gratificacion',
+  'Otros Beneficios o Bonos': 'otros_beneficios_bonos',
+  'Fecha de Pago': 'fecha_pago',
+  'Horas semanales': 'horas_semanales',
+  Horario: 'horario_trabajo',
+  'Distribución de la Jornada': 'distribucion_jornada',
+  'Período de Prueba': 'periodo_prueba',
+  'Cláusulas Adicionales': 'clausulas_adicionales',
+  'Nombre Declarante': 'nombre_declarante',
+  'RUT Declarante': 'rut_declarante',
+  'Domicilio Declarante': 'domicilio_declarante',
+  'Contacto Declarante': 'contacto_declarante',
+  'Texto de la Declaración': 'texto_declaracion',
+  'Propósito o Destino': 'proposito_destino',
+  'Institución Receptora': 'institucion_receptora',
+  'Documento Respaldo 1': 'documento_respaldo_1',
+  'Documento Respaldo 2': 'documento_respaldo_2',
+  'Documento Respaldo 3': 'documento_respaldo_3',
+  'Ciudad Firma': 'ciudad_firma',
+  'Día Firma': 'dia_firma',
+  'Mes Firma': 'mes_firma',
+  'Año Firma': 'anio_firma',
+  'Dirección Empleador': 'direccion_empleador',
+  'Cargo Trabajador': 'cargo_trabajador',
+  'Departamento Trabajador': 'departamento_trabajador',
+  'Período de Remuneración': 'periodo_remuneracion',
+  'Sueldo Base Imponible': 'sueldo_base_imponible',
+  'Horas Extra Imponible': 'horas_extra_imponible',
+  'Gratificación Legal Imponible': 'gratificacion_legal_imponible',
+  'Bono Asistencia Imponible': 'bono_asistencia_imponible',
+  'Bono Movilización No Imponible': 'bono_movilizacion_no_imponible',
+  'Bono Colación No Imponible': 'bono_colacion_no_imponible',
+  'Otros Haberes Imponible': 'otros_haberes_imponible',
+  'Otros Haberes No Imponible': 'otros_haberes_no_imponible',
+  AFP: 'afp_descuento',
+  Salud: 'salud_descuento',
+  'Seguro Cesantía': 'seguro_cesantia_descuento',
+  'Impuesto Único': 'impuesto_unico_descuento',
+  'Otros Descuentos': 'otros_descuentos',
+  'Líquido a Pagar': 'liquido_pagar',
+  'Área o Departamento': 'area_departamento',
+  'Nombre Empleador o Representante': 'nombre_empleador_representante',
+  'Cargo Destinatario': 'cargo_destinatario',
+  Empresa: 'empresa',
+  'Fecha Efectiva de Término': 'fecha_efectiva_termino',
+  'Motivos de la Renuncia': 'motivos_renuncia',
+  'Contacto Mandante': 'contacto_mandante',
+  'Contacto Mandatario': 'contacto_mandatario',
+  'Gestión 1': 'gestion_1',
+  'Gestión 2': 'gestion_2',
+  'Gestión 3': 'gestion_3',
+  'Nombre de la Entidad': 'nombre_entidad',
+  'Tipo de Entidad': 'tipo_entidad',
+  'Dirección de la Entidad': 'direccion_entidad',
+  'Monto Máximo Autorizado': 'monto_maximo_autorizado',
+  'Otras Facultades': 'otras_facultades',
+  'Fecha de Expiración': 'fecha_expiracion',
+  'Restricciones Específicas': 'restricciones_especificas',
+  'Nombre Parte Reveladora': 'nombre_parte_reveladora',
+  'RUT Parte Reveladora': 'rut_parte_reveladora',
+  'Domicilio Parte Reveladora': 'domicilio_parte_reveladora',
+  'Representante Legal Parte Reveladora': 'representante_legal_parte_reveladora',
+  'Correo Parte Reveladora': 'correo_parte_reveladora',
+  'Nombre Parte Receptora': 'nombre_parte_receptora',
+  'RUT Parte Receptora': 'rut_parte_receptora',
+  'Domicilio Parte Receptora': 'domicilio_parte_receptora',
+  'Representante Legal Parte Receptora': 'representante_legal_parte_receptora',
+  'Correo Parte Receptora': 'correo_parte_receptora',
+  'Propósito o Proyecto Específico': 'proposito_proyecto_especifico',
+  'Área o Industria': 'area_industria',
+  'Descripción de Información Confidencial': 'descripcion_informacion_confidencial',
+  'Plazo de Vigencia': 'plazo_vigencia_nda',
+  'Ley o Jurisdicción Aplicable': 'ley_jurisdiccion_aplicable'
+};
+
+const plantillas = {
+  ...basePlantillas,
+  ...ADDITIONAL_CREATE_DOCUMENT_TEMPLATES
+};
+
+const MapeoDeClaves = {
+  ...baseMapeoDeClaves,
+  ...ADDITIONAL_CREATE_DOCUMENT_KEY_MAP
+};
+
+const DOCX_TEMPLATE_DIR = path.join(__dirname, 'plantillas');
+const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const CREATE_DOCUMENT_TEMPLATE_ORDER = [
+  'contrato_arriendo',
+  'poder_simple',
+  'finiquito_laboral',
+  'contrato_trabajo',
+  'declaracion_jurada_simple',
+  'liquidacion_sueldo',
+  'carta_renuncia',
+  'mandato_simple',
+  'nda_confidencialidad',
+  'carta_aviso_termino'
+];
+
+const DOCX_TEMPLATE_CONFIG = {
+  finiquito_laboral: {
+    fileName: '01_Finiquito_Laboral.docx',
+    replacements: [
+      { anchor: 'Razón Social / Nombre:', key: 'razon_social_empresa' },
+      { anchor: 'RUT Empleador:', key: 'rut_empleador' },
+      { anchor: 'Domicilio:', key: 'domicilio_empresa', occurrence: 1 },
+      { anchor: 'Representante Legal:', key: 'nombre_empleador' },
+      { anchor: 'Nombre Completo:', key: 'nombre_trabajador' },
+      { anchor: 'RUT:', key: 'rut_trabajador', occurrence: 1 },
+      { anchor: 'Domicilio:', key: 'domicilio_trabajador', occurrence: 2 },
+      { anchor: 'Cargo / Función:', key: 'cargo_trabajador' },
+      { anchor: 'Fecha de Ingreso:', key: 'fecha_ingreso' },
+      { anchor: 'Fecha de Término:', key: 'fecha_termino' },
+      { anchor: 'Causal de Término (Art. Código del Trabajo):', key: 'articulo_causal_termino' },
+      { anchor: 'Remuneración proporcional del mes $', key: 'monto_remuneracion_proporcional' },
+      { anchor: 'Feriado proporcional / Vacaciones $', key: 'monto_feriado_proporcional' },
+      { anchor: 'Indemnización por años de servicio $', key: 'monto_indemnizacion_anios_servicio' },
+      { anchor: 'Indemnización sustitutiva aviso previo $', key: 'monto_indemnizacion_aviso_previo' },
+      { anchor: 'Otros (especificar) $', key: 'otros_conceptos' },
+      { anchor: 'TOTAL A PAGAR $', key: 'monto_total_a_pagar' }
+    ]
+  },
+  poder_simple: {
+    fileName: '02_Poder_Simple.docx',
+    replacements: [
+      { anchor: 'Nombre Completo:', key: 'nombre_mandante', occurrence: 1 },
+      { anchor: 'RUT:', key: 'rut_mandante', occurrence: 1 },
+      { anchor: 'Domicilio:', key: 'domicilio_mandante', occurrence: 1 },
+      { anchor: 'Nombre Completo:', key: 'nombre_mandatario', occurrence: 2 },
+      { anchor: 'RUT:', key: 'rut_mandatario', occurrence: 2 },
+      { anchor: 'Domicilio:', key: 'domicilio_mandatario', occurrence: 2 },
+      { anchor: 'Descripción detallada del encargo:', value: (values) => buildPoderDocxDescription(values) },
+      { anchor: 'Plazo de vigencia del poder:', value: (values) => String(values.fecha_vencimiento || values.vigencia_dias || '').trim() },
+      { anchor: 'Otras facultades específicas:', value: (values) => buildPoderDocxFacultades(values) }
+    ]
+  },
+  contrato_trabajo: {
+    fileName: '03_Contrato_Trabajo.docx',
+    replacements: [
+      { anchor: 'Empleador (Razón Social):', key: 'razon_social_empleador' },
+      { anchor: 'RUT Empleador:', key: 'rut_empleador' },
+      { anchor: 'Domicilio Empleador:', key: 'domicilio_empleador' },
+      { anchor: 'Representante Legal:', key: 'representante_legal' },
+      { anchor: 'Trabajador:', key: 'nombre_trabajador' },
+      { anchor: 'RUT Trabajador:', key: 'rut_trabajador' },
+      { anchor: 'Domicilio Trabajador:', key: 'domicilio_trabajador' },
+      { anchor: 'Nacionalidad:', key: 'nacionalidad_trabajador' },
+      { anchor: 'Estado Civil:', key: 'estado_civil_trabajador' },
+      { anchor: 'Cargo / Título del Puesto:', key: 'cargo_puesto' },
+      { anchor: 'Descripción de Funciones:', key: 'descripcion_funciones' },
+      { anchor: 'Lugar de Trabajo:', key: 'lugar_trabajo' },
+      { anchor: 'Departamento / Área:', key: 'departamento_area' },
+      { anchor: 'Tipo de Contrato:', key: 'tipo_contrato' },
+      { anchor: 'Fecha de Inicio:', key: 'fecha_inicio' },
+      { anchor: 'Fecha de Término (si aplica):', key: 'fecha_termino_aplica' },
+      { anchor: 'Sueldo Base Mensual ($):', key: 'sueldo_base_mensual' },
+      { anchor: 'Otros beneficios o bonos:', key: 'otros_beneficios_bonos' },
+      { anchor: 'Fecha de Pago:', key: 'fecha_pago' },
+      { anchor: 'Horas semanales:', key: 'horas_semanales' },
+      { anchor: 'Distribución de la jornada:', key: 'distribucion_jornada' },
+      { anchor: 'Período de prueba:', key: 'periodo_prueba' }
+    ]
+  },
+  contrato_arriendo: {
+    fileName: '04_Contrato_Arriendo.docx',
+    replacements: [
+      { anchor: 'Arrendador (Propietario):', key: 'nombre_arrendador' },
+      { anchor: 'RUT Arrendador:', key: 'rut_arrendador' },
+      { anchor: 'Domicilio Arrendador:', key: 'domicilio_arrendador' },
+      { anchor: 'Arrendatario:', key: 'nombre_arrendatario' },
+      { anchor: 'RUT Arrendatario:', key: 'rut_arrendatario' },
+      { anchor: 'Domicilio Actual Arrendatario:', key: 'domicilio_arrendatario' },
+      { anchor: 'Dirección del Inmueble:', key: 'direccion_propiedad' },
+      { anchor: 'Tipo de Inmueble:', key: 'tipo_inmueble' },
+      { anchor: 'Comuna:', key: 'comuna' },
+      { anchor: 'Fecha de Inicio:', key: 'fecha_inicio' },
+      { anchor: 'Fecha de Término:', key: 'fecha_termino' },
+      { anchor: 'Renta Mensual ($):', key: 'monto_arriendo' },
+      { anchor: 'Día de vencimiento del pago:', key: 'dia_pago' },
+      { anchor: 'Forma de pago (transferencia / efectivo):', key: 'forma_pago' },
+      { anchor: 'Monto Garantía ($):', key: 'monto_garantia' }
+    ]
+  },
+  declaracion_jurada_simple: {
+    fileName: '05_Declaracion_Jurada_Simple.docx',
+    replacements: [
+      { anchor: 'Nombre Completo:', key: 'nombre_declarante' },
+      { anchor: 'RUT:', key: 'rut_declarante', occurrence: 1 },
+      { anchor: 'Domicilio:', key: 'domicilio_declarante', occurrence: 1 },
+      { anchor: 'Teléfono / Email:', key: 'contacto_declarante' },
+      { anchor: 'declaro bajo juramento que:', key: 'texto_declaracion' },
+      { anchor: 'Propósito / Destino de la declaración:', key: 'proposito_destino' },
+      { anchor: 'Institución o entidad receptora:', key: 'institucion_receptora' },
+      { anchor: 'Documento 1:', key: 'documento_respaldo_1' },
+      { anchor: 'Documento 2:', key: 'documento_respaldo_2' },
+      { anchor: 'Documento 3:', key: 'documento_respaldo_3' },
+      { anchor: 'Firmado en', key: 'ciudad_firma' }
+    ]
+  },
+  liquidacion_sueldo: {
+    fileName: '06_Liquidacion_Sueldo.docx',
+    replacements: [
+      { anchor: 'Razón Social:', key: 'razon_social_empresa' },
+      { anchor: 'RUT:', key: 'rut_empleador', occurrence: 1 },
+      { anchor: 'Dirección:', key: 'direccion_empleador' },
+      { anchor: 'Nombre:', key: 'nombre_trabajador' },
+      { anchor: 'RUT:', key: 'rut_trabajador', occurrence: 2 },
+      { anchor: 'Cargo:', key: 'cargo_trabajador' },
+      { anchor: 'Departamento:', key: 'departamento_trabajador' },
+      { anchor: 'Período Remuneración:', key: 'periodo_remuneracion' },
+      { anchor: 'Fecha de Pago:', key: 'fecha_pago' },
+      { anchor: 'Sueldo Base $', key: 'sueldo_base_imponible' },
+      { anchor: 'Horas Extraordinarias $', key: 'horas_extra_imponible' },
+      { anchor: 'Gratificación Legal $', key: 'gratificacion_legal_imponible' },
+      { anchor: 'Bono de Asistencia $', key: 'bono_asistencia_imponible' },
+      { anchor: 'Bono de Movilización $', key: 'bono_movilizacion_no_imponible' },
+      { anchor: 'Bono de Colación $', key: 'bono_colacion_no_imponible' },
+      { anchor: 'Otros Haberes $', key: 'otros_haberes_imponible' },
+      { anchor: 'AFP (10% + comisión) $', key: 'afp_descuento' },
+      { anchor: 'Salud (7% FONASA/ISAPRE) $', key: 'salud_descuento' },
+      { anchor: 'Seguro de Cesantía (0,6%) $', key: 'seguro_cesantia_descuento' },
+      { anchor: 'Impuesto Único 2da Categoría $', key: 'impuesto_unico_descuento' },
+      { anchor: 'Otros descuentos $', key: 'otros_descuentos' },
+      { anchor: 'LÍQUIDO A PAGAR $', key: 'liquido_pagar' }
+    ]
+  },
+  carta_renuncia: {
+    fileName: '07_Carta_Renuncia.docx',
+    replacements: [
+      { anchor: 'Nombre Completo:', key: 'nombre_trabajador' },
+      { anchor: 'RUT:', key: 'rut_trabajador', occurrence: 1 },
+      { anchor: 'Cargo:', key: 'cargo_trabajador', occurrence: 1 },
+      { anchor: 'Área / Departamento:', key: 'area_departamento' },
+      { anchor: 'Nombre del Empleador / Representante Legal:', key: 'nombre_empleador_representante' },
+      { anchor: 'Cargo del Destinatario:', key: 'cargo_destinatario' },
+      { anchor: 'Empresa:', key: 'empresa' },
+      { anchor: 'Fecha efectiva de término:', key: 'fecha_efectiva_termino' },
+      { anchor: 'Los motivos de esta decisión son de carácter personal/profesional:', key: 'motivos_renuncia' }
+    ]
+  },
+  mandato_simple: {
+    fileName: '08_Mandato_Simple.docx',
+    replacements: [
+      { anchor: 'Nombre Completo:', key: 'nombre_mandante', occurrence: 1 },
+      { anchor: 'RUT:', key: 'rut_mandante', occurrence: 1 },
+      { anchor: 'Domicilio:', key: 'domicilio_mandante', occurrence: 1 },
+      { anchor: 'Teléfono / Email:', key: 'contacto_mandante', occurrence: 1 },
+      { anchor: 'Nombre Completo:', key: 'nombre_mandatario', occurrence: 2 },
+      { anchor: 'RUT:', key: 'rut_mandatario', occurrence: 2 },
+      { anchor: 'Domicilio:', key: 'domicilio_mandatario', occurrence: 2 },
+      { anchor: 'Teléfono / Email:', key: 'contacto_mandatario', occurrence: 2 },
+      { anchor: 'Gestión N°1:', key: 'gestion_1' },
+      { anchor: 'Gestión N°2:', key: 'gestion_2' },
+      { anchor: 'Gestión N°3:', key: 'gestion_3' },
+      { anchor: 'Nombre de la entidad:', key: 'nombre_entidad' },
+      { anchor: 'Dirección de la entidad:', key: 'direccion_entidad' },
+      { anchor: 'monto máximo: $', key: 'monto_maximo_autorizado' },
+      { anchor: 'Otras facultades:', key: 'otras_facultades' },
+      { anchor: 'Fecha de inicio:', key: 'fecha_inicio' },
+      { anchor: 'Fecha de expiración:', key: 'fecha_expiracion' },
+      { anchor: 'Restricciones específicas:', key: 'restricciones_especificas' }
+    ]
+  },
+  nda_confidencialidad: {
+    fileName: '09_NDA_Acuerdo_Confidencialidad.docx',
+    replacements: [
+      { anchor: 'Nombre / Razón Social:', key: 'nombre_parte_reveladora', occurrence: 1 },
+      { anchor: 'RUT:', key: 'rut_parte_reveladora', occurrence: 1 },
+      { anchor: 'Domicilio:', key: 'domicilio_parte_reveladora', occurrence: 1 },
+      { anchor: 'Representante Legal (si aplica):', key: 'representante_legal_parte_reveladora', occurrence: 1 },
+      { anchor: 'Correo electrónico:', key: 'correo_parte_reveladora', occurrence: 1 },
+      { anchor: 'Nombre / Razón Social:', key: 'nombre_parte_receptora', occurrence: 2 },
+      { anchor: 'RUT:', key: 'rut_parte_receptora', occurrence: 2 },
+      { anchor: 'Domicilio:', key: 'domicilio_parte_receptora', occurrence: 2 },
+      { anchor: 'Representante Legal (si aplica):', key: 'representante_legal_parte_receptora', occurrence: 2 },
+      { anchor: 'Correo electrónico:', key: 'correo_parte_receptora', occurrence: 2 },
+      { anchor: 'Propósito o proyecto específico:', key: 'proposito_proyecto_especifico' },
+      { anchor: 'Área / Industria:', key: 'area_industria' }
+    ]
+  }
+};
+
+const CREATE_DOCUMENT_TEMPLATE_META = {
+  contrato_arriendo: {
+    emoji: '🏠',
+    aliases: ['contrato de arriendo', 'arriendo', 'arrendamiento']
+  },
+  poder_simple: {
+    emoji: '✍️',
+    aliases: ['poder simple', 'poder', 'poder notarial simple']
+  },
+  finiquito_laboral: {
+    emoji: '📄',
+    aliases: ['finiquito laboral', 'finiquito', 'termino laboral']
+  },
+  contrato_trabajo: {
+    emoji: '🤝',
+    aliases: ['contrato de trabajo', 'contrato laboral', 'trabajo']
+  },
+  declaracion_jurada_simple: {
+    emoji: '📜',
+    aliases: ['declaracion jurada', 'declaración jurada', 'jurada simple']
+  },
+  liquidacion_sueldo: {
+    emoji: '💰',
+    aliases: ['liquidacion de sueldo', 'liquidación de sueldo', 'liquidacion sueldo']
+  },
+  carta_renuncia: {
+    emoji: '📩',
+    aliases: ['carta de renuncia', 'renuncia', 'renuncia voluntaria']
+  },
+  mandato_simple: {
+    emoji: '🧾',
+    aliases: ['mandato simple', 'mandato civil', 'mandato']
+  },
+  nda_confidencialidad: {
+    emoji: '🔒',
+    aliases: ['nda', 'acuerdo de confidencialidad', 'confidencialidad']
+  },
+  carta_aviso_termino: {
+    emoji: '📨',
+    aliases: ['carta de aviso de termino', 'aviso de termino', 'carta laboral', 'carta de despido']
+  }
+};
+
+function getCreateDocumentTemplateKeys() {
+  const ordered = CREATE_DOCUMENT_TEMPLATE_ORDER.filter((key) => plantillas[key]);
+  const extras = Object.keys(plantillas || {}).filter((key) => !ordered.includes(key));
+  return [...ordered, ...extras];
+}
+
+function getCreateDocumentTemplateMeta(templateKey) {
+  return CREATE_DOCUMENT_TEMPLATE_META[templateKey] || { emoji: '📄', aliases: [] };
+}
+
+function listAvailableCreateDocumentTemplates(keys = getCreateDocumentTemplateKeys()) {
+  return keys
+    .map((key, idx) => {
+      const plantilla = plantillas[key];
+      if (!plantilla) return null;
+      const meta = getCreateDocumentTemplateMeta(key);
+      return `${idx + 1}️⃣ ${meta.emoji} ${plantilla.nombre}`;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function findTemplateKeyFromText(text, keys = getCreateDocumentTemplateKeys()) {
+  const input = normalizeForIntent(text);
+  if (!input) return null;
+  const selection = parseNumberSelection(text);
+  if (selection) {
+    const byNumber = keys[selection - 1];
+    if (byNumber && plantillas[byNumber]) return byNumber;
+  }
+
+  let best = null;
+  let bestScore = 0;
+  for (const key of keys) {
+    const plantilla = plantillas[key];
+    if (!plantilla) continue;
+    const meta = getCreateDocumentTemplateMeta(key);
+    const candidates = [plantilla.nombre, ...(Array.isArray(meta.aliases) ? meta.aliases : [])]
+      .map((value) => normalizeForIntent(value))
+      .filter(Boolean);
+    for (const candidate of candidates) {
+      let score = 0;
+      if (input === candidate) score = 100;
+      else if (input.includes(candidate)) score = Math.max(score, 90);
+      else if (candidate.includes(input) && input.length >= 6) score = Math.max(score, 75);
+      else if (isSmallTypoMatch(input, candidate)) score = Math.max(score, 70);
+      if (score > bestScore) {
+        best = key;
+        bestScore = score;
+      }
+    }
+  }
+  return bestScore >= 70 ? best : null;
+}
+
+function buildTemplateFieldChecklist(plantilla) {
+  const labels = Array.isArray(plantilla?.variables_requeridas) ? plantilla.variables_requeridas : [];
+  const lines = labels.map((label) => `• ${label}:`);
+  return `Para preparar tu ${plantilla?.nombre || 'documento'} necesito estos datos.\nPuedes copiar esta lista, rellenarla completa y enviármela toda junta, o responderme de a uno y te voy guiando 😊\n\n${lines.join('\n')}`;
+}
+
+function getTemplatePendingLabels(labels, answers) {
+  const currentAnswers = answers && typeof answers === 'object' ? answers : {};
+  return (Array.isArray(labels) ? labels : []).filter((label) => {
+    if (normalizeForIntent(label).includes('(opcional)')) return false;
+    const internalKey = MapeoDeClaves[label];
+    if (!internalKey) return false;
+    const value = currentAnswers[internalKey];
+    return value === undefined || value === null || String(value).trim() === '';
+  });
+}
+
+function parseTemplateFieldBatch(text, labels) {
+  const input = String(text || '').replace(/\r/g, '').trim();
+  if (!input) return {};
+  const lines = input.split('\n').map((line) => line.trim()).filter(Boolean);
+  const answers = {};
+  for (const label of Array.isArray(labels) ? labels : []) {
+    const internalKey = MapeoDeClaves[label];
+    if (!internalKey) continue;
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`^(?:[-•*]\\s*)?${escaped}\\s*:\\s*(.+)$`, 'i');
+    const matchedLine = lines.find((line) => regex.test(line));
+    if (!matchedLine) continue;
+    const value = matchedLine.replace(regex, '$1').trim();
+    if (value) answers[internalKey] = value;
+  }
+  return answers;
+}
+
+async function extractTemplateAnswersWithAI({ text, labels }) {
+  const input = normalizeIncomingText(text);
+  const requestedLabels = Array.isArray(labels) ? labels.filter(Boolean) : [];
+  if (!input || !requestedLabels.length || !MINIMAX_API_KEY) return {};
+  try {
+    const response = await fetchWithTimeout(
+      MINIMAX_ENDPOINT,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${MINIMAX_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: MINIMAX_MODEL,
+          system: `Eres un extractor preciso de datos para documentos legales. Devuelve SOLO un JSON plano. No inventes campos ni valores. Si un dato no aparece claramente, no lo incluyas.`,
+          temperature: 0,
+          max_tokens: 900,
+          messages: [
+            {
+              role: 'user',
+              content: `Extrae valores para estos campos exactamente:\n${requestedLabels.join('\n')}\n\nTexto del usuario:\n${input}`
+            }
+          ]
+        })
+      },
+      Number.isFinite(WAHA_MINIMAX_TIMEOUT_MS) && WAHA_MINIMAX_TIMEOUT_MS > 0 ? WAHA_MINIMAX_TIMEOUT_MS : 8000
+    );
+    if (!response.ok) return {};
+    const data = await response.json().catch(() => ({}));
+    let raw = data?.content;
+    if (Array.isArray(raw)) raw = raw.map((b) => (typeof b === 'string' ? b : b?.text || '')).join('');
+    if (typeof raw !== 'string') raw = data?.choices?.[0]?.message?.content;
+    if (typeof raw !== 'string' || !raw.trim()) return {};
+    const jsonTextMatch = raw.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse((jsonTextMatch ? jsonTextMatch[0] : raw).trim());
+    const answers = {};
+    for (const label of requestedLabels) {
+      const internalKey = MapeoDeClaves[label];
+      if (!internalKey) continue;
+      const value = parsed?.[label] ?? parsed?.[internalKey] ?? null;
+      if (value !== null && value !== undefined && String(value).trim()) {
+        answers[internalKey] = String(value).trim();
+      }
+    }
+    return answers;
+  } catch (_) {
+    return {};
+  }
+}
+
+function buildTemplateAnswersSummary(plantilla, labels, answers) {
+  const lines = (Array.isArray(labels) ? labels : [])
+    .map((label) => {
+      const internalKey = MapeoDeClaves[label];
+      const value = internalKey ? String(answers?.[internalKey] || '').trim() : '';
+      return value ? `• ${label}: ${value}` : null;
+    })
+    .filter(Boolean);
+  return `Perfecto 🎉 Antes de generar tu documento, confirma que estos datos están correctos:\n\n📄 Documento: ${plantilla?.nombre || 'Documento'}\n\n${lines.join('\n')}\n\n¿Todo está correcto? Si quieres cambiar algo, puedes escribirme por ejemplo:\nNombre Arrendador: Nuevo Nombre`;
+}
+
+function isCreateDocumentConfirmation(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  return ['si', 'sí', 'correcto', 'ok', 'esta bien', 'está bien', 'confirmo', 'dale', 'perfecto'].includes(t) || t.includes('todo correcto');
+}
+
+function isLikelyCreateDocumentRequest(text) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+  const hasCreateVerb =
+    t.includes('crear') ||
+    t.includes('crea') ||
+    t.includes('hacer') ||
+    t.includes('haz') ||
+    t.includes('generar') ||
+    t.includes('genera') ||
+    t.includes('preparar') ||
+    t.includes('prepara') ||
+    t.includes('redactar') ||
+    t.includes('redacta') ||
+    t.includes('armar') ||
+    t.includes('arma') ||
+    t.includes('elaborar') ||
+    t.includes('elabora');
+  const hasDocumentTarget =
+    t.includes('documento legal') ||
+    t.includes('contrato') ||
+    t.includes('finiquito') ||
+    t.includes('poder') ||
+    t.includes('mandato') ||
+    t.includes('declaracion jurada') ||
+    t.includes('declaración jurada') ||
+    t.includes('contrato de trabajo') ||
+    t.includes('carta de renuncia') ||
+    t.includes('carta laboral') ||
+    t.includes('acuerdo de confidencialidad') ||
+    t.includes('nda') ||
+    t.includes('liquidacion de sueldo') ||
+    t.includes('liquidación de sueldo') ||
+    t.includes('mandato simple') ||
+    t.includes('mandato civil') ||
+    t.includes('documento');
+  return hasCreateVerb && hasDocumentTarget;
 }
 
 function parseNumberSelection(text) {
@@ -1303,6 +2126,9 @@ function detectIntentRuleBased(text) {
 
   if (isLikelyDocumentAnalysisRequest(text)) {
     return { intent: 'analyze_document', confidence: 0.82 };
+  }
+  if (isLikelyCreateDocumentRequest(text)) {
+    return { intent: 'create_document', confidence: 0.84 };
   }
   if (t.includes('asesor') || t.includes('abogad') || t.includes('legal') || t.includes('ley') || t.includes('demanda') || t.includes('contrato')) {
     return { intent: 'legal', confidence: 0.8 };
@@ -3446,6 +4272,20 @@ async function handleAsesorLegal({ session, chatId, text, sessionName, payload }
       });
       return;
     }
+  }
+
+  if (textTrim && isLikelyCreateDocumentRequest(textTrim)) {
+    const nextSession = await updateWspSession(session.id, {
+      current_branch: 'crear_documento',
+      branch_context: {
+        stage: 'choose_template',
+        source_context: 'legal',
+        source_request: textTrim,
+        keys: getCreateDocumentTemplateKeys()
+      }
+    });
+    await handleCrearDocumento({ session: nextSession || session, chatId, text: textTrim, sessionName });
+    return;
   }
 
   const wantsDocumentLegalAnswer = isLikelyLegalDocumentQuestion(textTrim);
@@ -8095,6 +8935,140 @@ function renderPlantillaToHtml(plantilla, values) {
   return `<!doctype html><html><head><meta charset="utf-8"></head><body><div style="font-family: Arial, sans-serif; white-space: pre-wrap;">${content}</div></body></html>`;
 }
 
+function normalizeDocxReplacementValue(value) {
+  return String(value ?? '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeRegex(text) {
+  return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeXmlText(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function joinNonEmptyParts(parts, separator = '; ') {
+  return (Array.isArray(parts) ? parts : [])
+    .map((part) => normalizeDocxReplacementValue(part))
+    .filter(Boolean)
+    .join(separator);
+}
+
+function buildPoderDocxDescription(values) {
+  return (
+    normalizeDocxReplacementValue(values?.facultades_especificas) ||
+    joinNonEmptyParts([values?.facultad_1, values?.facultad_2, values?.facultad_3, values?.facultades_adicionales])
+  );
+}
+
+function buildPoderDocxFacultades(values) {
+  return joinNonEmptyParts([values?.facultad_1, values?.facultad_2, values?.facultad_3, values?.facultades_adicionales]);
+}
+
+function replaceDocxBlankAfterAnchor(xml, { anchor, occurrence = 1, maxDistance = 600, value }) {
+  const normalizedValue = normalizeDocxReplacementValue(value);
+  if (!anchor || !normalizedValue) return { xml, replaced: false };
+  const pattern = new RegExp(`(${escapeRegex(anchor)}[\\s\\S]{0,${maxDistance}}?<w:t(?: [^>]*)?>)([^<]*_{3,}[^<]*)(</w:t>)`, 'g');
+  let seen = 0;
+  let replaced = false;
+  const nextXml = String(xml || '').replace(pattern, (full, prefix, blankText, suffix) => {
+    seen += 1;
+    if (replaced || seen !== occurrence) return full;
+    replaced = true;
+    return `${prefix}${escapeXmlText(normalizedValue)}${suffix}`;
+  });
+  return { xml: nextXml, replaced };
+}
+
+async function renderPlantillaToDocxBuffer(templateKey, values) {
+  const config = DOCX_TEMPLATE_CONFIG[templateKey];
+  if (!config?.fileName) {
+    throw new Error(`No hay plantilla DOCX configurada para ${templateKey}`);
+  }
+
+  const templatePath = path.join(DOCX_TEMPLATE_DIR, config.fileName);
+  const templateBuffer = await fs.readFile(templatePath);
+  const zip = await JSZip.loadAsync(templateBuffer);
+  const documentEntry = zip.file('word/document.xml');
+  if (!documentEntry) {
+    throw new Error(`La plantilla DOCX ${config.fileName} no contiene word/document.xml`);
+  }
+
+  let xml = await documentEntry.async('string');
+  let replacementsApplied = 0;
+  for (const replacement of config.replacements || []) {
+    const resolvedValue =
+      typeof replacement?.value === 'function'
+        ? replacement.value(values || {})
+        : values?.[replacement?.key];
+    const result = replaceDocxBlankAfterAnchor(xml, {
+      anchor: replacement?.anchor,
+      occurrence: replacement?.occurrence || 1,
+      maxDistance: replacement?.maxDistance || 600,
+      value: resolvedValue
+    });
+    xml = result.xml;
+    if (result.replaced) replacementsApplied += 1;
+  }
+
+  if (!replacementsApplied) {
+    throw new Error(`No se pudieron aplicar reemplazos a la plantilla ${config.fileName}`);
+  }
+
+  zip.file('word/document.xml', xml);
+  return zip.generateAsync({ type: 'nodebuffer' });
+}
+
+async function buildGeneratedDocumentAsset({ templateKey, plantilla, answers, title, description }) {
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  if (templateKey && plantilla) {
+    if (DOCX_TEMPLATE_CONFIG[templateKey]) {
+      try {
+        const buffer = await renderPlantillaToDocxBuffer(templateKey, answers || {});
+        return {
+          fileName: `${plantilla.nombre} - ${dateStamp}.docx`,
+          mimeType: DOCX_MIME_TYPE,
+          body: buffer,
+          generatedFormat: 'docx'
+        };
+      } catch (error) {
+        console.warn('[WAHA webhook] No pude renderizar DOCX, usaré fallback HTML:', {
+          templateKey,
+          error: error?.message || String(error)
+        });
+      }
+    }
+
+    return {
+      fileName: `${plantilla.nombre} - ${dateStamp}.html`,
+      mimeType: 'text/html',
+      body: renderPlantillaToHtml(plantilla, answers || {}),
+      generatedFormat: 'html'
+    };
+  }
+
+  const safeTitle = String(title || 'Documento').trim() || 'Documento';
+  const safeBody = String(description || '');
+  return {
+    fileName: `${safeTitle} - ${dateStamp}.html`,
+    mimeType: 'text/html',
+    body: `<!doctype html><html><head><meta charset="utf-8"></head><body><h1>${safeTitle}</h1><div style="white-space: pre-wrap; font-family: Arial, sans-serif;">${safeBody}</div></body></html>`,
+    generatedFormat: 'html'
+  };
+}
+
 async function getDriveClientForUser(userId) {
   const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.REACT_APP_GOOGLE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET;
@@ -8245,29 +9219,29 @@ async function resolveRootFolderIdForUser(userEmail, userId, phoneNumber, option
   return null;
 }
 
-async function createHtmlFileInDrive({ userId, parentFolderId, fileName, html }) {
+async function createFileInDrive({ userId, parentFolderId, fileName, mimeType, body }) {
   const drive = await getDriveClientForUser(userId);
   const response = await drive.files.create({
     requestBody: {
       name: fileName,
       parents: [parentFolderId],
-      mimeType: 'text/html'
+      mimeType
     },
     media: {
-      mimeType: 'text/html',
-      body: html
+      mimeType,
+      body: Buffer.isBuffer(body) ? Readable.from(body) : body
     },
-    fields: 'id, webViewLink, name'
+    fields: 'id, webViewLink, name, mimeType, size'
   });
   return response.data;
 }
 
-async function logDocumentoAdministrador({ file, userEmail, servicio, templateKey }) {
+async function logDocumentoAdministrador({ file, userEmail, servicio, templateKey, fileType, generatedFormat }) {
   const { error } = await supabase.from('documentos_administrador').insert({
     file_id: file.id,
     name: file.name,
-    file_type: 'text/html',
-    file_size: null,
+    file_type: fileType || file.mimeType || null,
+    file_size: file.size ? Number(file.size) : null,
     administrador: userEmail,
     cliente: userEmail,
     servicio,
@@ -8278,7 +9252,8 @@ async function logDocumentoAdministrador({ file, userEmail, servicio, templateKe
     metadata: {
       source: 'waha',
       action: 'crear_documento',
-      template_key: templateKey
+      template_key: templateKey,
+      generated_format: generatedFormat || null
     },
     embedding: null,
     pendiente: false,
@@ -8294,135 +9269,134 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
   const textTrim = normalizeIncomingText(text);
   const textLower = textTrim.toLowerCase();
 
+  if (isMenuTrigger(normalizeForIntent(textTrim))) {
+    await showMainMenu({ session, chatId, sessionName });
+    return;
+  }
+
   if (!ctx.stage) {
+    const keys = getCreateDocumentTemplateKeys();
+    const directTemplateKey = findTemplateKeyFromText(textTrim, keys);
+    if (directTemplateKey && plantillas[directTemplateKey]) {
+      const plantilla = plantillas[directTemplateKey];
+      const labels = Array.isArray(plantilla.variables_requeridas) ? plantilla.variables_requeridas : [];
+      await updateWspSession(session.id, {
+        current_branch: 'crear_documento',
+        branch_context: {
+          stage: 'collect_vars',
+          templateKey: directTemplateKey,
+          labels,
+          answers: {},
+          source_request: textTrim
+        }
+      });
+      await wahaSendText(chatId, `Perfecto ✅ Vamos a preparar "${plantilla.nombre}".\n\n${buildTemplateFieldChecklist(plantilla)}`, sessionName);
+      return;
+    }
+
     await updateWspSession(session.id, {
       current_branch: 'crear_documento',
-      branch_context: { stage: 'choose_mode' }
+      branch_context: { stage: 'choose_template', keys, source_request: textTrim || null }
     });
     await wahaSendText(
       chatId,
-      `¡Vamos a crear tu documento! ✍️ ¿Qué tipo de documento necesitas?\n\n1️⃣ 📋 Desde plantilla predefinida\n2️⃣ 📝 Documento en blanco personalizado`,
+      `Puedo ayudarte a crear uno de estos documentos ✍️✨\n\n${listAvailableCreateDocumentTemplates(keys)}\n\nSi no estás seguro, dime cuál necesitas y te ayudo a elegirlo.`,
       sessionName
     );
     return;
   }
 
   if (ctx.stage === 'choose_mode') {
-    if (textLower === '1' || textLower.includes('plantilla')) {
-      const keys = Object.keys(plantillas);
-      const lines = keys.map((k, idx) => `${idx + 1}️⃣ 📄 ${plantillas[k].nombre}`);
-      await updateWspSession(session.id, {
-        current_branch: 'crear_documento',
-        branch_context: { stage: 'choose_template', keys }
-      });
-      await wahaSendText(chatId, `Perfecto ✅ Elige una plantilla:\n\n${lines.join('\n')}\n\nEscribe el número.`, sessionName);
-      return;
-    }
-
-    if (textLower === '2' || textLower.includes('blanco')) {
-      await updateWspSession(session.id, {
-        current_branch: 'crear_documento',
-        branch_context: { stage: 'blank_title' }
-      });
-      await wahaSendText(chatId, `Genial 📝 ¿Cuál es el título del documento?`, sessionName);
-      return;
-    }
-
-    const optionId = await routeStageWithAI({
-      branch: 'crear_documento',
-      stage: 'choose_mode',
-      text: textTrim,
-      options: [
-        { id: 'template', label: 'Plantilla predefinida', keywords: ['plantilla', 'formato', 'modelo', 'contrato', 'finiquito', 'poder'] },
-        { id: 'blank', label: 'Documento en blanco', keywords: ['blanco', 'personalizado', 'desde cero', 'redactar'] }
-      ]
+    const keys = getCreateDocumentTemplateKeys();
+    await updateWspSession(session.id, {
+      current_branch: 'crear_documento',
+      branch_context: { stage: 'choose_template', keys, source_request: textTrim || ctx.source_request || null }
     });
-    if (optionId === 'template') {
-      const keys = Object.keys(plantillas);
-      const lines = keys.map((k, idx) => `${idx + 1}️⃣ 📄 ${plantillas[k].nombre}`);
-      await updateWspSession(session.id, {
-        current_branch: 'crear_documento',
-        branch_context: { stage: 'choose_template', keys }
-      });
-      await wahaSendText(chatId, `Perfecto ✅ Elige una plantilla:\n\n${lines.join('\n')}\n\nEscribe el número.`, sessionName);
-      return;
-    }
-    if (optionId === 'blank') {
-      await updateWspSession(session.id, {
-        current_branch: 'crear_documento',
-        branch_context: { stage: 'blank_title' }
-      });
-      await wahaSendText(chatId, `Genial 📝 ¿Cuál es el título del documento?`, sessionName);
-      return;
-    }
-
-    await wahaSendText(chatId, `No entendí esa opción 😅\n\n1️⃣ 📋 Plantilla\n2️⃣ 📝 Documento en blanco`, sessionName);
+    await wahaSendText(
+      chatId,
+      `Vamos con la selección del documento 📄\n\n${listAvailableCreateDocumentTemplates(keys)}\n\nDime el número o el nombre del documento que quieres preparar.`,
+      sessionName
+    );
     return;
   }
 
   if (ctx.stage === 'choose_template') {
-    const selection = parseNumberSelection(textTrim);
-    const keys = Array.isArray(ctx.keys) ? ctx.keys : Object.keys(plantillas);
-    const selectedKey = selection ? keys[selection - 1] : null;
+    const keys = Array.isArray(ctx.keys) && ctx.keys.length ? ctx.keys : getCreateDocumentTemplateKeys();
+    const selectedKey = findTemplateKeyFromText(textTrim || ctx.source_request || '', keys);
     if (!selectedKey || !plantillas[selectedKey]) {
-      await wahaSendText(chatId, `Porfa elige un número válido 🙌`, sessionName);
+      await wahaSendText(
+        chatId,
+        `Todavía no me queda claro cuál documento necesitas 😅\n\n${listAvailableCreateDocumentTemplates(keys)}\n\nEscríbeme el número o el nombre del documento.`,
+        sessionName
+      );
       return;
     }
 
     const plantilla = plantillas[selectedKey];
-    const labels = plantilla.variables_requeridas || [];
-    const firstLabel = labels[0];
+    const labels = Array.isArray(plantilla.variables_requeridas) ? plantilla.variables_requeridas : [];
     await updateWspSession(session.id, {
       current_branch: 'crear_documento',
       branch_context: {
         stage: 'collect_vars',
         templateKey: selectedKey,
         labels,
-        varIndex: 0,
-        answers: {}
+        answers: {},
+        source_request: ctx.source_request || textTrim || null
       }
     });
-    await wahaSendText(
-      chatId,
-      `Perfecto ✅ Vamos con la plantilla "${plantilla.nombre}".\n\n1/${labels.length} ✍️ Ingresa: ${firstLabel}\n\nSi es opcional, puedes escribir "omitir".`,
-      sessionName
-    );
+    await wahaSendText(chatId, `Perfecto ✅ Vamos a preparar "${plantilla.nombre}".\n\n${buildTemplateFieldChecklist(plantilla)}`, sessionName);
     return;
   }
 
   if (ctx.stage === 'collect_vars') {
     const labels = Array.isArray(ctx.labels) ? ctx.labels : [];
-    const varIndex = Number.isFinite(ctx.varIndex) ? ctx.varIndex : 0;
-    const label = labels[varIndex];
-    if (!label) {
+    const plantilla = plantillas[ctx.templateKey];
+    if (!plantilla || !labels.length) {
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
       await wahaSendText(chatId, `Tuve un problema con la plantilla 😕 Escribe "menú" para volver a empezar.`, sessionName);
       return;
     }
 
-    const isOptional = label.toLowerCase().includes('(opcional)');
-    const internalKey = MapeoDeClaves[label];
     const answers = typeof ctx.answers === 'object' && ctx.answers ? { ...ctx.answers } : {};
-    const userValue = textTrim;
-    if (internalKey) {
-      if (isOptional && (!userValue || userValue.toLowerCase() === 'omitir' || userValue === '-')) {
-        answers[internalKey] = '';
-      } else {
-        answers[internalKey] = userValue;
+    let extracted = parseTemplateFieldBatch(textTrim, labels);
+    if (!Object.keys(extracted).length && ((textTrim.includes(':') && textTrim.length > 25) || textTrim.split('\n').length >= 3)) {
+      extracted = await extractTemplateAnswersWithAI({ text: textTrim, labels });
+    }
+
+    const pendingBefore = getTemplatePendingLabels(labels, answers);
+    if (!Object.keys(extracted).length) {
+      const currentLabel = pendingBefore[0];
+      const currentKey = currentLabel ? MapeoDeClaves[currentLabel] : null;
+      const wantsSkip = ['omitir', '-', 'paso', 'saltarlo', 'saltar'].includes(textLower);
+      if (currentKey && textTrim) {
+        extracted[currentKey] = wantsSkip ? '' : textTrim;
       }
     }
 
-    const nextIndex = varIndex + 1;
-    if (nextIndex >= labels.length) {
+    const nextAnswers = { ...answers, ...extracted };
+    const pendingAfter = getTemplatePendingLabels(labels, nextAnswers);
+
+    if (!Object.keys(extracted).length) {
+      await wahaSendText(
+        chatId,
+        `No logré ubicar bien los datos 😕\n\nPuedes responderme uno por uno o copiar esta lista y completarla:\n\n${buildTemplateFieldChecklist(plantilla)}`,
+        sessionName
+      );
+      return;
+    }
+
+    if (!pendingAfter.length) {
       await updateWspSession(session.id, {
         current_branch: 'crear_documento',
         branch_context: {
-          stage: 'choose_save_location',
+          stage: 'review_answers',
           templateKey: ctx.templateKey,
-          answers
+          labels,
+          answers: nextAnswers,
+          source_request: ctx.source_request || null
         }
       });
-      await wahaSendText(chatId, `¡Listo! ✅ ¿Dónde quieres guardarlo?\n\n1️⃣ 📂 Carpeta raíz de Brify\n2️⃣ 📁 En un grupo específico`, sessionName);
+      await wahaSendText(chatId, buildTemplateAnswersSummary(plantilla, labels, nextAnswers), sessionName);
       return;
     }
 
@@ -8430,12 +9404,69 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
       current_branch: 'crear_documento',
       branch_context: {
         ...ctx,
-        varIndex: nextIndex,
-        answers
+        labels,
+        answers: nextAnswers
       }
     });
 
-    await wahaSendText(chatId, `${nextIndex + 1}/${labels.length} ✍️ Ingresa: ${labels[nextIndex]}\n\nSi es opcional, puedes escribir "omitir".`, sessionName);
+    const receivedCount = Object.keys(extracted).length;
+    const nextLabel = pendingAfter[0];
+    const reminder = pendingAfter.slice(0, 6).map((label) => `• ${label}`).join('\n');
+    await wahaSendText(
+      chatId,
+      receivedCount > 1
+        ? `✅ Tomé ${receivedCount} dato(s).\n\nAún me faltan:\n${reminder}\n\nSi quieres, puedes seguir enviándomelos todos juntos o partimos por:\n${nextLabel}:`
+        : `✅ Recibido.\n\nAhora seguimos con:\n${nextLabel}:\n\nSi prefieres, también puedes enviarme varios datos juntos.`,
+      sessionName
+    );
+    return;
+  }
+
+  if (ctx.stage === 'review_answers') {
+    const plantilla = plantillas[ctx.templateKey];
+    const labels = Array.isArray(ctx.labels) ? ctx.labels : [];
+    const answers = typeof ctx.answers === 'object' && ctx.answers ? { ...ctx.answers } : {};
+    if (!plantilla || !labels.length) {
+      await updateWspSession(session.id, { current_branch: null, branch_context: {} });
+      await wahaSendText(chatId, `Tuve un problema revisando los datos 😕 Escribe "menú" para volver a empezar.`, sessionName);
+      return;
+    }
+
+    if (isCreateDocumentConfirmation(textTrim)) {
+      await updateWspSession(session.id, {
+        current_branch: 'crear_documento',
+        branch_context: {
+          stage: 'choose_save_location',
+          templateKey: ctx.templateKey,
+          labels,
+          answers
+        }
+      });
+      await wahaSendText(chatId, `Perfecto ✅ ¿Dónde quieres guardarlo?\n\n1️⃣ 📂 Carpeta raíz de Brify\n2️⃣ 📁 En un grupo específico`, sessionName);
+      return;
+    }
+
+    const corrections = parseTemplateFieldBatch(textTrim, labels);
+    if (Object.keys(corrections).length) {
+      const updatedAnswers = { ...answers, ...corrections };
+      await updateWspSession(session.id, {
+        current_branch: 'crear_documento',
+        branch_context: {
+          stage: 'review_answers',
+          templateKey: ctx.templateKey,
+          labels,
+          answers: updatedAnswers
+        }
+      });
+      await wahaSendText(chatId, buildTemplateAnswersSummary(plantilla, labels, updatedAnswers), sessionName);
+      return;
+    }
+
+    await wahaSendText(
+      chatId,
+      `Si quieres corregir algo, envíamelo así:\nNombre Arrendador: Nuevo Nombre\n\nSi todo está bien, responde "correcto" o "confirmo".`,
+      sessionName
+    );
     return;
   }
 
@@ -8586,35 +9617,33 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
       return;
     }
 
-    let fileName = `Documento Brify - ${new Date().toISOString().slice(0, 10)}.html`;
-    let html = '';
-    let templateKey = null;
-
-    if (ctx.templateKey) {
-      templateKey = ctx.templateKey;
-      const plantilla = plantillas[templateKey];
-      fileName = `${plantilla.nombre} - ${new Date().toISOString().slice(0, 10)}.html`;
-      html = renderPlantillaToHtml(plantilla, ctx.answers || {});
-    } else {
-      const title = ctx.title || 'Documento';
-      fileName = `${title} - ${new Date().toISOString().slice(0, 10)}.html`;
-      const body = String(ctx.description || '');
-      html = `<!doctype html><html><head><meta charset="utf-8"></head><body><h1>${title}</h1><div style="white-space: pre-wrap; font-family: Arial, sans-serif;">${body}</div></body></html>`;
-    }
+    const templateKey = ctx.templateKey || null;
+    const plantilla = templateKey ? plantillas[templateKey] : null;
 
     try {
-      const file = await createHtmlFileInDrive({
+      const generated = await buildGeneratedDocumentAsset({
+        templateKey,
+        plantilla,
+        answers: ctx.answers || {},
+        title: ctx.title,
+        description: ctx.description
+      });
+
+      const file = await createFileInDrive({
         userId: user.id,
         parentFolderId,
-        fileName,
-        html
+        fileName: generated.fileName,
+        mimeType: generated.mimeType,
+        body: generated.body
       });
 
       await logDocumentoAdministrador({
         file,
         userEmail: user.email,
         servicio: 'abogados',
-        templateKey
+        templateKey,
+        fileType: generated.mimeType,
+        generatedFormat: generated.generatedFormat
       });
 
       await updateWspSession(session.id, { current_branch: null, branch_context: {} });
@@ -9050,6 +10079,24 @@ async function handleWahaMessage({ chatId, body, payload, sessionName }) {
   if (intent.intent === 'legal') {
     session = await updateWspSession(session.id, { current_branch: 'asesor_legal', branch_context: { ...(session.branch_context || {}), stage: 'choose_mode' } });
     await handleAsesorLegal({ session, chatId, text: textTrim, sessionName, payload });
+    return;
+  }
+
+  if (intent.intent === 'create_document') {
+    if (!hasDrive) {
+      await updateWspSession(session.id, { current_branch: 'await_drive', branch_context: {} });
+      await wahaSendText(chatId, `Para crear y guardar documentos necesito que vincules tu Google Drive: ${BRIFY_PROFILE_URL}`, sessionName);
+      return;
+    }
+    session = await updateWspSession(session.id, {
+      current_branch: 'crear_documento',
+      branch_context: {
+        stage: 'choose_template',
+        keys: getCreateDocumentTemplateKeys(),
+        source_request: textTrim
+      }
+    });
+    await handleCrearDocumento({ session, chatId, text: textTrim, sessionName });
     return;
   }
 
