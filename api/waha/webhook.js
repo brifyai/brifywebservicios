@@ -1407,7 +1407,7 @@ function findTemplateKeyFromText(text, keys = getCreateDocumentTemplateKeys()) {
 function buildTemplateFieldChecklist(plantilla) {
   const labels = Array.isArray(plantilla?.variables_requeridas) ? plantilla.variables_requeridas : [];
   const lines = labels.map((label) => `• ${label}:`);
-  return `Para preparar tu ${plantilla?.nombre || 'documento'} necesito estos datos.\nPuedes copiar esta lista, rellenarla completa y enviármela toda junta, o responderme de a uno y te voy guiando 😊\n\n${lines.join('\n')}`;
+  return `Para preparar tu ${plantilla?.nombre || 'documento'} necesito estos datos.\nPuedes copiar solo la lista de abajo, completarla y enviármela toda junta, o responderme de a uno y te voy guiando 😊\n\n\`\`\`\n${lines.join('\n')}\n\`\`\``;
 }
 
 function getTemplatePendingLabels(labels, answers) {
