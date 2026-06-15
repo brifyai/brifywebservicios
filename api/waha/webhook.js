@@ -1508,42 +1508,46 @@ function isCreateDocumentConfirmation(text) {
 }
 
 function isLikelyCreateDocumentRequest(text) {
+  const raw = normalizeIncomingText(text);
   const t = normalizeForIntent(text);
   if (!t) return false;
   const hasCreateVerb =
-    t.includes('crear') ||
-    t.includes('crea') ||
-    t.includes('hacer') ||
-    t.includes('haz') ||
-    t.includes('generar') ||
-    t.includes('genera') ||
-    t.includes('preparar') ||
-    t.includes('prepara') ||
-    t.includes('redactar') ||
-    t.includes('redacta') ||
-    t.includes('armar') ||
-    t.includes('arma') ||
-    t.includes('elaborar') ||
-    t.includes('elabora');
-  const hasDocumentTarget =
-    t.includes('documento legal') ||
-    t.includes('contrato') ||
-    t.includes('finiquito') ||
-    t.includes('poder') ||
-    t.includes('mandato') ||
-    t.includes('declaracion jurada') ||
-    t.includes('declaración jurada') ||
-    t.includes('contrato de trabajo') ||
-    t.includes('carta de renuncia') ||
-    t.includes('carta laboral') ||
-    t.includes('acuerdo de confidencialidad') ||
-    t.includes('nda') ||
-    t.includes('liquidacion de sueldo') ||
-    t.includes('liquidación de sueldo') ||
-    t.includes('mandato simple') ||
-    t.includes('mandato civil') ||
-    t.includes('documento');
-  return hasCreateVerb && hasDocumentTarget;
+    /\b(crear|crea|hacer|haz|generar|genera|preparar|prepara|redactar|redacta|armar|arma|elaborar|elabora)\b/i.test(t);
+  const hasRequestFraming =
+    hasCreateVerb ||
+    /\b(quiero|necesito|me gustaria|me gustaría|ayudame a|ayúdame a|puedes|podrias|podrías)\b/i.test(t);
+  const strongTargets = [
+    'poder simple',
+    'poder notarial simple',
+    'mandato simple',
+    'mandato civil',
+    'declaracion jurada',
+    'declaración jurada',
+    'contrato de trabajo',
+    'contrato laboral',
+    'contrato de arriendo',
+    'acuerdo de confidencialidad',
+    'carta de renuncia',
+    'carta laboral',
+    'carta de despido',
+    'finiquito laboral',
+    'liquidacion de sueldo',
+    'liquidación de sueldo',
+    'documento legal'
+  ];
+  const hasStrongTarget = strongTargets.some((target) => t.includes(target));
+  const hasGenericDocumentWord =
+    /\b(documento|escrito|contrato|carta|poder|mandato|finiquito|liquidacion|liquidación|nda)\b/i.test(t);
+  const looksLikeLegalNarrative =
+    Boolean(raw) &&
+    (shouldTreatAsCase(raw) || (isLikelyLegalTopic(raw) && (isQuestionLike(raw) || raw.length > 140)));
+
+  if (looksLikeLegalNarrative && !hasStrongTarget) return false;
+  if (!hasRequestFraming) return false;
+  if (hasStrongTarget) return true;
+  if (!hasCreateVerb || !hasGenericDocumentWord) return false;
+  if (raw.length > 220 && (isQuestionLike(raw) || shouldTreatAsCase(raw))) return false;
+  return /\b(un|una|mi|el|la)\b/i.test(t) || t.includes('plantilla') || t.includes('formato');
 }
 
 function parseNumberSelection(text) {
@@ -2414,6 +2418,62 @@ function isLikelyFreshUserTurn(text) {
   if (isQuestionLike(raw) || shouldTreatAsCase(raw) || isLikelyLawSearch(raw) || isLikelyLegalTopic(raw)) return true;
   const t = normalizeForIntent(raw);
   return raw.length >= 60 || t.includes('necesito ') || t.includes('quiero ') || t.includes('tengo un problema');
+}
+
+function shouldInterruptCreateGroupFlow({ ctx, text }) {
+  const raw = normalizeIncomingText(text);
+  if (!raw) return false;
+  if (isExplicitCreateGroupRequest(raw)) return false;
+
+  const stage = String(ctx?.stage || '').trim();
+  if (!stage) return false;
+
+  const guessedName = guessGroupName(raw);
+  const shortCandidate = raw.split(/\s+/).filter(Boolean).length <= 8 && raw.length <= 80;
+  if (guessedName && shortCandidate && !isLikelyFreshUserTurn(raw)) return false;
+
+  if (stage === 'confirm_details') {
+    const action = parseCreateGroupUserAction(raw);
+    if (action.action !== 'unknown') return false;
+  }
+
+  return isLikelyFreshUserTurn(raw);
+}
+
+function shouldInterruptCreateDocumentFlow({ ctx, text }) {
+  const raw = normalizeIncomingText(text);
+  if (!raw) return false;
+
+  const stage = String(ctx?.stage || '').trim();
+  if (!stage) return false;
+
+  if (stage === 'choose_mode' || stage === 'choose_template') {
+    const keys = Array.isArray(ctx?.keys) && ctx.keys.length ? ctx.keys : getCreateDocumentTemplateKeys();
+    if (findTemplateKeyFromText(raw, keys)) return false;
+    return isLikelyFreshUserTurn(raw);
+  }
+
+  if (stage === 'collect_vars') {
+    const labels = Array.isArray(ctx?.labels) ? ctx.labels : [];
+    const extracted = labels.length ? parseTemplateFieldBatch(raw, labels) : {};
+    const wantsSkip = ['omitir', '-', 'paso', 'saltarlo', 'saltar'].includes(normalizeForIntent(raw));
+    const looksStructuredAnswer = Boolean(Object.keys(extracted).length) || wantsSkip || raw.split('\n').length >= 2 || raw.includes(':');
+    if (looksStructuredAnswer) return false;
+    return isLikelyFreshUserTurn(raw);
+  }
+
+  if (stage === 'review_answers') {
+    const labels = Array.isArray(ctx?.labels) ? ctx.labels : [];
+    if (isCreateDocumentConfirmation(raw)) return false;
+    if (labels.length && Object.keys(parseTemplateFieldBatch(raw, labels)).length) return false;
+    return isLikelyFreshUserTurn(raw);
+  }
+
+  if (['blank_title', 'blank_description', 'choose_save_location', 'choose_save_group'].includes(stage)) {
+    return isLikelyFreshUserTurn(raw);
+  }
+
+  return false;
 }
 
 function buildOptionKeywords(baseKeywords, index) {
@@ -5960,6 +6020,12 @@ async function handleCrearGrupo({ session, chatId, text, sessionName }) {
     return;
   }
 
+  if (textTrim && shouldInterruptCreateGroupFlow({ ctx, text: textTrim })) {
+    const casualSession = await returnSessionToCasual(session.id);
+    await continueWithFreshIntent({ session: casualSession || session, chatId, text: textTrim, sessionName });
+    return;
+  }
+
   if (!ctx.stage) {
     await updateWspSession(session.id, { current_branch: 'crear_grupo', branch_context: { stage: 'ask_name' } });
     await wahaSendText(chatId, `¡Vamos a crear tu nuevo grupo! 📁 ¿Cómo se llamará?`, sessionName);
@@ -9271,6 +9337,12 @@ async function handleCrearDocumento({ session, chatId, text, sessionName }) {
 
   if (isMenuTrigger(normalizeForIntent(textTrim))) {
     await showMainMenu({ session, chatId, sessionName });
+    return;
+  }
+
+  if (textTrim && shouldInterruptCreateDocumentFlow({ ctx, text: textTrim })) {
+    const casualSession = await returnSessionToCasual(session.id);
+    await continueWithFreshIntent({ session: casualSession || session, chatId, text: textTrim, sessionName });
     return;
   }
 

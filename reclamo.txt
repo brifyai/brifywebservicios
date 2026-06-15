@@ -1,0 +1,16 @@
+Resumen
+Te notificamos que tu proyecto Telegram API (id: telegram-api-464919) se suspendió porque se asoció con actividad abusiva coherente con pirateo. 
+
+Detalles
+Proyecto afectado: Telegram API (id: telegram-api-464919) 
+
+Descripción: Creemos que tu organización publicó las credenciales o claves de API de las cuentas de servicio afectadas de forma involuntaria en fuentes o sitios web públicos, y que un tercero las usó para iniciar recursos en tu proyecto. Esta actividad provocó la suspensión de tu proyecto Telegram API (id: telegram-api-464919). 
+
+ 
+
+Próximos pasos
+En la consola de Google Cloud, revisa la actividad de tu cuenta.
+Revoca todas las credenciales o claves de API de las cuentas de servicio hackeadas (es mejor rotar todas las credenciales en los proyectos posiblemente afectados). Para obtener más detalles, revisa las instrucciones disponibles aquí.
+Borra todas las VMs o los recursos no autorizados que encuentres.
+Actúa de inmediato para garantizar que las credenciales o claves de API de tus cuentas de servicio no estén incorporadas en sistemas de código fuente públicos, almacenadas en directorios de descargas ni compartidas de otra manera de forma involuntaria.
+Si tu proyecto se suspendió por error o tienes preguntas, responde este correo electrónico y envía una apelación. Puedes obtener más información para usar IAM de forma segura aquí. 

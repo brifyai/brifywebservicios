@@ -1,95 +1,125 @@
-## Rol y activación
-Eres el Asesor Legal de Brify, un legislador chileno experto. Esta rama se activa únicamente cuando el usuario la invoca explícitamente desde el menú principal. Una vez activa, operas de forma independiente al flujo casual.
+[1:24 a. m., 15/6/2026] Camilo: Hola, quisiera saber como puedo sacar un arraigo que tengo de niño, ya que fue un tema de mis padres y a mis 36 años sigue vigente y desconocía que existia
+[1:24 a. m., 15/6/2026] Brify AI: Qué buena pregunta, y qué lata que te enteres así después de tanto tiempo. Te explico lo que sé:
 
-## Comportamiento base
-El usuario puede interactuar libremente. Responde siempre desde el rol de legislador chileno: con autoridad, criterio jurídico y lenguaje profesional, pero accesible. Humaniza las respuestas con un tono cálido y dinámico.
+Un arraigo es una medida que impide que una persona salga del país, y en tu caso parece que se originó por algo que tenían pendiente tus padres cuando eras menor de edad. Esos arraigos pueden quedarse vigentes si no se gestionó su alzamiento en su momento.
 
-## Consulta de base de datos — ley mencionada directamente
-Si el usuario menciona una ley específica (ej. "Ley 1911", "Ley 1858"), busca en la tabla:
+Para levantarlo, lo que te recomiendo es:
 
-  Tabla: leyes_con_contenido
-  Campo de búsqueda: Número (formato "Ley XXXX")
+1. Ir a la PDI o al Departamento de Extranjería y Migración para confirmar que efectivamente existe y saber exactamente de qué se trata.
 
-Usa el resultado para:
-  → Fundamentar tu respuesta
-  → Satisfacer la necesidad del usuario
-  → Incluir referencias dentro de la conversación
+2. Pedir los antecedentes del caso original para ver si aún está vigente o si ya prescribe.
 
-## Consulta de base de datos — ley inferida por contexto
-Si el usuario no menciona una ley pero el contexto sugiere un término jurídico relevante, busca en la tabla leyes_con_contenido usando los campos:
+3. Si el arraigo fue por una deuda de tus padres, hay jurisprudencia que ha reconocido que no debería afectar a los hijos una vez mayores de eda…
+[1:25 a. m., 15/6/2026] Camilo: Hola buenas busco asesoría. Compre una camioneta en Salasar Israel 0 km fallo la caja los 40 mil km y la primera mantencion de la caja es a los 60 mil km. Me indican que no se puede efectuar la garantía ya que me atrase en 10mil km (las primeras mantenciónes 10 mil y 20mil se hicieron en concesionario y la de 30 mil a 40mil no se realizó, utilizaron ese argumento para no hacer valer la garantía y ahora tengo que hasta pagar para poder retirar mi camioneta del concesionario por la supuesta inspección quedo atento a los comentarios gracias!!
+[1:25 a. m., 15/6/2026] Brify AI: Perfecto ✅ Vamos a preparar "Poder Simple".
 
-  → Contenido
-  → Título de la Norma
-  Tambien pueedes crear o usar las → Funciones disponibles en la bas de datos en caso de querer crear entregar el sql correspondiente.
+Para preparar tu Poder Simple necesito estos datos.
+Puedes copiar solo la lista de abajo, completarla y enviármela toda junta, o responderme de a uno y te voy guiando 😊
 
-Usa los resultados para complementar tu respuesta o enriquecer la experiencia del usuario.
+```
+• N° de norma (opcional):
+• Termino de ley (opcional):
+• Ciudad:
+• Fecha:
+• Nombre Mandante:
+• RUT Mandante:
+• Domicilio Mandante:
+• Nombre Mandatario:
+• RUT Mandatario:
+• Domicilio Mandatario:
+• Facultades específicas (descripción):
+• Facultad 1:
+• Facultad 2:
+• Facultad 3:
+• Facultades adicionales (si aplica):
+• Vigencia en días:
+• Fecha de Vencimiento:
+• Nombre Testigo 1:
+• RUT Testigo 1:
+• Nombre Testigo 2:
+• RUT Testigo 2:
+```
+[1:26 a. m., 15/6/2026] Camilo: por que un poder simple? explicame
+[1:26 a. m., 15/6/2026] Brify AI: ✅ Todo listo.
 
-## Fallback — sin referencias en la base de datos
-Si no encuentras información en la base de datos, responde con tu conocimiento interno. Antes de responder, envía siempre este mensaje humanizado al usuario:
+Ahora solo falta la fecha:
 
-  "Buscando información, ya te contesto... esperame 🔍"
+Si quieres, puedes enviarme todos los datos de una vez y así agilizamos todo.
+[1:26 a. m., 15/6/2026] Camilo: menu
+[1:26 a. m., 15/6/2026] Brify AI: ¡Genial! Cuéntame qué necesitas y lo resuelvo al tiro.
 
-Prioridad de respuesta:
-  1. Base de datos (siempre intentar primero)
-  2. Conocimiento propio (solo si la BD no entrega resultados)
+Puedes decirme algo así nomás, por ejemplo: "crear grupo Marketing", "compartir grupo Ventas con correo@empresa.com" o hacerme cualquier consulta.
 
-## Tono y personalidad
-Profesional, pero cercano. Lúdico cuando corresponde.
-Nunca robótico ni excesivamente formal.
-Usa un lenguaje natural chileno cuando sea apropiado.
-Mantén siempre la autoridad del rol de legislador.
+Si te es más cómodo, puedes elegir entre estas opciones:
 
-## Gestión de archivos — operaciones disponibles
-Dentro del estado Asesor Legal el sistema puede:
-  → Crear archivos
-  → Compartir archivos
-  → Listar archivos
-  → Subir archivos
+1️⃣ ⚖️ Asesor legal
+2️⃣ 📁 Crear grupo
+3️⃣ 🤝 Compartir grupo
+4️⃣ 📤 Subir archivo
+5️⃣ 📋 Listar archivos
+6️⃣ 🔍 Analizar documento
+[1:27 a. m., 15/6/2026] Camilo: Hola buenas soy chico trans de 19 años y quiero cambiarme solo nombre, cambiar el sexo no me interesa, por lo que investigué había que tener evidencia de que llevaba usando otro nombre por más de 5 años y quería saber que cosas pueden ser usadas como evidencia, tengo papeles del colegio con mi nombre social y así, eso sirve?? Y cuánta cantidad de evidencia necesito??
+También, pasa que antes de elegir el nombre que tengo ahora (Donatello) había elegido otro, y pues los papeles más antiguos (De unos 6 años) tienen ese nombre, es necesario que la evidencia muestre EXACTAMENTE el nombre al que me quiero cambiar o da lo mismo y solo tiene que ser uno diferente al de nacimiento????
+[1:27 a. m., 15/6/2026] Brify AI: Hola, qué bueno que estés avanzando en esto. Para cambiar solo el nombre, la evidencia que muestra que usas ese nombre social por más de 5 años sí puede incluir documentos escolares, certificados, cartas, constancias médicas o de trabajo, cualquier papel oficial donde aparezca ese nombre. Lo importante es que demuestren un uso constante y público de ese nombre.
 
-Todos los archivos generados o gestionados desde este estado deben llevar una referencia que los identifique como pertenecientes al Asesor Legal. Ejemplo de convención de nombre:
+Respecto a la cantidad, no hay un número fijo, pero mientras más documentos que respalden el uso continuo, mejor. Por ejemplo, varios certificados o documentos en distintas fechas que muestren el nombre social.
 
-  [AL] Contrato_arriendo.pdf
-  [AL] Consulta_laboral_2024.docx
-  [AL] Ley1911_resumen.pdf
+Sobre el tema del nombre anterior que usaste antes de Donatello, la evidencia debe respaldar el nombre que quieres usar ahora, o sea, Donatello. No basta con mostrar un nombre distinto al de …
+[1:28 a. m., 15/6/2026] Camilo: ayudame con ambos
+[1:28 a. m., 15/6/2026] Brify AI: Claro, te armo una lista de documentos que puedes juntar y también una carta simple para acompañar tu solicitud. 
 
-Esto permite diferenciarlos de los archivos del flujo Casual y facilita su gestión posterior.
+Para la lista, puedes incluir:  
+📄 Certificados o boletines escolares donde aparezca Donatello  
+📄 Cartas o constancias de instituciones (como centros de salud, trabajo o actividades sociales) que usen ese nombre  
+📄 Cualquier documento oficial o semi oficial donde te identifiquen como Donatello en distintos años (mínimo 5 años)  
 
-## Uso de documentos en la conversación
-El usuario puede referenciar, subir o mencionar documentos durante la interacción con el Asesor Legal. Cuando esto ocurra:
+Y para la carta, algo así:  
 
-  1. Leer e interpretar el contenido del documento en el contexto de la conversación.
-  2. Cruzar el contenido del documento con la base de datos leyes_con_contenido si corresponde.
-  3. Entregar una respuesta coherente que integre:
-       - El relato del usuario
-       - El contenido del documento
-       - La legislación chilena aplicable
+"Yo, [tu nombre legal], solicito el cambio de mi nombre de nacimiento a Donatello, nombre con el que me identifico y que he usado públicamente durante más de cinco años, como lo demuestran los documentos adjuntos. Este cambio es parte de mi derecho a la identidad y expresión personal."
 
-Ejemplo de flujo:
-  Usuario: "Según mi documento 'demandas_claras.pdf', para demandar se necesita un testigo..."
-  → Leer el documento → identificar los puntos relevantes → contrastar con la ley → responder con fundamento.
+¿Quieres que te ayude a personalizar la carta con tus datos?
+[1:28 a. m., 15/6/2026] Camilo: Hace ya 3 años que tengo una denuncia hecha a un tío de furgón que tuvo mi hijo, esto porque en la mañana mi niño se quedó dormido arriba del furgón, cuando bajaron a los niños en el colegio el tío no revisó el furgón y se fué a otra comuna a hacer trámites dejando el furgón estacionado en la vía pública, en ese entonces mi hijo tenía 6 años, niño con diagnóstico de tea, cuando despertó solito se bajó del furgón y caminó perdido durante horas, entraba a clases a las 8 y una persona lo encontró a las 11 de la mañana diambulando solito llorando, en sus cuadernos encontró mi número de teléfono y me contacto (gracias a Dios era una persona buena), 3 años que tengo la denuncia hecha, primeros años de la fiscalía me decían que la carpeta estaba en manos de la pdi,…
+[1:28 a. m., 15/6/2026] Brify AI: Captado esto 👇
+📁 Grupo: de un tío
+🤝 Compartir: (por ahora nadie)
 
-## Respuestas completas — múltiples contenedores
-Nunca entregues una respuesta incompleta. Si la respuesta es extensa o requiere desarrollar varios puntos, divídela en 2 o más mensajes consecutivos manteniendo coherencia y continuidad entre ellos. Avisa al usuario cuando vayas a continuar en el siguiente mensaje:
+¿Todo correcto? 🙌
+[1:28 a. m., 15/6/2026] Camilo: menu
+[1:29 a. m., 15/6/2026] Brify AI: Perfecto 👌 Te escucho.
 
-  "Continúo en el siguiente mensaje..."
-  "Esto es la primera parte, sigo..."
+Dime nomás lo que necesites.
 
-## Hilo histórico — estado independiente
-El Asesor Legal mantiene su propio hilo histórico, completamente separado del hilo del flujo Casual. Esto permite:
+Por ejemplo: "crear grupo Marketing", "compartir grupo Ventas con correo@empresa.com" o hazme cualquier pregunta.
 
-  → No mezclar estados ni contextos entre ramas
-  → Gestionar de forma limpia los procesos que gatilla cada estado
-  → Retomar el contexto legal exactamente donde quedó si el usuario vuelve al Asesor Legal
+Si quieres, también puedes usar estas opciones:
 
-El hilo del Asesor Legal almacena:
-  - Historial de mensajes de la sesión legal
-  - Referencias a documentos usados
-  - Leyes consultadas en la BD durante la sesión
+1️⃣ ⚖️ Asesor legal
+2️⃣ 📁 Crear grupo
+3️⃣ 🤝 Compartir grupo
+4️⃣ 📤 Subir archivo
+5️⃣ 📋 Listar archivos
+6️⃣ 🔍 Analizar documento
+[1:29 a. m., 15/6/2026] Camilo: Hace ya 3 años que tengo una denuncia hecha a un tío de furgón que tuvo mi hijo, esto porque en la mañana mi niño se quedó dormido arriba del furgón, cuando bajaron a los niños en el colegio el tío no revisó el furgón y se fué a otra comuna a hacer trámites dejando el furgón estacionado en la vía pública, en ese entonces mi hijo tenía 6 años, niño con diagnóstico de tea, cuando despertó solito se bajó del furgón y caminó perdido durante horas, entraba a clases a las 8 y una persona lo encontró a las 11 de la mañana diambulando solito llorando, en sus cuadernos encontró mi número de teléfono y me contacto (gracias a Dios era una persona buena), 3 años que tengo la denuncia hecha, primeros años de la fiscalía me decían que la carpeta estaba en manos de la pdi,…
+[1:29 a. m., 15/6/2026] Brify AI: Captado esto 👇
+📁 Grupo: de un tío
+🤝 Compartir: (por ahora nadie)
 
-## Salida del estado — trigger Menú
-Cuando el usuario invoca el Menú:
-  → Se cierra el estado Asesor Legal
-  → Se retoma el flujo Casual con su propio hilo histórico
-  → El hilo del Asesor Legal queda suspendido (no eliminado)
+¿Todo correcto? 🙌
+[1:29 a. m., 15/6/2026] Camilo: es solo una pregunta
+[1:29 a. m., 15/6/2026] Brify AI: ¿Quieres que lo cree así o prefieres cambiar algo? 🙌
+[1:30 a. m., 15/6/2026] Camilo: te estas mareando, solo necesito ayuda con: Hace ya 3 años que tengo una denuncia hecha a un tío de furgón que tuvo mi hijo, esto porque en la mañana mi niño se quedó dormido arriba del furgón, cuando bajaron a los niños en el colegio el tío no revisó el furgón y se fué a otra comuna a hacer trámites dejando el furgón estacionado en la vía pública, en ese entonces mi hijo tenía 6 años, niño con diagnóstico de tea, cuando despertó solito se bajó del furgón y caminó perdido durante horas, entraba a clases a las 8 y una persona lo encontró a las 11 de la mañana diambulando solito llorando, en sus cuadernos encontró mi número de teléfono y me contacto (gracias a Dios era una persona buena), 3 años que tengo la denuncia hecha, primeros años de la fiscalía me decí…
+[1:30 a. m., 15/6/2026] Brify AI: Listo 🙌 ¿Qué necesitas ahora?
+[1:30 a. m., 15/6/2026] Camilo: responde: Hace ya 3 años que tengo una denuncia hecha a un tío de furgón que tuvo mi hijo, esto porque en la mañana mi niño se quedó dormido arriba del furgón, cuando bajaron a los niños en el colegio el tío no revisó el furgón y se fué a otra comuna a hacer trámites dejando el furgón estacionado en la vía pública, en ese entonces mi hijo tenía 6 años, niño con diagnóstico de tea, cuando despertó solito se bajó del furgón y caminó perdido durante horas, entraba a clases a las 8 y una persona lo encontró a las 11 de la mañana diambulando solito llorando, en sus cuadernos encontró mi número de teléfono y me contacto (gracias a Dios era una persona buena), 3 años que tengo la denuncia hecha, primeros años de la fiscalía me decían que la carpeta estaba en manos …
+[1:30 a. m., 15/6/2026] Brify AI: Captado esto 👇
+📁 Grupo: de un tío
+🤝 Compartir: (por ahora nadie)
 
-El estado Asesor Legal NO se cierra por inactividad ni por ningún otro trigger que no sea la invocación explícita del Menú por parte del usuario.
+¿Todo correcto? 🙌
+[1:30 a. m., 15/6/2026] Camilo: Hola. Tengo una consulta.
+Mi padre y mi madre se casaron en sociedad conyugal, del matrimonio nacieron 2 hijos (mi hno y yo) y durante el matrimonio mi papá se compró 2 casas. Se separaron de hecho pero nunca se divorciaron y mi mamá falleció el 2021. Mi papá el año 2000 tuvo una hija con otra mujer (mi hermana). Cuando mi mamá falleció con mi hermano nunca hicimos posesión efectiva de nada.
+¿Si mi Papá fallece los bienes se reparten en 3 partes iguales? 
+¿O hay que dividir los bienes en 2 (herencia mamá y herencia papá) y la herencia papá es la que se divide en 3?
+¿Como habría que hacer la posesión efectiva?
+[1:30 a. m., 15/6/2026] Brify AI: ¡Listo! 🎉 Creé "de un tío".
+
+¿Con quién lo compartimos?
